@@ -1,12 +1,16 @@
 # Deciders
 
+The `deciders` concern owns decision formation
+
+`decider(decider_config, prediction): decision`
+
 Research checked on 2026-07-28
 
 ## Shape-compliant options
 
 ### Decision
 
-Keep the live `Policy` adapter small and deterministic
+Keep the live decider interface small and deterministic
 
 Use analysis engines offline to fit and validate policy parameters
 
@@ -38,7 +42,7 @@ It also exposes portfolio measures, costs, constraints, and stress testing
 
 Why it leads
 
-- Natural fit for a typed Python policy adapter
+- Natural fit for a typed Python decider implementation
 - Time-series-aware model selection
 - Broad optimizer and estimator catalog
 - Active Python 3.13-compatible releases
@@ -103,20 +107,20 @@ Evaluate NautilusTrader only as a deliberate full-stack replacement
 
 ## Other
 
-### Decider boundary
+### Decider interface
 
 ```text
-forecast distribution
+model output
   -> confidence and freshness gate
   -> expected return and risk estimates
   -> constrained target optimization
   -> turnover and capacity limits
-  -> target positions
+  -> decision
 ```
 
 The decider must not place, retry, or reconcile orders
 
-The trader must not invent portfolio targets
+The trader interprets the decision without changing its portfolio intent
 
 ### Backtest and trading engines
 
@@ -147,7 +151,7 @@ LEAN supports research, backtest, portfolio construction, risk, and live venues
 
 It offers many built-in portfolio models and corporate-action handling
 
-Its C# engine and complete framework overlap the entire money-tree pipeline
+Its C# engine and complete framework can compose and execute the money-tree interfaces
 
 #### vectorbt
 

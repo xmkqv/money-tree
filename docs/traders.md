@@ -1,12 +1,16 @@
 # Traders
 
+The `traders` concern owns decision execution
+
+`trader(trader_config, decision): outcome`
+
 Research checked on 2026-07-28
 
 ## Shape-compliant options
 
 ### Decision
 
-Implement one broker adapter first and keep the contract venue-neutral
+Implement one broker-backed trader first and keep the interface venue-neutral
 
 Use Alpaca paper trading for the fastest US-equity integration
 
@@ -20,7 +24,7 @@ Choose a live broker only after residency, instruments, tax wrapper, and costs a
 
 | API | Assets | Interface | Test mode | Access and limits | Best fit |
 | --- | --- | --- | --- | --- | --- |
-| [Alpaca Trading API](https://docs.alpaca.markets/docs/trading-api) | US stocks, options, crypto | REST and WebSocket | Free paper account | Live eligibility varies | Fast first adapter |
+| [Alpaca Trading API](https://docs.alpaca.markets/docs/trading-api) | US stocks, options, crypto | REST and WebSocket | Free paper account | Live eligibility varies | Fast first integration |
 | [IBKR APIs](https://ibkrcampus.com/api) | Global multi-asset | Web, WebSocket, TCP, FIX | Funded clients get paper | Data subscriptions and sessions apply | Broad production broker |
 | [Tradier Brokerage API](https://docs.tradier.com/docs/getting-started) | US stocks and options | REST and streaming | Sandbox | Account and market-data terms apply | Simple US options |
 | [Schwab Trader API](https://developer.schwab.com/products/trader-api--individual) | US securities | REST and streaming | No equivalent full simulator assumed | Approved Schwab account and app | Existing Schwab users |
@@ -40,7 +44,7 @@ Alpaca paper trading is globally available with email registration
 
 Its official documentation describes free paper trading with real-time simulation data
 
-The simple REST and WebSocket model is the shortest path to a complete adapter
+The simple REST and WebSocket model is the shortest path to a complete trader implementation
 
 Watch US-only equity scope, data-feed entitlements, and paper-fill optimism
 
@@ -158,7 +162,7 @@ Start with Alpaca paper when US equities are acceptable
 
 Start with IBKR paper when global or derivatives breadth is already required
 
-Keep crypto adapters native and venue-scoped
+Keep crypto integrations native and venue-scoped
 
 Treat regional eligibility and market-data entitlements as deployment configuration
 
@@ -185,16 +189,17 @@ Sandbox fills do not establish live execution quality
 | [CCXT](https://github.com/ccxt/ccxt) | Many crypto venues | Fast normalized access | Lowest-common-denominator semantics |
 | [ib_async](https://github.com/ib-api-reloaded/ib_async) | IBKR | Pythonic async wrapper | Third-party dependency |
 | [alpaca-py](https://github.com/alpacahq/alpaca-py) | Alpaca | Official Python SDK | Alpaca-only |
+| [Brue](https://github.com/londonstrategicedge/brue) | None documented | Proprietary language for quantitative backtests and inline execution against trained models | Early-stage, 22 stars; no established broker adapters or track record; language lock-in |
 
-Do not adopt a full execution engine only to save one adapter
+Do not adopt a full execution engine only to save one venue integration
 
 Do adopt one when its event, risk, reconciliation, and simulation model all become requirements
 
-### Broker adapter contract
+### Trader interface
 
-The current `Broker` callable is enough for the tutorial
+Money-tree's generic trader interface carries a configured decision to an implementation-defined result
 
-Live trading requires explicit commands and events
+A live broker-backed implementation requires explicit commands and events
 
 #### Commands
 
