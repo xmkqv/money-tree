@@ -1,5 +1,7 @@
 # Data
 
+Research record, predating money_tree/node.py
+
 Historical, bulk, live, and locally committed data sources plus acquisition patterns for the unified `data` concern
 
 Money-tree exposes one generic data interface; the pipe through it is locked, and provider capture is the implementation choice that remains open within that concern

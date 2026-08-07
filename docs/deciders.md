@@ -1,5 +1,7 @@
 # Deciders
 
+Research record, predating money_tree/node.py
+
 The `deciders` concern owns decision formation
 
 `decider(decider_config, prediction): decision`

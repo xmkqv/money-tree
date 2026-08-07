@@ -1,5 +1,7 @@
 # Traders
 
+Research record, predating money_tree/node.py
+
 The `traders` concern owns decision execution
 
 `trader(trader_config, decision): outcome`

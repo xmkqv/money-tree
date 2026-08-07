@@ -1,5 +1,7 @@
 # Models
 
+Research record, predating money_tree/node.py
+
 Tensor transformations and stateful or device-backed model operations share the unified `models` concern
 
 Transform and predict are not layers; they are instances of one interface selected by
