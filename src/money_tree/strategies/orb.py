@@ -24,6 +24,7 @@ MARKET = "NYSE"
 TIMESTEP = "minute"
 SLEEPTIME = "1M"
 STATE_PATH = Path(".money-tree/orb-state.json")
+PAPER_STATE_PATH = Path(".money-tree/orb-paper-state.json")
 N_HISTORY_BAR = 390
 
 

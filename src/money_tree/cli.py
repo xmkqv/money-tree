@@ -15,7 +15,13 @@ from money_tree.broker import (
     verify_asset,
 )
 from money_tree.state import StateStore
-from money_tree.strategies.orb import MARKET, STATE_PATH, SYMBOL, OpeningRangeBreakout
+from money_tree.strategies.orb import (
+    MARKET,
+    PAPER_STATE_PATH,
+    STATE_PATH,
+    SYMBOL,
+    OpeningRangeBreakout,
+)
 
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
 
@@ -32,6 +38,9 @@ def build_parser() -> argparse.ArgumentParser:
     live.add_argument("--symbol", default=SYMBOL)
     live.add_argument("--state", type=Path, default=STATE_PATH)
     live.add_argument("--confirm-live", action="store_true")
+    paper = commands.add_parser("paper")
+    paper.add_argument("--symbol", default=SYMBOL)
+    paper.add_argument("--state", type=Path, default=PAPER_STATE_PATH)
     return parser
 
 
@@ -69,10 +78,8 @@ def run_backtest(symbol: str, start_text: str, end_text: str, out: Path) -> dict
     return results
 
 
-def run_live(symbol: str, state_path: Path, *, confirmed: bool) -> None:
-    if not confirmed:
-        raise RuntimeError("live trading requires --confirm-live")
-    config = load_broker_config(paper=False)
+def run_trading(symbol: str, state_path: Path, *, paper: bool) -> None:
+    config = load_broker_config(paper=paper)
     client = connect_trading_client(config)
     verify_account(client)
     verify_asset(client, symbol)
@@ -83,13 +90,25 @@ def run_live(symbol: str, state_path: Path, *, confirmed: bool) -> None:
     from lumibot.brokers import Alpaca
 
     broker = Alpaca(config.to_lumibot())
-    if broker.is_paper:
+    if paper and not broker.is_paper:
+        raise RuntimeError("paper broker resolved to a live account")
+    if not paper and broker.is_paper:
         raise RuntimeError("live broker resolved to a paper account")
     strategy = OpeningRangeBreakout(
         broker=broker,
         parameters={"symbol": symbol, "state_path": state_path, "persist_state": True},
     )
     strategy.run_live()
+
+
+def run_live(symbol: str, state_path: Path, *, confirmed: bool) -> None:
+    if not confirmed:
+        raise RuntimeError("live trading requires --confirm-live")
+    run_trading(symbol, state_path, paper=False)
+
+
+def run_paper(symbol: str, state_path: Path) -> None:
+    run_trading(symbol, state_path, paper=True)
 
 
 def main() -> None:
@@ -103,6 +122,9 @@ def main() -> None:
         return
     if arguments.command == "live":
         run_live(arguments.symbol, arguments.state, confirmed=arguments.confirm_live)
+        return
+    if arguments.command == "paper":
+        run_paper(arguments.symbol, arguments.state)
         return
     raise RuntimeError(f"unsupported command {arguments.command!r}")
 
