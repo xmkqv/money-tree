@@ -35,9 +35,15 @@ class AccountSnapshot:
 
 def load_broker_config(*, paper: bool) -> BrokerConfig:
     prefix = "ALPACA_" if paper else "ALPACA_LIVE_"
+    key_name = f"{prefix}API_KEY"
+    secret_name = f"{prefix}API_SECRET"
+    api_key = os.environ.get(key_name)
+    api_secret = os.environ.get(secret_name)
+    if not api_key or not api_secret:
+        raise RuntimeError(f"missing {key_name} or {secret_name}")
     return BrokerConfig(
-        api_key=os.environ[f"{prefix}API_KEY"],
-        api_secret=os.environ[f"{prefix}API_SECRET"],
+        api_key=api_key,
+        api_secret=api_secret,
         paper=paper,
     )
 
@@ -86,12 +92,17 @@ def verify_account_snapshot(snapshot: AccountSnapshot, state: RiskState) -> None
     unknown_orders = snapshot.open_order_ids - state.order_ids()
     if unknown_orders:
         raise RuntimeError("the configured symbol has open orders that money-tree does not own")
+    if state.entry_order_id not in snapshot.open_order_ids:
+        state.entry_order_id = None
+    if state.stop_order_id not in snapshot.open_order_ids:
+        state.stop_order_id = None
+    if state.exit_order_id not in snapshot.open_order_ids:
+        state.exit_order_id = None
     if snapshot.position_quantity is None:
         if state.position_quantity != 0:
             state.position_quantity = Decimal("0")
             state.average_entry_price = Decimal("0")
             state.stop_price = None
-            state.stop_order_id = None
         return
     if snapshot.position_quantity != state.position_quantity:
         raise RuntimeError("the configured symbol has a position that money-tree does not own")
