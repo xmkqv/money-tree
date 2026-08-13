@@ -29,7 +29,6 @@ Issues = "https://github.com/xmkqv/money-tree/issues"
 
 [dependency-groups]
 dev = [
-    "pytest>=8,<9",
     "ruff>=0.16",
     "ty>=0.0.69",
 ]
