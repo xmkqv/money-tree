@@ -18,3 +18,8 @@ wheels/
 .env
 .env.*
 !.env.example
+
+# Run artifacts
+out/
+logs/
+.catalog/
