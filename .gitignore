@@ -23,3 +23,4 @@ wheels/
 out/
 logs/
 .catalog/
+.money-tree/
