@@ -28,7 +28,14 @@ run live trading:
 uv run money-tree live --confirm-live
 ```
 
+run paper trading:
+
+```sh
+uv run money-tree paper
+```
+
 live trading writes recovery state to `.money-tree/orb-state.json` by default.
+paper trading writes recovery state to `.money-tree/orb-paper-state.json` by default.
 startup stops if spy has a position or order that the saved state does not own.
 
 ## validate
