@@ -2,6 +2,7 @@
 name = "money-tree"
 version = "0.1.0"
 description = "A risk-limited opening-range breakout trader"
+readme = "README.md"
 license = "MIT"
 requires-python = ">=3.13,<3.15"
 dependencies = [
@@ -34,7 +35,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/money_tree", "LICENSE", "pyproject.toml"]
+include = ["src/money_tree", "LICENSE", "README.md", "pyproject.toml"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/money_tree"]
