@@ -19,7 +19,7 @@ class BrokerConfig:
     api_secret: str
     paper: bool
 
-    def lumibot(self) -> dict[str, str | bool]:
+    def to_lumibot(self) -> dict[str, str | bool]:
         return {
             "API_KEY": self.api_key,
             "API_SECRET": self.api_secret,
@@ -88,7 +88,7 @@ def get_account_snapshot(client: TradingClient, symbol: str) -> AccountSnapshot:
     )
 
 
-def verify_account_snapshot(snapshot: AccountSnapshot, state: RiskState) -> None:
+def reconcile_account_snapshot(snapshot: AccountSnapshot, state: RiskState) -> None:
     unknown_orders = snapshot.open_order_ids - state.order_ids()
     if unknown_orders:
         raise RuntimeError("the configured symbol has open orders that money-tree does not own")
