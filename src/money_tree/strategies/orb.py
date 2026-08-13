@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import ClassVar
+from uuid import uuid4
 
 from lumibot.entities import Asset, Order, Position
 from lumibot.strategies import Strategy
@@ -54,6 +55,12 @@ class OpeningRangeBreakout(Strategy):
         if should_close(moment):
             self._flatten("end of session", disable=True)
             return
+        if (
+            self.state.position_quantity != 0
+            and self.stop_order is None
+            and self.exit_order is None
+        ):
+            self._replace_stop()
         mark_price = self.get_last_price(self.asset)
         if mark_price is not None and self.state.has_daily_loss(Decimal(str(mark_price))):
             self._flatten("daily loss reached", disable=True)
@@ -278,7 +285,7 @@ class OpeningRangeBreakout(Strategy):
         trading_date = self.state.trading_date
         if trading_date is None:
             raise RuntimeError("trading date is not initialized")
-        return f"money-tree-orb-{trading_date:%Y%m%d}-{role}"
+        return f"money-tree-orb-{trading_date:%Y%m%d}-{role}-{uuid4().hex[:8]}"
 
     def _save_state(self) -> None:
         self.state_store.save(self.state)
