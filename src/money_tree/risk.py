@@ -6,8 +6,8 @@ from decimal import ROUND_DOWN, Decimal
 
 from money_tree.orb import BreakoutSide
 
-PLANNED_LOSS = Decimal("0.80")
-DAILY_LOSS = Decimal("1.00")
+LOSS_PLANNED = Decimal("0.80")
+LOSS_DAILY_MAX = Decimal("1.00")
 QUANTITY_STEP = Decimal("0.000000001")
 
 
@@ -15,7 +15,7 @@ def size_position(
     entry_price: Decimal,
     stop_price: Decimal,
     side: BreakoutSide,
-    loss: Decimal = PLANNED_LOSS,
+    loss: Decimal = LOSS_PLANNED,
 ) -> Decimal:
     price_risk = abs(entry_price - stop_price)
     if entry_price <= 0 or stop_price <= 0:
@@ -78,12 +78,12 @@ class RiskState:
         elif position * self.position_quantity < 0:
             self.average_entry_price = price
 
-    def pnl(self, mark_price: Decimal) -> Decimal:
+    def calculate_pnl(self, mark_price: Decimal) -> Decimal:
         unrealized = (mark_price - self.average_entry_price) * self.position_quantity
         return self.realized_pnl + unrealized
 
-    def has_daily_loss(self, mark_price: Decimal) -> bool:
-        return self.pnl(mark_price) <= -DAILY_LOSS
+    def has_reached_daily_loss(self, mark_price: Decimal) -> bool:
+        return self.calculate_pnl(mark_price) <= -LOSS_DAILY_MAX
 
     def order_ids(self) -> set[str]:
         return {

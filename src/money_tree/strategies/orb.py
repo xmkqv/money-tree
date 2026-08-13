@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from typing import ClassVar
@@ -10,12 +10,11 @@ from lumibot.entities import Asset, Order, Position
 from lumibot.strategies import Strategy
 
 from money_tree.orb import (
-    MARKET_TIMEZONE,
     Breakout,
     BreakoutSide,
-    find_breakout,
-    is_latest_breakout,
+    find_actionable_breakout,
     should_close,
+    to_market_datetime,
 )
 from money_tree.risk import size_position
 from money_tree.state import StateStore
@@ -49,7 +48,7 @@ class OpeningRangeBreakout(Strategy):
         self._load_orders()
 
     def on_trading_iteration(self) -> None:
-        moment = self._market_datetime(self.get_datetime())
+        moment = to_market_datetime(self.get_datetime())
         if not self._prepare_session(moment.date()):
             return
         if should_close(moment):
@@ -62,7 +61,7 @@ class OpeningRangeBreakout(Strategy):
         ):
             self._replace_stop()
         mark_price = self.get_last_price(self.asset)
-        if mark_price is not None and self.state.has_daily_loss(Decimal(str(mark_price))):
+        if mark_price is not None and self.state.has_reached_daily_loss(Decimal(str(mark_price))):
             self._flatten("daily loss reached", disable=True)
             return
         if self.state.disabled or self.state.traded:
@@ -77,10 +76,8 @@ class OpeningRangeBreakout(Strategy):
         )
         if bars is None or bars.empty:
             return
-        breakout = find_breakout(bars.pandas_df, moment.date(), moment)
-        if breakout is None or not is_latest_breakout(
-            bars.pandas_df, breakout, moment.date(), moment
-        ):
+        breakout = find_actionable_breakout(bars.pandas_df, moment.date(), moment)
+        if breakout is None:
             return
         self._submit_entry(breakout)
 
@@ -108,7 +105,7 @@ class OpeningRangeBreakout(Strategy):
         self._record_fill(order, price, quantity, complete=True)
 
     def on_canceled_order(self, order: Order) -> None:
-        role = self._order_role(order)
+        role = self._find_order_role(order)
         if role == "entry":
             self.entry_order = None
             self.state.entry_order_id = None
@@ -117,7 +114,7 @@ class OpeningRangeBreakout(Strategy):
             self._flatten("protective stop canceled", disable=True)
 
     def on_error_order(self, order: Order, error: Exception | None = None) -> None:
-        role = self._order_role(order)
+        role = self._find_order_role(order)
         if role == "entry":
             self.entry_order = None
             self.state.entry_order_id = None
@@ -159,7 +156,7 @@ class OpeningRangeBreakout(Strategy):
             quantity,
             side,
             time_in_force="day",
-            custom_params={"client_order_id": self._client_order_id("entry")},
+            custom_params={"client_order_id": self._create_client_order_id("entry")},
         )
         submitted = self.submit_order(order)
         if submitted.status == Order.OrderStatus.ERROR:
@@ -178,7 +175,7 @@ class OpeningRangeBreakout(Strategy):
         *,
         complete: bool,
     ) -> None:
-        role = self._order_role(order)
+        role = self._find_order_role(order)
         if role is None:
             return
         side = str(getattr(order.side, "value", order.side)).lower().split(".")[-1]
@@ -208,7 +205,7 @@ class OpeningRangeBreakout(Strategy):
             side,
             stop_price=float(self.state.stop_price),
             time_in_force="day",
-            custom_params={"client_order_id": self._client_order_id("stop")},
+            custom_params={"client_order_id": self._create_client_order_id("stop")},
         )
         submitted = self.submit_order(order)
         if submitted.status == Order.OrderStatus.ERROR:
@@ -239,7 +236,7 @@ class OpeningRangeBreakout(Strategy):
             abs(self.state.position_quantity),
             side,
             time_in_force="day",
-            custom_params={"client_order_id": self._client_order_id("exit")},
+            custom_params={"client_order_id": self._create_client_order_id("exit")},
         )
         submitted = self.submit_order(order)
         if submitted.status == Order.OrderStatus.ERROR:
@@ -271,7 +268,7 @@ class OpeningRangeBreakout(Strategy):
             return None
         return self.broker._pull_order(identifier, self.name)
 
-    def _order_role(self, order: Order) -> str | None:
+    def _find_order_role(self, order: Order) -> str | None:
         identifier = str(order.identifier)
         if order is self.entry_order or identifier == self.state.entry_order_id:
             return "entry"
@@ -281,7 +278,7 @@ class OpeningRangeBreakout(Strategy):
             return "exit"
         return None
 
-    def _client_order_id(self, role: str) -> str:
+    def _create_client_order_id(self, role: str) -> str:
         trading_date = self.state.trading_date
         if trading_date is None:
             raise RuntimeError("trading date is not initialized")
@@ -289,9 +286,3 @@ class OpeningRangeBreakout(Strategy):
 
     def _save_state(self) -> None:
         self.state_store.save(self.state)
-
-    @staticmethod
-    def _market_datetime(moment: datetime) -> datetime:
-        if moment.tzinfo is None:
-            return moment.replace(tzinfo=MARKET_TIMEZONE)
-        return moment.astimezone(MARKET_TIMEZONE)

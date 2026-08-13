@@ -37,7 +37,15 @@ class Breakout:
     stop: float
 
 
-def market_datetime(value: object) -> datetime:
+@dataclass(frozen=True, slots=True)
+class _SessionBar:
+    closed_at: datetime
+    high: float
+    low: float
+    close: float
+
+
+def to_market_datetime(value: object) -> datetime:
     if isinstance(value, datetime):
         moment = value
     elif isinstance(value, str):
@@ -49,72 +57,61 @@ def market_datetime(value: object) -> datetime:
     return moment.astimezone(MARKET_TIMEZONE)
 
 
-def session_rows(
+def _session_bars(
     frame: pd.DataFrame,
     trading_date: date,
     observed_at: datetime,
-) -> list[tuple[datetime, float, float, float]]:
-    observed_at = market_datetime(observed_at)
-    rows: list[tuple[datetime, float, float, float]] = []
-    for index, row in frame.iterrows():
-        moment = market_datetime(index)
+) -> list[_SessionBar]:
+    observed_at = to_market_datetime(observed_at)
+    bars: list[_SessionBar] = []
+    for index, high, low, close in frame[["high", "low", "close"]].itertuples(
+        index=True,
+        name=None,
+    ):
+        moment = to_market_datetime(index)
         if moment.date() != trading_date:
             continue
         if moment >= observed_at:
             continue
         if not MARKET_OPEN <= moment.time() < ENTRY_END:
             continue
-        rows.append((moment, float(row["high"]), float(row["low"]), float(row["close"])))
-    return sorted(rows, key=lambda row: row[0])
+        bars.append(_SessionBar(moment, float(high), float(low), float(close)))
+    return sorted(bars, key=lambda bar: bar.closed_at)
 
 
-def find_opening_range(
-    frame: pd.DataFrame,
-    trading_date: date,
-    observed_at: datetime,
-) -> OpeningRange | None:
-    rows = [
-        row
-        for row in session_rows(frame, trading_date, observed_at)
-        if MARKET_OPEN <= row[0].time() < RANGE_END
-    ]
-    if len(rows) < 5:
-        return None
-    return OpeningRange(
-        high=max(row[1] for row in rows),
-        low=min(row[2] for row in rows),
-    )
-
-
-def find_breakout(
+def find_actionable_breakout(
     frame: pd.DataFrame,
     trading_date: date,
     observed_at: datetime,
 ) -> Breakout | None:
-    opening_range = find_opening_range(frame, trading_date, observed_at)
-    if opening_range is None:
+    bars = _session_bars(frame, trading_date, observed_at)
+    range_bars = [bar for bar in bars if bar.closed_at.time() < RANGE_END]
+    if len(range_bars) < 5:
         return None
-    for moment, _, _, close in session_rows(frame, trading_date, observed_at):
-        if moment.time() < RANGE_END:
-            continue
-        if close > opening_range.high:
-            return Breakout(moment, close, BreakoutSide.LONG, opening_range.low)
-        if close < opening_range.low:
-            return Breakout(moment, close, BreakoutSide.SHORT, opening_range.high)
-    return None
-
-
-def is_latest_breakout(
-    frame: pd.DataFrame,
-    breakout: Breakout,
-    trading_date: date,
-    observed_at: datetime,
-) -> bool:
-    rows = [
-        row for row in session_rows(frame, trading_date, observed_at) if row[0].time() >= RANGE_END
-    ]
-    return bool(rows) and rows[-1][0] == breakout.closed_at
+    opening_range = OpeningRange(
+        high=max(bar.high for bar in range_bars),
+        low=min(bar.low for bar in range_bars),
+    )
+    breakout: Breakout | None = None
+    for bar in bars[len(range_bars) :]:
+        if breakout is not None:
+            return None
+        if bar.close > opening_range.high:
+            breakout = Breakout(
+                bar.closed_at,
+                bar.close,
+                BreakoutSide.LONG,
+                opening_range.low,
+            )
+        elif bar.close < opening_range.low:
+            breakout = Breakout(
+                bar.closed_at,
+                bar.close,
+                BreakoutSide.SHORT,
+                opening_range.high,
+            )
+    return breakout
 
 
 def should_close(moment: datetime) -> bool:
-    return market_datetime(moment).time() >= ENTRY_END
+    return to_market_datetime(moment).time() >= ENTRY_END

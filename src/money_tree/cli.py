@@ -10,8 +10,8 @@ from money_tree.broker import (
     connect_trading_client,
     get_account_snapshot,
     load_broker_config,
+    reconcile_account_snapshot,
     verify_account,
-    verify_account_snapshot,
     verify_asset,
 )
 from money_tree.state import StateStore
@@ -52,7 +52,7 @@ def run_backtest(symbol: str, start_text: str, end_text: str, out: Path) -> dict
         budget=100_000,
         benchmark_asset=symbol,
         parameters={"symbol": symbol, "persist_state": False},
-        config=config.lumibot(),
+        config=config.to_lumibot(),
         timestep="minute",
         market=MARKET,
         show_plot=False,
@@ -78,11 +78,11 @@ def run_live(symbol: str, state_path: Path, *, confirmed: bool) -> None:
     verify_asset(client, symbol)
     store = StateStore(state_path)
     state = store.load()
-    verify_account_snapshot(get_account_snapshot(client, symbol), state)
+    reconcile_account_snapshot(get_account_snapshot(client, symbol), state)
     store.save(state)
     from lumibot.brokers import Alpaca
 
-    broker = Alpaca(config.lumibot())
+    broker = Alpaca(config.to_lumibot())
     if broker.is_paper:
         raise RuntimeError("live broker resolved to a paper account")
     strategy = OpeningRangeBreakout(
