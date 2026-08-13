@@ -14,3 +14,7 @@ src/
         {name}.py
         ...
 ```
+
+[ ] (ntn cli) add the [obr](https://app.notion.com/p/Strategy-3ba2876aac86805894f4db4de547cf12?source=copy_link#3bb2876aac8680e1b7ffdfa3227de388) strategy
+
+[ ] run it with live money; limit daily total risk to $1 i.e. scale trade sizes down and enforce a global stop loss
