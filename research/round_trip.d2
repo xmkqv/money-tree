@@ -1,0 +1,31 @@
+vars: {
+  d2-config: {
+    theme-id: 0
+    layout-engine: dagre
+    sketch: false
+  }
+}
+
+direction: right
+shape: sequence_diagram
+
+strategy: "Strategy"
+market: "Market"
+broker: "Broker"
+account: "Account"
+
+strategy -> market: "observe decision bars"
+market -> strategy: "return bars"
+strategy -> strategy: "decide direction"
+strategy -> broker: "submit entry order"
+broker -> market: "execute after one minute"
+market -> broker: "return execution price"
+broker -> account: "record entry fill"
+broker -> strategy: "report entry fill"
+strategy -> broker: "submit flatten order"
+broker -> market: "execute after one minute"
+market -> broker: "return execution price"
+broker -> account: "record flatten fill"
+broker -> strategy: "report flatten fill"
+account -> strategy: "return profit and loss"
+strategy -> strategy: "calculate transaction cost"
