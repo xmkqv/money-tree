@@ -1,0 +1,89 @@
+canon:
+  aapl: market symbol for apple common stock
+  account: broker-maintained set of cash, positions, and orders for one owner
+  account event: broker report of a change to an account
+  alpaca: brokerage and market-data service
+  average directional index: wilder average of directional price movement strength
+  average entry price: quantity-weighted mean fill price of an open position
+  average true range: wilder average of bar range and gap magnitude
+  backtest: strategy run against historical observations and simulated executions
+  bar: observations for one instrument aggregated over one closed interval
+  bca interval: bias-corrected and accelerated bootstrap confidence interval
+  breakout: event in which an eligible price first crosses a stated boundary
+  broker: service that sends orders to a market and maintains accounts
+  brokerage: interface that accepts orders and cancellation requests and supplies account events
+  cancel: prevent an order's unfilled quantity from executing
+  cancellation: event in which a broker prevents an order's remaining quantity from executing
+  cancellation request: instruction to cancel an order
+  cat fee: regulatory fee that funds the consolidated audit trail
+  commission: broker fee charged for a transaction
+  confidence bound: one-sided endpoint of a confidence interval
+  decide: select an intended direction and quantity
+  decision price: observed price when a strategy decides
+  direction: position sign classified as long, flat, or short
+  eastern time: time observed in the america/new_york zone
+  entry: order or fill that changes a flat position to open
+  estimand: quantity that a statistical analysis estimates
+  execute: change a position according to an order
+  execution cost: decision-price profit and loss minus fill-price profit and loss
+  exit: order or fill that reduces an open position
+  explicit fee: stated commission or regulatory charge
+  fill: event in which a broker executes order quantity at a price and instant
+  fill price: price at which a broker executes order quantity
+  finra trading activity fee: regulatory fee on covered securities sales
+  flatten: submit orders intended to set a position to zero
+  instrument: tradable contract identified by a market symbol
+  live trading: broker mode in which execution changes a live account
+  lumibot: trading strategy execution framework
+  mark price: current price used to value an open position
+  market: venue that publishes prices and executes orders
+  market data: interface that supplies market observations
+  market impact: price change caused by an order
+  nyse: market identifier for the new york stock exchange
+  observation: market or account state received by a strategy
+  observe: receive market or account state without changing it
+  opening range: low-to-high price interval over a stated initial session period
+  oracle: benchmark that decides with future observations
+  order: instruction to change a position under stated conditions
+  order side: instruction to buy or sell
+  p-value: probability measure used to test a statistical hypothesis
+  paper trading: broker mode in which execution changes only a simulated account
+  portfolio value: total market value of account assets
+  position: net signed quantity of one instrument held in an account
+  price: money per instrument unit at a stated source and instant
+  profit and loss: money gained or lost on a position over a stated interval
+  protective stop: order intended to limit loss on an open position
+  quantity: count of instrument units
+  reconciliation: comparison of broker account state with persisted trading state
+  regulatory fee: transaction charge required by a regulator
+  rejection: event in which a broker refuses an order
+  relative strength index: wilder ratio of average gains to average losses on closing prices
+  risk limit: bound that restricts an order or position
+  round trip: trace from a flat position through an entry and complete exit to flat
+  section 31 fee: regulatory fee on covered securities sales
+  simple moving average: arithmetic mean of closing prices over a fixed bar count
+  sip feed: securities information processor market-data feed
+  spread: difference between the best available buy and sell prices
+  spy: market symbol for the spdr s&p 500 etf trust
+  stationary bootstrap: resampling method that preserves local dependence
+  strategy: behavior that maps observations and state to orders
+  submit: send an order to the broker
+  superior predictive ability test: test that compares predictive models with a benchmark
+  swing low: low price below stated preceding and following low prices
+  trading session: market-defined interval in which orders may execute
+  trailing protective stop: protective stop that follows favorable price movement
+  transaction cost: execution cost plus explicit fees
+local: # read-only
+  15-minute momentum: research strategy that follows the previous 15-minute price change
+  environment: market and broker used by a run
+  execution price: price observed one minute after a research decision
+  initial price risk: entry price minus initial protective stop price
+  momentum-long: strategy that trades a daily long trend with protective stops
+  money tree: risk-limited trading system
+  opening-range: strategy that trades the first eligible opening range breakout
+  orb: legacy abbreviation used by retired state files
+  owned order: broker order whose identifier appears in trading state
+  owned position: broker position whose quantity and average entry price match trading state
+  predictive edge: positive lower confidence bound and p-value below 0.05
+  run: one execution with one strategy, one instrument, and one broker account
+  trading state: persisted strategy, instrument, session, position, and owned order data

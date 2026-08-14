@@ -3,4 +3,5 @@ name: TODO
 guides: names, code:python
 ---
 
-- [ ] run the orb strategy with live money
+- [ ] run opening-range with live trading
+- [ ] run momentum-long with live trading
