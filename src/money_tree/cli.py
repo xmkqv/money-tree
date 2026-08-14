@@ -1,68 +1,116 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from money_tree.broker import (
-    connect_trading_client,
+    InstrumentRequirements,
+    connect_broker,
     get_account_snapshot,
     load_broker_config,
-    reconcile_account_snapshot,
+    reconcile_account,
     verify_account,
-    verify_asset,
+    verify_instrument,
 )
+from money_tree.model import StrategyName, TradingMode
 from money_tree.state import StateStore
-from money_tree.strategies.orb import (
-    MARKET,
-    PAPER_STATE_PATH,
-    STATE_PATH,
-    SYMBOL,
-    OpeningRangeBreakout,
+from money_tree.strategies.base import TradingStrategy
+from money_tree.strategies.momentum_long import (
+    BAR_INTERVAL as MOMENTUM_BAR_INTERVAL,
 )
+from money_tree.strategies.momentum_long import (
+    INSTRUMENT as INSTRUMENT_DEFAULT,
+)
+from money_tree.strategies.momentum_long import MomentumLongStrategy
+from money_tree.strategies.opening_range import (
+    BAR_INTERVAL as OPENING_RANGE_BAR_INTERVAL,
+)
+from money_tree.strategies.opening_range import OpeningRangeStrategy
 
+MARKET = "NYSE"
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
+LIVE_CONFIRMATION = TradingMode.LIVE.value
+
+
+@dataclass(frozen=True, slots=True)
+class StrategyConfig:
+    strategy_class: type[TradingStrategy]
+    bar_interval: str
+    requirements: InstrumentRequirements
+
+
+STRATEGIES = {
+    StrategyName.OPENING_RANGE: StrategyConfig(
+        OpeningRangeStrategy,
+        OPENING_RANGE_BAR_INTERVAL,
+        InstrumentRequirements(fractional=True, short=True),
+    ),
+    StrategyName.MOMENTUM_LONG: StrategyConfig(
+        MomentumLongStrategy,
+        MOMENTUM_BAR_INTERVAL,
+        InstrumentRequirements(fractional=False, short=False),
+    ),
+}
+
+
+def default_state_path(strategy: StrategyName, mode: TradingMode) -> Path:
+    return Path(f".money-tree/{strategy.value}-{mode.value}-state.json")
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="money-tree")
-    commands = parser.add_subparsers(dest="command", required=True)
-    backtest = commands.add_parser("backtest")
-    backtest.add_argument("--symbol", default=SYMBOL)
-    backtest.add_argument("--start", default="2026-06-01")
-    backtest.add_argument("--end", default="2026-08-01")
-    backtest.add_argument("--out", type=Path, default=Path("out"))
-    live = commands.add_parser("live")
-    live.add_argument("--symbol", default=SYMBOL)
-    live.add_argument("--state", type=Path, default=STATE_PATH)
-    live.add_argument("--confirm-live", action="store_true")
-    paper = commands.add_parser("paper")
-    paper.add_argument("--symbol", default=SYMBOL)
-    paper.add_argument("--state", type=Path, default=PAPER_STATE_PATH)
+    objects = parser.add_subparsers(dest="object", required=True)
+    strategy = objects.add_parser("strategy")
+    actions = strategy.add_subparsers(dest="action", required=True)
+
+    backtest = actions.add_parser("backtest")
+    backtest.add_argument("strategy_name", type=StrategyName, choices=list(StrategyName))
+    backtest.add_argument("--instrument", default=INSTRUMENT_DEFAULT)
+    backtest.add_argument("--start", type=date.fromisoformat, default=date(2026, 6, 1))
+    backtest.add_argument("--end", type=date.fromisoformat, default=date(2026, 8, 1))
+    backtest.add_argument("--out", type=Path)
+
+    trade = actions.add_parser("trade")
+    trade.add_argument("strategy_name", type=StrategyName, choices=list(StrategyName))
+    trade.add_argument("--mode", type=TradingMode, choices=list(TradingMode), required=True)
+    trade.add_argument("--instrument", default=INSTRUMENT_DEFAULT)
+    trade.add_argument("--state", type=Path)
+    trade.add_argument("--confirm", choices=[LIVE_CONFIRMATION])
     return parser
 
 
-def run_backtest(symbol: str, start_text: str, end_text: str, out: Path) -> dict[str, Any]:
+def run_backtest(
+    strategy: StrategyName,
+    instrument: str,
+    started_on: date,
+    ended_before: date,
+    out: Path,
+) -> dict[str, Any]:
     from lumibot.backtesting import AlpacaBacktesting
 
-    config = load_broker_config(paper=True)
-    start = datetime.fromisoformat(start_text).replace(tzinfo=MARKET_TIMEZONE)
-    end = datetime.fromisoformat(end_text).replace(tzinfo=MARKET_TIMEZONE)
-    if end <= start:
+    if ended_before <= started_on:
         raise ValueError("backtest end must follow its start")
+    config = STRATEGIES[strategy]
+    broker_config = load_broker_config(TradingMode.PAPER)
     out.mkdir(parents=True, exist_ok=True)
     Path("logs").mkdir(parents=True, exist_ok=True)
-    results, _ = OpeningRangeBreakout.run_backtest(
+    results, _ = config.strategy_class.run_backtest(
         datasource_class=AlpacaBacktesting,
-        backtesting_start=start,
-        backtesting_end=end,
+        backtesting_start=datetime.combine(started_on, datetime.min.time(), MARKET_TIMEZONE),
+        backtesting_end=datetime.combine(ended_before, datetime.min.time(), MARKET_TIMEZONE),
         budget=100_000,
-        benchmark_asset=symbol,
-        parameters={"symbol": symbol, "persist_state": False},
-        config=config.to_lumibot(),
-        timestep="minute",
+        benchmark_asset=instrument,
+        parameters={
+            "instrument": instrument,
+            "persisted": False,
+            "state_path": default_state_path(strategy, TradingMode.PAPER),
+        },
+        config=broker_config.to_lumibot(),
+        timestep=config.bar_interval,
         market=MARKET,
         show_plot=False,
         show_tearsheet=False,
@@ -78,55 +126,77 @@ def run_backtest(symbol: str, start_text: str, end_text: str, out: Path) -> dict
     return results
 
 
-def run_trading(symbol: str, state_path: Path, *, paper: bool) -> None:
-    config = load_broker_config(paper=paper)
-    client = connect_trading_client(config)
+def run_trade(
+    strategy: StrategyName,
+    instrument: str,
+    mode: TradingMode,
+    state_path: Path,
+    *,
+    confirmation: str | None,
+) -> None:
+    if mode is TradingMode.LIVE and confirmation != LIVE_CONFIRMATION:
+        raise RuntimeError("live trading requires --confirm live")
+    if mode is TradingMode.PAPER and confirmation is not None:
+        raise ValueError("--confirm is valid only for live trading")
+    strategy_config = STRATEGIES[strategy]
+    broker_config = load_broker_config(mode)
+    client = connect_broker(broker_config)
     verify_account(client)
-    verify_asset(client, symbol)
-    store = StateStore(state_path)
+    verify_instrument(client, instrument, strategy_config.requirements)
+    store = StateStore(state_path, strategy=strategy, instrument=instrument)
     state = store.load()
-    reconcile_account_snapshot(get_account_snapshot(client, symbol), state)
+    reconcile_account(get_account_snapshot(client, instrument), state)
     store.save(state)
+
     from lumibot.brokers import Alpaca
 
-    broker = Alpaca(config.to_lumibot())
-    if paper and not broker.is_paper:
-        raise RuntimeError("paper broker resolved to a live account")
-    if not paper and broker.is_paper:
-        raise RuntimeError("live broker resolved to a paper account")
-    strategy = OpeningRangeBreakout(
+    broker = Alpaca(broker_config.to_lumibot())
+    if mode is TradingMode.PAPER and not broker.is_paper:
+        raise RuntimeError("paper mode resolved to a live account")
+    if mode is TradingMode.LIVE and broker.is_paper:
+        raise RuntimeError("live mode resolved to a paper account")
+    running_strategy = strategy_config.strategy_class(
         broker=broker,
-        parameters={"symbol": symbol, "state_path": state_path, "persist_state": True},
+        parameters={
+            "instrument": instrument,
+            "state_path": state_path,
+            "persisted": True,
+        },
     )
-    strategy.run_live()
-
-
-def run_live(symbol: str, state_path: Path, *, confirmed: bool) -> None:
-    if not confirmed:
-        raise RuntimeError("live trading requires --confirm-live")
-    run_trading(symbol, state_path, paper=False)
-
-
-def run_paper(symbol: str, state_path: Path) -> None:
-    run_trading(symbol, state_path, paper=True)
+    running_strategy.run_live()
 
 
 def main() -> None:
     arguments = build_parser().parse_args()
-    if arguments.command == "backtest":
-        results = run_backtest(arguments.symbol, arguments.start, arguments.end, arguments.out)
+    if arguments.object != "strategy":
+        raise RuntimeError(f"unsupported object {arguments.object!r}")
+    strategy = StrategyName(arguments.strategy_name)
+    if arguments.action == "backtest":
+        out = arguments.out or Path("out") / strategy.value
+        results = run_backtest(
+            strategy,
+            arguments.instrument,
+            arguments.start,
+            arguments.end,
+            out,
+        )
         for name in ("total_return", "max_drawdown", "sharpe"):
             if name in results:
                 print(f"{name}: {results[name]}")
-        print(f"reports: {arguments.out}")
+        print(f"reports: {out}")
         return
-    if arguments.command == "live":
-        run_live(arguments.symbol, arguments.state, confirmed=arguments.confirm_live)
+    if arguments.action == "trade":
+        mode = TradingMode(arguments.mode)
+        state_path = arguments.state or default_state_path(strategy, mode)
+        run_trade(
+            strategy,
+            arguments.instrument,
+            mode,
+            state_path,
+            confirmation=arguments.confirm,
+        )
         return
-    if arguments.command == "paper":
-        run_paper(arguments.symbol, arguments.state)
-        return
-    raise RuntimeError(f"unsupported command {arguments.command!r}")
+    raise RuntimeError(f"unsupported strategy action {arguments.action!r}")
 
 
 if __name__ == "__main__":
