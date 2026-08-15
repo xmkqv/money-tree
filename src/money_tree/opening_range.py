@@ -5,7 +5,7 @@ from datetime import date, datetime, time
 
 import polars as pl
 
-from money_tree.bars import MARKET_TIMEZONE, market_datetime_expression, normalize_price_bars
+from money_tree.bars import market_datetime_expression, normalize_price_bars, to_market_datetime
 from money_tree.model import Direction
 
 SESSION_OPEN = time(9, 30)
@@ -32,18 +32,6 @@ class Breakout:
     protective_stop_price: float
 
 
-def to_market_datetime(value: object) -> datetime:
-    if isinstance(value, datetime):
-        moment = value
-    elif isinstance(value, str):
-        moment = datetime.fromisoformat(value)
-    else:
-        raise TypeError(f"unsupported timestamp {value!r}")
-    if moment.tzinfo is None:
-        return moment.replace(tzinfo=MARKET_TIMEZONE)
-    return moment.astimezone(MARKET_TIMEZONE)
-
-
 def find_breakout(
     frame: pl.DataFrame,
     session_date: date,
@@ -58,9 +46,9 @@ def find_breakout(
         frame.lazy()
         .select(
             closed_at.alias("closed_at"),
-            pl.col("high").cast(pl.Float64),
-            pl.col("low").cast(pl.Float64),
-            pl.col("close").cast(pl.Float64),
+            "high",
+            "low",
+            "close",
         )
         .filter(
             (pl.col("closed_at").dt.date() == session_date)
@@ -120,5 +108,5 @@ def find_breakout(
     )
 
 
-def should_flatten(moment: datetime) -> bool:
+def has_entry_window_ended(moment: datetime) -> bool:
     return to_market_datetime(moment).time() >= ENTRY_END

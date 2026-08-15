@@ -32,7 +32,16 @@ def wilder_average(values: pl.Expr, period: int) -> pl.Expr:
     return pl.when(valid).then(average).otherwise(None)
 
 
-def indicator_plan(frame: pl.DataFrame) -> pl.LazyFrame:
+def swing_low_expression(span: int) -> pl.Expr:
+    if span <= 0:
+        raise ValueError("swing span must be positive")
+    low = pl.col("low")
+    return pl.all_horizontal(
+        low < low.shift(offset) for offset in range(-span, span + 1) if offset != 0
+    )
+
+
+def lazy_indicators(frame: pl.DataFrame) -> pl.LazyFrame:
     values = normalize_price_bars(frame).lazy()
     close = pl.col("close")
     high = pl.col("high")
@@ -104,4 +113,4 @@ def indicator_plan(frame: pl.DataFrame) -> pl.LazyFrame:
 
 
 def calculate_indicators(frame: pl.DataFrame) -> pl.DataFrame:
-    return indicator_plan(frame).collect()
+    return lazy_indicators(frame).collect()

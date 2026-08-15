@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import polars as pl
 
+MARKET = "NYSE"
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
 PRICE_COLUMNS = ("high", "low", "close")
 
@@ -33,3 +35,15 @@ def market_datetime_expression(
     if datetime_dtype.time_zone is None:
         return moment.dt.replace_time_zone(MARKET_TIMEZONE.key)
     return moment.dt.convert_time_zone(MARKET_TIMEZONE.key)
+
+
+def to_market_datetime(value: object) -> datetime:
+    if isinstance(value, datetime):
+        moment = value
+    elif isinstance(value, str):
+        moment = datetime.fromisoformat(value)
+    else:
+        raise TypeError(f"unsupported timestamp {value!r}")
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=MARKET_TIMEZONE)
+    return moment.astimezone(MARKET_TIMEZONE)
