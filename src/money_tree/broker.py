@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import cast
 
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import QueryOrderStatus
@@ -12,18 +11,22 @@ from alpaca.trading.requests import GetOrdersRequest
 
 from money_tree.model import Direction, OrderRole, TradingMode, TradingState
 
+API_KEY_VARIABLE = "ALPACA_API_KEY"
+API_SECRET_VARIABLE = "ALPACA_API_SECRET"
+
 
 @dataclass(frozen=True, slots=True)
-class BrokerConfig:
+class BrokerConfiguration:
     api_key: str
     api_secret: str
-    mode: TradingMode
+    trading_mode: TradingMode
 
-    def to_lumibot(self) -> dict[str, str | bool]:
+    @property
+    def lumibot_values(self) -> dict[str, str | bool]:
         return {
             "API_KEY": self.api_key,
             "API_SECRET": self.api_secret,
-            "PAPER": self.mode is TradingMode.PAPER,
+            "PAPER": self.trading_mode is TradingMode.PAPER,
         }
 
 
@@ -37,42 +40,55 @@ class InstrumentRequirements:
 class AccountSnapshot:
     position_quantity: Decimal | None
     position_average_entry_price: Decimal | None
-    open_order_ids: frozenset[str]
+    open_order_identifiers: frozenset[str]
 
 
-def load_broker_config(mode: TradingMode) -> BrokerConfig:
-    prefix = "ALPACA_" if mode is TradingMode.PAPER else "ALPACA_LIVE_"
-    key_name = f"{prefix}API_KEY"
-    secret_name = f"{prefix}API_SECRET"
-    api_key = os.environ.get(key_name)
-    api_secret = os.environ.get(secret_name)
+def load_broker_configuration(trading_mode: TradingMode) -> BrokerConfiguration:
+    api_key = os.environ.get(API_KEY_VARIABLE)
+    api_secret = os.environ.get(API_SECRET_VARIABLE)
     if not api_key or not api_secret:
-        raise RuntimeError(f"missing {key_name} or {secret_name}")
-    return BrokerConfig(api_key=api_key, api_secret=api_secret, mode=mode)
-
-
-def connect_broker(config: BrokerConfig) -> TradingClient:
-    return TradingClient(
-        config.api_key,
-        config.api_secret,
-        paper=config.mode is TradingMode.PAPER,
+        raise RuntimeError(f"missing {API_KEY_VARIABLE} or {API_SECRET_VARIABLE}")
+    return BrokerConfiguration(
+        api_key=api_key,
+        api_secret=api_secret,
+        trading_mode=trading_mode,
     )
 
 
-def verify_account(client: TradingClient) -> None:
-    account = cast(TradeAccount, client.get_account())
+def connect_broker(configuration: BrokerConfiguration) -> TradingClient:
+    return TradingClient(
+        configuration.api_key,
+        configuration.api_secret,
+        paper=configuration.trading_mode is TradingMode.PAPER,
+    )
+
+
+def _require_type[Value](value: object, expected: type[Value], name: str) -> Value:
+    if not isinstance(value, expected):
+        raise TypeError(f"Alpaca {name} response has an invalid type")
+    return value
+
+
+def _require_list[Value](values: object, expected: type[Value], name: str) -> list[Value]:
+    if not isinstance(values, list) or not all(isinstance(value, expected) for value in values):
+        raise TypeError(f"Alpaca {name} response has an invalid type")
+    return values
+
+
+def require_active_account(client: TradingClient) -> None:
+    account = _require_type(client.get_account(), TradeAccount, "account")
     if str(account.status).lower().split(".")[-1] != "active":
-        raise RuntimeError(f"alpaca account is not active: {account.status}")
+        raise RuntimeError(f"Alpaca account is not active: {account.status}")
     if account.trading_blocked:
-        raise RuntimeError("alpaca account is blocked from trading")
+        raise RuntimeError("Alpaca account is blocked from trading")
 
 
-def verify_instrument(
+def require_instrument_capabilities(
     client: TradingClient,
     instrument: str,
     requirements: InstrumentRequirements,
 ) -> None:
-    vendor_instrument = cast(Asset, client.get_asset(instrument))
+    vendor_instrument = _require_type(client.get_asset(instrument), Asset, "asset")
     if not vendor_instrument.tradable:
         raise RuntimeError(f"{instrument} is not tradable")
     if requirements.fractional and not vendor_instrument.fractionable:
@@ -86,14 +102,15 @@ def verify_instrument(
 def get_account_snapshot(client: TradingClient, instrument: str) -> AccountSnapshot:
     positions = [
         position
-        for position in cast(list[Position], client.get_all_positions())
+        for position in _require_list(client.get_all_positions(), Position, "positions")
         if position.symbol == instrument
     ]
-    orders = cast(
-        list[Order],
+    orders = _require_list(
         client.get_orders(
             filter=GetOrdersRequest(status=QueryOrderStatus.OPEN, symbols=[instrument])
         ),
+        Order,
+        "orders",
     )
     position = positions[0] if positions else None
     return AccountSnapshot(
@@ -101,23 +118,23 @@ def get_account_snapshot(client: TradingClient, instrument: str) -> AccountSnaps
         position_average_entry_price=(
             Decimal(position.avg_entry_price) if position is not None else None
         ),
-        open_order_ids=frozenset(str(order.id) for order in orders),
+        open_order_identifiers=frozenset(str(order.id) for order in orders),
     )
 
 
 def reconcile_account(snapshot: AccountSnapshot, state: TradingState) -> None:
-    unknown_order_ids = snapshot.open_order_ids - state.orders.ids
-    if unknown_order_ids:
+    unknown_identifiers = snapshot.open_order_identifiers - state.orders.identifiers
+    if unknown_identifiers:
         raise RuntimeError("the selected instrument has a broker order that is not an owned order")
     for role in OrderRole:
-        identifier = state.orders.get_id(role)
-        if identifier is not None and identifier not in snapshot.open_order_ids:
-            state.orders.set_id(role, None)
+        identifier = state.orders.get_identifier(role)
+        if identifier is not None and identifier not in snapshot.open_order_identifiers:
+            state.orders.set_identifier(role, None)
     if snapshot.position_quantity is None:
         if state.position.direction is not Direction.FLAT:
             raise RuntimeError("broker position is missing from the selected trading state")
         if any(
-            state.orders.get_id(role) is not None
+            state.orders.get_identifier(role) is not None
             for role in (OrderRole.PROTECTIVE_STOP, OrderRole.FLATTEN)
         ):
             raise RuntimeError("a position order exists without a broker position")
