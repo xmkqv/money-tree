@@ -5,7 +5,7 @@ terms: ../names.yaml
 
 # boundary
 
-- this research is an isolated aapl momentum[15m] experiment
+- this research estimates break-even directional accuracy for aapl momentum[15m]
 - this research does not evaluate opening-range or momentum-long
 - research output is not product-strategy evidence
 - market observations come from the alpaca sip feed
@@ -16,15 +16,15 @@ terms: ../names.yaml
 - each fill crosses an assumed three-cent spread
 - market impact is zero by assumption
 
-# transaction cost
+# cost
 
 - explicit fees use the stated commission and regulatory fee rates
 - regulatory fees include the section 31 fee, finra trading activity fee, and cat fee
 - fee amounts round upward to the nearest cent by trading session
 
-# evidence
+# break-even accuracy
 
-- the estimand is mean session net profit and loss
+- correct and incorrect forecasts have equal mean absolute price moves
+- the estimand is the directional accuracy that offsets mean transaction cost
 - the stationary bootstrap preserves local dependence between sessions
-- the lower confidence bound uses a one-sided 95 percent bca interval
-- the superior predictive ability test compares momentum with a zero-loss benchmark
+- the upper confidence bound uses a one-sided 95 percent bca interval
