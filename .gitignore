@@ -12,6 +12,7 @@ wheels/
 
 # Virtual environments
 .venv/
+.railway/
 
 # Secrets
 .secrets/

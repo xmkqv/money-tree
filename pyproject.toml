@@ -20,6 +20,7 @@ classifiers = [
 
 [project.scripts]
 money-tree = "money_tree.cli:main"
+money-tree-worker = "money_tree.worker:main"
 
 [build-system]
 requires = ["hatchling>=1.27"]
