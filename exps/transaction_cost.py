@@ -1,4 +1,5 @@
-from world import (
+from exps.world import (
+    DECISION_INTERVAL,
     INSTRUMENT,
     N_SHARE,
     RATE_SECTION_31,
@@ -13,7 +14,7 @@ from world import (
 
 
 def print_claim(study: ResearchStudy) -> None:
-    result = study.fifteen_minute_momentum
+    result = study.momentum[DECISION_INTERVAL]
     directional = result.decision_profit_and_loss != 0
     if not directional.any():
         raise RuntimeError("claim requires nonzero target price changes")
@@ -35,7 +36,7 @@ def print_claim(study: ResearchStudy) -> None:
         f"{INSTRUMENT} sip feed | {observations.session_range.started_on} "
         f"<= session < {observations.session_range.ended_before}"
     )
-    print("strategy | isolated 15-minute momentum | 1 share | flat after each horizon")
+    print("strategy | isolated momentum[15m] | 1 share | flat after each horizon")
     print("execution | 1-minute delay | assumed spread=$0.03 | no market impact")
     print(
         "alpaca 2026-07-20 | "

@@ -5,7 +5,7 @@ terms: ../names.yaml
 
 # boundary
 
-- this research is an isolated aapl 15-minute momentum experiment
+- this research is an isolated aapl momentum[15m] experiment
 - this research does not evaluate opening-range or momentum-long
 - research output is not product-strategy evidence
 - market observations come from the alpaca sip feed

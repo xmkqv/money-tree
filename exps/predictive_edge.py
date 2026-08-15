@@ -3,7 +3,9 @@ from math import ceil, isfinite
 
 import numpy as np
 from arch.bootstrap import SPA, StationaryBootstrap, optimal_block_length
-from world import (
+
+from exps.world import (
+    DECISION_INTERVAL,
     INSTRUMENT,
     N_SESSION_MIN,
     FloatArray,
@@ -89,7 +91,7 @@ def print_claim(study: ResearchStudy, evidence: PredictiveEdgeEvidence) -> None:
         f"<= session < {observations.session_range.ended_before}"
     )
     print("boundary | isolated research | not product-strategy evidence")
-    print("estimand | mean session net profit and loss of 15-minute momentum")
+    print("estimand | mean session net profit and loss of momentum[15m]")
     print("benchmark | cash | session loss=0")
     print(
         f"sample | complete_sessions={len(observations.session_dates)} "
@@ -111,7 +113,7 @@ def print_claim(study: ResearchStudy, evidence: PredictiveEdgeEvidence) -> None:
 def main() -> None:
     study = build_research_study(parse_session_range("predictive-edge"))
     evidence = calculate_predictive_edge_evidence(
-        study.fifteen_minute_momentum.net_profit_and_loss_by_session
+        study.momentum[DECISION_INTERVAL].net_profit_and_loss_by_session
     )
     print_claim(study, evidence)
 
