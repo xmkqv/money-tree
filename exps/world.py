@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from typing import cast
@@ -123,7 +123,7 @@ class RoundTripResult:
 @dataclass(frozen=True, slots=True)
 class ResearchStudy:
     observations: MarketObservations
-    fifteen_minute_momentum: RoundTripResult
+    momentum: Mapping[timedelta, RoundTripResult]
     oracle: RoundTripResult
 
 
@@ -277,7 +277,7 @@ def execute_orders(
     )
 
 
-def decide_fifteen_minute_momentum_orders(observations: MarketObservations) -> OrderBatch:
+def decide_momentum_orders(observations: MarketObservations) -> OrderBatch:
     return OrderBatch(
         np.sign(observations.decision_prices[:, 1:-1] - observations.decision_prices[:, :-2])
     )
@@ -295,7 +295,7 @@ def build_research_study(session_range: SessionRange) -> ResearchStudy:
         raise RuntimeError(f"research requires at least {N_SESSION_MIN} complete sessions")
     return ResearchStudy(
         observations,
-        execute_orders(observations, decide_fifteen_minute_momentum_orders(observations)),
+        {DECISION_INTERVAL: execute_orders(observations, decide_momentum_orders(observations))},
         execute_orders(observations, decide_oracle_orders(observations)),
     )
 

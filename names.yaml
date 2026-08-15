@@ -39,6 +39,7 @@ canon:
   market: venue that publishes prices and executes orders
   market data: interface that supplies market observations
   market impact: price change caused by an order
+  momentum: tendency for recent price movement to continue
   nyse: market identifier for the new york stock exchange
   observation: market or account state received by a strategy
   observe: receive market or account state without changing it
@@ -74,7 +75,6 @@ canon:
   trailing protective stop: protective stop that follows favorable price movement
   transaction cost: execution cost plus explicit fees
 local: # read-only
-  15-minute momentum: research strategy that follows the previous 15-minute price change
   environment: market and broker used by a run
   execution price: price observed one minute after a research decision
   initial price risk: entry price minus initial protective stop price
