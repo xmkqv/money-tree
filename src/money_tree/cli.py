@@ -30,6 +30,8 @@ from money_tree.strategies.opening_range import (
     BAR_INTERVAL as OPENING_RANGE_BAR_INTERVAL,
 )
 from money_tree.strategies.opening_range import OpeningRangeStrategy
+from money_tree.strategies.tfb_50 import BAR_INTERVAL as TFB_50_BAR_INTERVAL
+from money_tree.strategies.tfb_50 import Tfb50Strategy
 
 MARKET = "NYSE"
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
@@ -52,6 +54,11 @@ STRATEGIES = {
     StrategyName.MOMENTUM_LONG: StrategyConfig(
         MomentumLongStrategy,
         MOMENTUM_BAR_INTERVAL,
+        InstrumentRequirements(fractional=False, short=False),
+    ),
+    StrategyName.TFB_50: StrategyConfig(
+        Tfb50Strategy,
+        TFB_50_BAR_INTERVAL,
         InstrumentRequirements(fractional=False, short=False),
     ),
 }

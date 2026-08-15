@@ -30,6 +30,14 @@ class LoadWorkerConfigTest(unittest.TestCase):
             WorkerConfig(StrategyName.MOMENTUM_LONG, TradingMode.LIVE),
         )
 
+    def test_loads_tfb_50_strategy(self) -> None:
+        config = load_worker_config({"MONEY_TREE_STRATEGY": "tfb-50"})
+
+        self.assertEqual(
+            config,
+            WorkerConfig(StrategyName.TFB_50, TradingMode.PAPER),
+        )
+
     def test_rejects_missing_strategy(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "missing MONEY_TREE_STRATEGY"):
             load_worker_config({})

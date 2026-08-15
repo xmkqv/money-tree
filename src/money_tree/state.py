@@ -73,8 +73,25 @@ def _require_optional_decimal(value: object, name: str) -> Decimal | None:
     return _require_decimal(value, name)
 
 
+def _require_optional_date(value: object, name: str) -> date | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise LoadTradingStateError(f"{name} must be ISO date text or null")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise LoadTradingStateError(f"{name} must be ISO date text or null") from error
+
+
 def _dump_decimal(value: Decimal | None) -> str | None:
     return None if value is None else str(value)
+
+
+def _dump_strategy_value(value: Decimal | date | None) -> str | None:
+    if isinstance(value, date):
+        return value.isoformat()
+    return _dump_decimal(value)
 
 
 class StateStore:
@@ -171,10 +188,16 @@ class StateStore:
         detail_fields = {item.name for item in fields(strategy_state)}
         _require_keys(detail, detail_fields, detail_key)
         for item in fields(strategy_state):
+            item_name = f"{detail_key}.{item.name}"
+            value = (
+                _require_optional_date(detail[item.name], item_name)
+                if item.name.endswith("_on")
+                else _require_optional_decimal(detail[item.name], item_name)
+            )
             setattr(
                 strategy_state,
                 item.name,
-                _require_optional_decimal(detail[item.name], f"{detail_key}.{item.name}"),
+                value,
             )
         owned_orders = OwnedOrderState()
         for role in OrderRole:
@@ -209,7 +232,7 @@ class StateStore:
         if strategy_state is None:
             raise RuntimeError("strategy state is not initialized")
         detail = {
-            item.name: _dump_decimal(getattr(strategy_state, item.name))
+            item.name: _dump_strategy_value(getattr(strategy_state, item.name))
             for item in fields(strategy_state)
         }
         return {

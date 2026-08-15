@@ -1,7 +1,7 @@
 [project]
 name = "money-tree"
 version = "0.1.0"
-description = "A two-strategy risk-limited trading system"
+description = "A three-strategy risk-limited trading system"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.13,<3.15"
