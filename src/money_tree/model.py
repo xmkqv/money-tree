@@ -10,6 +10,7 @@ from typing import assert_never
 class StrategyName(StrEnum):
     OPENING_RANGE = "opening-range"
     MOMENTUM_LONG = "momentum-long"
+    TFB_50 = "tfb-50"
 
 
 class TradingMode(StrEnum):
@@ -132,7 +133,14 @@ class MomentumLongState:
     highest_price: Decimal | None = None
 
 
-type StrategyState = OpeningRangeState | MomentumLongState
+@dataclass(slots=True)
+class Tfb50State:
+    entered_on: date | None = None
+    initial_protective_stop_price: Decimal | None = None
+    active_protective_stop_price: Decimal | None = None
+
+
+type StrategyState = OpeningRangeState | MomentumLongState | Tfb50State
 
 
 def create_strategy_state(strategy: StrategyName) -> StrategyState:
@@ -141,6 +149,8 @@ def create_strategy_state(strategy: StrategyName) -> StrategyState:
             return OpeningRangeState()
         case StrategyName.MOMENTUM_LONG:
             return MomentumLongState()
+        case StrategyName.TFB_50:
+            return Tfb50State()
     assert_never(strategy)
 
 
@@ -168,6 +178,8 @@ class TradingState:
             self.strategy_state, MomentumLongState
         ):
             raise ValueError("momentum-long trading state requires momentum-long state")
+        if self.strategy is StrategyName.TFB_50 and not isinstance(self.strategy_state, Tfb50State):
+            raise ValueError("tfb-50 trading state requires tfb-50 state")
 
     def validate(self) -> None:
         self.__post_init__()
@@ -193,10 +205,23 @@ class TradingState:
                 getattr(strategy_state, item.name) is None for item in fields(strategy_state)
             ):
                 raise ValueError("a momentum-long position requires complete protection state")
+        elif isinstance(strategy_state, Tfb50State):
+            if self.position.direction is Direction.SHORT:
+                raise ValueError("tfb-50 position must not be short")
+            if self.position.direction is Direction.LONG and any(
+                getattr(strategy_state, item.name) is None for item in fields(strategy_state)
+            ):
+                raise ValueError("a tfb-50 position requires complete protection state")
+            if strategy_state.entered_on is not None and not isinstance(
+                strategy_state.entered_on, date
+            ):
+                raise ValueError("tfb-50 entry date must use a date value")
         else:
             raise RuntimeError("strategy state is not initialized")
         strategy_prices = tuple(
-            getattr(strategy_state, item.name) for item in fields(strategy_state)
+            getattr(strategy_state, item.name)
+            for item in fields(strategy_state)
+            if item.name.endswith("_price")
         )
         if any(
             value is not None
