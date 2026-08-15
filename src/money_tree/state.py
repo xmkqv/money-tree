@@ -4,22 +4,22 @@ import json
 import os
 import tempfile
 from collections.abc import Mapping
-from dataclasses import fields
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import cast
+from typing import assert_never, cast
 
 from money_tree.model import (
+    MomentumLongState,
+    OpeningRangeState,
     OrderRole,
     OwnedOrderState,
     PositionState,
     StrategyName,
+    StrategyState,
+    Tfb50State,
     TradingState,
-    create_strategy_state,
 )
-
-STATE_VERSION = 1
 
 
 class LoadTradingStateError(ValueError):
@@ -84,14 +84,98 @@ def _require_optional_date(value: object, name: str) -> date | None:
         raise LoadTradingStateError(f"{name} must be ISO date text or null") from error
 
 
+def _parse_strategy_state(
+    strategy: StrategyName,
+    values: Mapping[str, object],
+) -> StrategyState:
+    match strategy:
+        case StrategyName.OPENING_RANGE:
+            keys = {"protective_stop_price"}
+            _require_keys(values, keys, "strategy_state")
+            return OpeningRangeState(
+                protective_stop_price=_require_optional_decimal(
+                    values["protective_stop_price"],
+                    "strategy_state.protective_stop_price",
+                )
+            )
+        case StrategyName.MOMENTUM_LONG:
+            keys = {
+                "entry_price",
+                "initial_protective_stop_price",
+                "active_protective_stop_price",
+                "trail_activation_price",
+                "highest_price",
+            }
+            _require_keys(values, keys, "strategy_state")
+            return MomentumLongState(
+                entry_price=_require_optional_decimal(
+                    values["entry_price"], "strategy_state.entry_price"
+                ),
+                initial_protective_stop_price=_require_optional_decimal(
+                    values["initial_protective_stop_price"],
+                    "strategy_state.initial_protective_stop_price",
+                ),
+                active_protective_stop_price=_require_optional_decimal(
+                    values["active_protective_stop_price"],
+                    "strategy_state.active_protective_stop_price",
+                ),
+                trail_activation_price=_require_optional_decimal(
+                    values["trail_activation_price"],
+                    "strategy_state.trail_activation_price",
+                ),
+                highest_price=_require_optional_decimal(
+                    values["highest_price"], "strategy_state.highest_price"
+                ),
+            )
+        case StrategyName.TFB_50:
+            keys = {
+                "entered_on",
+                "initial_protective_stop_price",
+                "active_protective_stop_price",
+            }
+            _require_keys(values, keys, "strategy_state")
+            return Tfb50State(
+                entered_on=_require_optional_date(
+                    values["entered_on"], "strategy_state.entered_on"
+                ),
+                initial_protective_stop_price=_require_optional_decimal(
+                    values["initial_protective_stop_price"],
+                    "strategy_state.initial_protective_stop_price",
+                ),
+                active_protective_stop_price=_require_optional_decimal(
+                    values["active_protective_stop_price"],
+                    "strategy_state.active_protective_stop_price",
+                ),
+            )
+    assert_never(strategy)
+
+
 def _dump_decimal(value: Decimal | None) -> str | None:
     return None if value is None else str(value)
 
 
-def _dump_strategy_value(value: Decimal | date | None) -> str | None:
-    if isinstance(value, date):
-        return value.isoformat()
-    return _dump_decimal(value)
+def _dump_strategy_state(state: StrategyState) -> dict[str, object]:
+    if isinstance(state, OpeningRangeState):
+        return {"protective_stop_price": _dump_decimal(state.protective_stop_price)}
+    if isinstance(state, MomentumLongState):
+        return {
+            "entry_price": _dump_decimal(state.entry_price),
+            "initial_protective_stop_price": _dump_decimal(
+                state.initial_protective_stop_price
+            ),
+            "active_protective_stop_price": _dump_decimal(state.active_protective_stop_price),
+            "trail_activation_price": _dump_decimal(state.trail_activation_price),
+            "highest_price": _dump_decimal(state.highest_price),
+        }
+    if isinstance(state, Tfb50State):
+        return {
+            "entered_on": state.entered_on.isoformat() if state.entered_on else None,
+            "initial_protective_stop_price": _dump_decimal(
+                state.initial_protective_stop_price
+            ),
+            "active_protective_stop_price": _dump_decimal(state.active_protective_stop_price),
+        }
+    raise TypeError(f"unsupported strategy state {type(state).__name__}")
 
 
 class StateStore:
@@ -137,106 +221,75 @@ class StateStore:
         if self.path is None:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        payload = self._dump(state)
         handle, temporary_name = tempfile.mkstemp(dir=self.path.parent, prefix=self.path.name)
         temporary_path = Path(temporary_name)
         try:
             with os.fdopen(handle, "w") as stream:
-                json.dump(payload, stream, indent=2, sort_keys=True)
+                json.dump(self._dump(state), stream, indent=2, sort_keys=True)
                 stream.write("\n")
             temporary_path.replace(self.path)
         finally:
             temporary_path.unlink(missing_ok=True)
 
     def _parse(self, payload: Mapping[str, object]) -> TradingState:
-        common_keys = {
-            "version",
-            "strategy",
-            "instrument",
-            "session_date",
-            "entered",
-            "disabled",
-            "position",
-            "orders",
-        }
-        strategy_text = _require_text(payload.get("strategy"), "strategy")
+        _require_keys(
+            payload,
+            {
+                "strategy",
+                "instrument",
+                "session_date",
+                "entered",
+                "disabled",
+                "position",
+                "orders",
+                "strategy_state",
+            },
+            "trading state",
+        )
+        strategy_text = _require_text(payload["strategy"], "strategy")
         try:
             strategy = StrategyName(strategy_text)
         except ValueError as error:
             raise LoadTradingStateError(f"unsupported strategy {strategy_text!r}") from error
-        detail_key = strategy.value.replace("-", "_")
-        _require_keys(payload, common_keys | {detail_key}, "trading state")
-        if payload["version"] != STATE_VERSION:
-            raise LoadTradingStateError(f"unsupported trading state version {payload['version']!r}")
-        session_value = payload["session_date"]
-        if session_value is not None and not isinstance(session_value, str):
-            raise LoadTradingStateError("session_date must be ISO date text or null")
-        try:
-            session_date = date.fromisoformat(session_value) if session_value is not None else None
-        except ValueError as error:
-            raise LoadTradingStateError("session_date must be ISO date text or null") from error
         position_values = _require_mapping(payload["position"], "position")
         _require_keys(
             position_values,
             {"quantity", "average_entry_price", "realized_profit_and_loss"},
             "position",
         )
-        orders = _require_mapping(payload["orders"], "orders")
-        _require_keys(orders, {role.value for role in OrderRole}, "orders")
-        detail = _require_mapping(payload[detail_key], detail_key)
-        strategy_state = create_strategy_state(strategy)
-        detail_fields = {item.name for item in fields(strategy_state)}
-        _require_keys(detail, detail_fields, detail_key)
-        for item in fields(strategy_state):
-            item_name = f"{detail_key}.{item.name}"
-            value = (
-                _require_optional_date(detail[item.name], item_name)
-                if item.name.endswith("_on")
-                else _require_optional_decimal(detail[item.name], item_name)
-            )
-            setattr(
-                strategy_state,
-                item.name,
-                value,
-            )
-        owned_orders = OwnedOrderState()
+        order_values = _require_mapping(payload["orders"], "orders")
+        _require_keys(order_values, {role.value for role in OrderRole}, "orders")
+        orders = OwnedOrderState()
         for role in OrderRole:
-            owned_orders.set_id(
+            orders.set_identifier(
                 role,
-                _require_optional_text(orders[role.value], f"orders.{role.value}"),
+                _require_optional_text(order_values[role.value], f"orders.{role.value}"),
             )
+        strategy_values = _require_mapping(payload["strategy_state"], "strategy_state")
         return TradingState(
             strategy=strategy,
             instrument=_require_text(payload["instrument"], "instrument"),
-            session_date=session_date,
+            session_date=_require_optional_date(payload["session_date"], "session_date"),
             entered=_require_boolean(payload["entered"], "entered"),
             disabled=_require_boolean(payload["disabled"], "disabled"),
             position=PositionState(
                 quantity=_require_decimal(position_values["quantity"], "position.quantity"),
                 average_entry_price=_require_decimal(
-                    position_values["average_entry_price"],
-                    "position.average_entry_price",
+                    position_values["average_entry_price"], "position.average_entry_price"
                 ),
                 realized_profit_and_loss=_require_decimal(
                     position_values["realized_profit_and_loss"],
                     "position.realized_profit_and_loss",
                 ),
             ),
-            orders=owned_orders,
-            strategy_state=strategy_state,
+            orders=orders,
+            strategy_state=_parse_strategy_state(strategy, strategy_values),
         )
 
     def _dump(self, state: TradingState) -> dict[str, object]:
-        detail_key = state.strategy.value.replace("-", "_")
-        strategy_state = state.strategy_state
-        if strategy_state is None:
+        if state.strategy_state is None:
             raise RuntimeError("strategy state is not initialized")
-        detail = {
-            item.name: _dump_strategy_value(getattr(strategy_state, item.name))
-            for item in fields(strategy_state)
-        }
         return {
-            "version": STATE_VERSION,
             "strategy": state.strategy.value,
             "instrument": state.instrument,
             "session_date": state.session_date.isoformat() if state.session_date else None,
@@ -247,6 +300,9 @@ class StateStore:
                 "average_entry_price": str(state.position.average_entry_price),
                 "realized_profit_and_loss": str(state.position.realized_profit_and_loss),
             },
-            "orders": {role.value: state.orders.get_id(role) for role in OrderRole},
-            detail_key: detail,
+            "orders": {
+                role.value: state.orders.get_identifier(role)
+                for role in OrderRole
+            },
+            "strategy_state": _dump_strategy_state(state.strategy_state),
         }
