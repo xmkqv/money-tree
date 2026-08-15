@@ -1,0 +1,564 @@
+kind,name,definition,count
+canon,account,"broker-maintained set of cash, positions, and orders for one owner",28
+canon,account event,broker report of a change to an account,0
+canon,alpaca,brokerage and market-data service,37
+canon,average directional index,wilder average of directional price movement strength,0
+canon,average entry price,quantity-weighted mean fill price of an open position,25
+canon,average true range,wilder average of bar range and gap magnitude,8
+canon,backtest,strategy run against historical observations and simulated executions,13
+canon,bar,observations for one instrument aggregated over one closed interval,61
+canon,breakout,event in which an eligible price first crosses a stated boundary,43
+canon,break-even point,value at which gains equal costs,0
+canon,broker,service that sends orders to a market and maintains accounts,53
+canon,brokerage,interface that accepts orders and cancellation requests and supplies account events,0
+canon,cancel,prevent an order's unfilled quantity from executing,7
+canon,cancellation,event in which a broker prevents an order's remaining quantity from executing,0
+canon,cancellation request,instruction to cancel an order,0
+canon,cat fee,regulatory fee that funds the consolidated audit trail,0
+canon,commission,broker fee charged for a transaction,4
+canon,decide,select an intended direction and quantity,11
+canon,decision price,observed price when a strategy decides,0
+canon,direction,"position sign classified as long, flat, or short",84
+canon,directional accuracy,proportion of forecasts with the correct direction,0
+canon,eastern time,time observed in the america/new_york zone,0
+canon,entry,order or fill that changes a flat position to open,127
+canon,estimand,quantity that a statistical analysis estimates,0
+canon,execute,change a position according to an order,4
+canon,execution cost,decision-price profit and loss minus fill-price profit and loss,1
+canon,exit,order or fill that reduces an open position,11
+canon,explicit fee,stated commission or regulatory charge,0
+canon,fill,event in which a broker executes order quantity at a price and instant,32
+canon,fill price,price at which a broker executes order quantity,3
+canon,finra trading activity fee,regulatory fee on covered securities sales,0
+canon,flatten,submit orders intended to set a position to zero,56
+canon,instrument,tradable contract identified by a market symbol,155
+canon,live trading,broker mode in which execution changes a live account,2
+canon,lumibot,trading strategy execution framework,16
+canon,mark price,current price used to value an open position,12
+canon,market,venue that publishes prices and executes orders,67
+canon,market data,interface that supplies market observations,0
+canon,market impact,price change caused by an order,0
+canon,momentum,tendency for recent price movement to continue,69
+canon,nyse,market identifier for the new york stock exchange,4
+canon,observation,market or account state received by a strategy,7
+canon,observe,receive market or account state without changing it,13
+canon,opening range,low-to-high price interval over a stated initial session period,70
+canon,oracle,benchmark that decides with future observations,0
+canon,order,instruction to change a position under stated conditions,284
+canon,order side,instruction to buy or sell,30
+canon,paper trading,broker mode in which execution changes only a simulated account,0
+canon,portfolio value,total market value of account assets,6
+canon,position,net signed quantity of one instrument held in an account,175
+canon,post-selection inference,inference that accounts for data-driven selection,0
+canon,price,money per instrument unit at a stated source and instant,387
+canon,profit and loss,money gained or lost on a position over a stated interval,13
+canon,protective stop,order intended to limit loss on an open position,169
+canon,quantity,count of instrument units,96
+canon,reconciliation,comparison of broker account state with persisted trading state,0
+canon,regulatory fee,transaction charge required by a regulator,0
+canon,rejection,event in which a broker refuses an order,0
+canon,relative strength index,wilder ratio of average gains to average losses on closing prices,2
+canon,risk limit,bound that restricts an order or position,0
+canon,rolling window,fixed-length consecutive sample advanced through ordered observations,0
+canon,round trip,trace from a flat position through an entry and complete exit to flat,18
+canon,section 31 fee,regulatory fee on covered securities sales,0
+canon,simple moving average,arithmetic mean of closing prices over a fixed bar count,0
+canon,sip feed,securities information processor market-data feed,0
+canon,spread,difference between the best available buy and sell prices,23
+canon,spy,market symbol for the spdr s&p 500 etf trust,3
+canon,stationary bootstrap,resampling method that preserves local dependence,2
+canon,strategy,behavior that maps observations and state to orders,243
+canon,submit,send an order to the broker,13
+canon,swing low,low price below stated preceding and following low prices,16
+canon,trading session,market-defined interval in which orders may execute,4
+canon,trailing protective stop,protective stop that follows favorable price movement,1
+canon,transaction cost,explicit and implicit cost of executing a trade,28
+canon,upper confidence bound,upper endpoint of a one-sided confidence interval,2
+local,money tree,risk-limited trading system,63
+undef,aapl,,1
+undef,abc,,3
+undef,abs,,10
+undef,absolute,,35
+undef,accuracies,,7
+undef,actions,,3
+undef,activation,,10
+undef,actual,,4
+undef,adx,,18
+undef,agg,,3
+undef,algorithmic,,1
+undef,alias,,4
+undef,allowed,,1
+undef,alpha,,2
+undef,america,,4
+undef,annotations,,14
+undef,api,,34
+undef,append,,9
+undef,arch,,3
+undef,are,,2
+undef,argparse,,5
+undef,args,,2
+undef,argument,,15
+undef,arguments,,18
+undef,arithmetic,,1
+undef,array,,32
+undef,asarray,,2
+undef,asc,,1
+undef,asof,,1
+undef,assert,,15
+undef,asset,,7
+undef,astimezone,,2
+undef,atr,,17
+undef,audience,,1
+undef,avg,,3
+undef,axis,,6
+undef,backend,,1
+undef,backtesting,,10
+undef,backtests,,1
+undef,balanced,,3
+undef,bars,,41
+undef,bash,,1
+undef,batch,,4
+undef,benchmark,,1
+undef,bool,,25
+undef,boolean,,4
+undef,borrow,,2
+undef,boundaries,,2
+undef,brokers,,2
+undef,budget,,1
+undef,builder,,1
+undef,buy,,7
+undef,cache,,1
+undef,calendar,,3
+undef,canceled,,9
+undef,candidate,,10
+undef,carried,,1
+undef,cast,,20
+undef,ceil,,3
+undef,cent,,3
+undef,cents,,2
+undef,choices,,8
+undef,classifiers,,1
+undef,cleared,,4
+undef,cli,,2
+undef,client,,32
+undef,closes,,10
+undef,closing,,7
+undef,col,,125
+undef,collections,,3
+undef,column,,9
+undef,columns,,34
+undef,combined,,3
+undef,command,,1
+undef,concat,,5
+undef,conditions,,1
+undef,conf,,1
+undef,config,,41
+undef,confirmation,,12
+undef,confirmed,,4
+undef,costs,,22
+undef,could,,3
+undef,counts,,12
+undef,credentials,,19
+undef,cum,,4
+undef,cumsum,,1
+undef,current,,30
+undef,custom,,5
+undef,d2,,1
+undef,dagre,,1
+undef,dataclass,,8
+undef,dataclasses,,9
+undef,datasource,,1
+undef,dates,,19
+undef,datetime,,64
+undef,day,,7
+undef,days,,1
+undef,decided,,11
+undef,decimal,,115
+undef,decode,,1
+undef,def,,159
+undef,default,,23
+undef,deleted,,6
+undef,dependencies,,1
+undef,dependency,,1
+undef,description,,1
+undef,dest,,2
+undef,dev,,1
+undef,development,,1
+undef,diagonal,,1
+undef,diagram,,1
+undef,dict,,13
+undef,did,,3
+undef,diff,,4
+undef,differs,,1
+undef,dir,,1
+undef,directions,,7
+undef,disable,,24
+undef,disabled,,12
+undef,does,,1
+undef,drawdown,,1
+undef,dtype,,27
+undef,dump,,7
+undef,duplicate,,1
+undef,duplicated,,1
+undef,e4,,1
+undef,e7,,1
+undef,e9,,1
+undef,elif,,6
+undef,else,,26
+undef,ended,,16
+undef,ends,,3
+undef,endswith,,2
+undef,engine,,1
+undef,enriched,,7
+undef,entered,,23
+undef,entities,,5
+undef,enum,,13
+undef,enums,,3
+undef,env,,3
+undef,environ,,5
+undef,environment,,3
+undef,err,,1
+undef,ewm,,1
+undef,excluded,,4
+undef,executed,,2
+undef,exists,,3
+undef,expected,,13
+undef,expr,,6
+undef,expression,,8
+undef,exps,,2
+undef,factors,,2
+undef,factory,,3
+undef,fdopen,,1
+undef,fewer,,1
+undef,field,,4
+undef,fields,,12
+undef,filled,,4
+undef,finally,,1
+undef,financial,,1
+undef,finite,,11
+undef,five,,1
+undef,flattening,,2
+undef,float,,109
+undef,float64,,23
+undef,floor,,6
+undef,format,,1
+undef,fraction,,16
+undef,fractionable,,1
+undef,fractional,,6
+undef,frame,,127
+undef,fromisoformat,,7
+undef,frozen,,17
+undef,frozenset,,2
+undef,func,,1
+undef,functools,,1
+undef,future,,14
+undef,getattr,,5
+undef,greater,,5
+undef,groups,,4
+undef,has,,10
+undef,hatch,,2
+undef,hatchling,,2
+undef,hex,,1
+undef,highest,,13
+undef,historical,,7
+undef,history,,6
+undef,hours,,3
+undef,id,,25
+undef,identifier,,19
+undef,identifiers,,7
+undef,identifies,,1
+undef,identity,,1
+undef,ids,,9
+undef,iloc,,1
+undef,implemented,,1
+undef,import,,154
+undef,imports,,1
+undef,indent,,1
+undef,indicator,,14
+undef,indicators,,12
+undef,industry,,1
+undef,inf,,1
+undef,infeasible,,4
+undef,influence,,2
+undef,info,,8
+undef,init,,5
+undef,initialize,,7
+undef,initialized,,7
+undef,inputs,,1
+undef,instruments,,2
+undef,insurance,,1
+undef,int,,25
+undef,int32,,7
+undef,int64,,12
+undef,intended,,1
+undef,intruments,,1
+undef,invalid,,11
+undef,isfinite,,8
+undef,isinstance,,23
+undef,iso,,4
+undef,isoformat,,4
+undef,issues,,2
+undef,items,,2
+undef,iter,,3
+undef,iterable,,3
+undef,iteration,,3
+undef,iterator,,2
+undef,jackknife,,6
+undef,json,,11
+undef,keepdims,,1
+undef,keys,,12
+undef,keywords,,1
+undef,labels,,8
+undef,language,,2
+undef,latest,,7
+undef,layout,,1
+undef,lazy,,7
+undef,len,,18
+undef,lengths,,2
+undef,license,,2
+undef,line,,1
+undef,linspace,,1
+undef,lint,,1
+undef,lit,,21
+undef,loaded,,1
+undef,loads,,1
+undef,logs,,1
+undef,lowers,,1
+undef,manage,,4
+undef,mapping,,13
+undef,math,,2
+undef,max,,23
+undef,mean,,7
+undef,message,,3
+undef,metric,,22
+undef,metrics,,2
+undef,min,,29
+undef,min.,,2
+undef,minute,,4
+undef,minutes,,5
+undef,mit,,1
+undef,mkdir,,3
+undef,mkstemp,,1
+undef,mock,,1
+undef,model,,12
+undef,models,,2
+undef,moment,,10
+undef,moves,,18
+undef,multiplier,,14
+undef,named,,5
+undef,names,,5
+undef,nan,,2
+undef,ne,,1
+undef,negative,,8
+undef,nextafter,,1
+undef,nonempty,,1
+undef,nonpositive,,1
+undef,normalize,,9
+undef,notional,,2
+undef,null,,10
+undef,nulls,,3
+undef,numpy,,6
+undef,objects,,2
+undef,observations,,22
+undef,observed,,22
+undef,offset,,6
+undef,ok,,4
+undef,optimal,,2
+undef,ordered,,1
+undef,orders,,53
+undef,os,,11
+undef,outcomes,,4
+undef,owned,,19
+undef,packages,,1
+undef,pad,,1
+undef,panel,,28
+undef,parameters,,25
+undef,params,,5
+undef,parent,,2
+undef,parents,,3
+undef,parse,,7
+undef,parser,,15
+undef,path,,67
+undef,pathlib,,6
+undef,payload,,16
+undef,persisted,,13
+undef,plan,,11
+undef,planned,,2
+undef,planning,,4
+undef,polars,,12
+undef,policy,,1
+undef,positions,,6
+undef,positive,,25
+undef,prefix,,9
+undef,prices,,56
+undef,print,,2
+undef,produced,,3
+undef,prog,,2
+undef,programming,,2
+undef,project,,3
+undef,py,,3
+undef,pyproject,,1
+undef,python,,4
+undef,qty,,1
+undef,quantities,,6
+undef,quantize,,4
+undef,query,,2
+undef,railpack,,1
+undef,railway,,1
+undef,raises,,1
+undef,ratio,,2
+undef,raw,,1
+undef,reached,,6
+undef,readme,,4
+undef,realized,,11
+undef,recent,,6
+undef,reconcile,,3
+undef,red,,2
+undef,refs,,1
+undef,regex,,1
+undef,rejected,,4
+undef,rejects,,1
+undef,rename,,1
+undef,replication,,5
+undef,reports,,1
+undef,repository,,1
+undef,reps,,1
+undef,requests,,3
+undef,required,,3
+undef,requirements,,13
+undef,requires,,16
+undef,research,,13
+undef,reshape,,2
+undef,resolved,,2
+undef,response,,2
+undef,results,,21
+undef,returned,,5
+undef,returns,,6
+undef,reward,,9
+undef,role,,124
+undef,rounding,,6
+undef,rsi,,26
+undef,ruf,,1
+undef,ruff,,5
+undef,rules,,2
+undef,runtime,,58
+undef,scenarios,,2
+undef,schema,,15
+undef,scope,,7
+undef,scripts,,1
+undef,sdist,,1
+undef,secret,,20
+undef,secrets,,1
+undef,seed,,3
+undef,seeded,,2
+undef,selected,,3
+undef,self,,494
+undef,sell,,13
+undef,series,,9
+undef,sessions,,59
+undef,setattr,,2
+undef,setdefault,,1
+undef,settings,,5
+undef,share,,27
+undef,sharpe,,1
+undef,shortable,,2
+undef,signal,,7
+undef,signed,,4
+undef,sim,,1
+undef,sizes,,9
+undef,sketch,,1
+undef,skipped,,1
+undef,sleep,,6
+undef,sleeptime,,3
+undef,slice,,6
+undef,slots,,23
+undef,sma,,57
+undef,snapshot,,13
+undef,sort,,6
+undef,sorted,,6
+undef,spans,,1
+undef,spec,,1
+undef,spreads,,2
+undef,square,,1
+undef,started,,14
+undef,stats,,2
+undef,status,,16
+undef,stock,,11
+undef,strategies,,25
+undef,stream,,3
+undef,strict,,8
+undef,string,,6
+undef,studentized,,1
+undef,studies,,5
+undef,study,,14
+undef,submitted,,15
+undef,subparsers,,2
+undef,summaries,,2
+undef,summarize,,9
+undef,summary,,18
+undef,sums,,5
+undef,supports,,2
+undef,symbols,,2
+undef,sync,,1
+undef,systematic,,1
+undef,table,,1
+undef,taf,,4
+undef,tail,,4
+undef,targets,,2
+undef,tearsheet,,4
+undef,tempfile,,2
+undef,tests,,1
+undef,text,,25
+undef,tfb50,,11
+undef,theme,,1
+undef,three,,1
+undef,tick,,35
+undef,timedelta,,8
+undef,timeframe,,2
+undef,times,,7
+undef,timestamp,,2
+undef,timestep,,1
+undef,timezone,,17
+undef,toml,,1
+undef,tracked,,1
+undef,tradable,,2
+undef,trade,,16
+undef,trades,,3
+undef,trail,,10
+undef,trend,,4
+undef,tuple,,17
+undef,ty,,4
+undef,typing,,10
+undef,tzinfo,,2
+undef,unique,,5
+undef,units,,4
+undef,unittest,,7
+undef,unlink,,1
+undef,unordered,,1
+undef,unrealized,,2
+undef,unresolved,,1
+undef,unsupported,,6
+undef,uptrend,,1
+undef,urls,,1
+undef,usd,,40
+undef,uuid,,1
+undef,uuid4,,2
+undef,uv,,7
+undef,validate,,12
+undef,values,,49
+undef,var,,9
+undef,vars,,1
+undef,vendor,,7
+undef,version,,9
+undef,vstack,,1
+undef,wheel,,1
+undef,wilder,,7
+undef,windows,,3
+undef,worker,,11
+undef,world,,1
+undef,writable,,1
+undef,xom,,1
+undef,yield,,1
+undef,york,,4
+undef,zone,,11
+undef,zoneinfo,,4
