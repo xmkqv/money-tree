@@ -5,26 +5,30 @@ import os
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from math import isfinite
 from typing import cast
 from zoneinfo import ZoneInfo
 
 import numpy as np
+from alpaca.common.enums import Sort
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.models import BarSet
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from alpaca.trading.client import TradingClient
+from alpaca.trading.requests import GetCalendarRequest
 from numpy.typing import NDArray
 
-INSTRUMENT = "AAPL"
+INSTRUMENTS = ("AAPL", "MSFT", "JPM", "XOM", "WMT")
 MARKET_TIMEZONE = ZoneInfo("America/New_York")
-SESSION_STARTED_ON_DEFAULT = date(2025, 8, 1)
+SESSION_STARTED_ON_DEFAULT = date(2016, 1, 1)
 SESSION_ENDED_BEFORE_DEFAULT = date(2026, 8, 1)
 DECISION_START = time(9, 45)
 DECISION_END = time(15, 45)
 DECISION_INTERVAL = timedelta(minutes=15)
 EXECUTION_DELAY = timedelta(minutes=1)
-N_SHARE = 1.0
+USD_NOTIONAL = 10.0
 N_SESSION_MIN = 60
 USD_SPREAD = 0.03
 RATE_COMMISSION = 0.0
@@ -57,6 +61,7 @@ class BarClose:
 
 @dataclass(frozen=True, slots=True)
 class MarketObservations:
+    instrument: str
     session_range: SessionRange
     session_dates: tuple[date, ...]
     decision_prices: FloatArray
@@ -93,6 +98,7 @@ class ExplicitCosts:
 @dataclass(frozen=True, slots=True)
 class RoundTripResult:
     n_round_trip_by_session: IntArray
+    share_quantity_by_session: FloatArray
     absolute_price_moves: FloatArray
     execution_costs: FloatArray
     explicit_costs: ExplicitCosts
@@ -136,28 +142,50 @@ def load_alpaca_credentials() -> AlpacaCredentials:
     return AlpacaCredentials(api_key, api_secret)
 
 
-def observe_bar_closes(session_range: SessionRange) -> list[BarClose]:
-    credentials = load_alpaca_credentials()
+def observe_bar_closes(
+    instrument: str,
+    session_range: SessionRange,
+    credentials: AlpacaCredentials,
+) -> list[BarClose]:
     client = StockHistoricalDataClient(credentials.api_key, credentials.api_secret)
     request = StockBarsRequest(
-        symbol_or_symbols=INSTRUMENT,
+        symbol_or_symbols=instrument,
         start=datetime.combine(session_range.started_on, time(), MARKET_TIMEZONE),
         end=datetime.combine(session_range.ended_before, time(), MARKET_TIMEZONE),
         timeframe=TimeFrame.Minute,
-        adjustment=Adjustment.ALL,
+        adjustment=Adjustment.RAW,
         feed=DataFeed.SIP,
+        asof=session_range.ended_before.isoformat(),
+        sort=Sort.ASC,
     )
     response = cast(BarSet, client.get_stock_bars(request))
-    bars = response.data.get(INSTRUMENT)
+    bars = response.data.get(instrument)
     if not bars:
-        raise RuntimeError(f"alpaca returned no {INSTRUMENT} bars")
-    return [
-        BarClose(
+        raise RuntimeError(f"alpaca returned no {instrument} bars")
+    closes: list[BarClose] = []
+    for bar in bars:
+        close = BarClose(
             bar.timestamp.astimezone(MARKET_TIMEZONE) + EXECUTION_DELAY,
             float(bar.close),
         )
-        for bar in bars
-    ]
+        if not isfinite(close.price) or close.price <= 0:
+            raise RuntimeError(f"alpaca returned an invalid {instrument} price")
+        if closes and close.closed_at <= closes[-1].closed_at:
+            raise RuntimeError(f"alpaca returned unordered {instrument} bars")
+        closes.append(close)
+    return closes
+
+
+def observe_session_dates(
+    session_range: SessionRange,
+    credentials: AlpacaCredentials,
+) -> tuple[date, ...]:
+    client = TradingClient(credentials.api_key, credentials.api_secret)
+    request = GetCalendarRequest(
+        start=session_range.started_on,
+        end=session_range.ended_before - timedelta(days=1),
+    )
+    return tuple(session.date for session in client.get_calendar(request))
 
 
 def iter_decision_times(session_date: date) -> Iterator[datetime]:
@@ -169,8 +197,10 @@ def iter_decision_times(session_date: date) -> Iterator[datetime]:
 
 
 def observe_market(
+    instrument: str,
     session_range: SessionRange,
     closes: Iterable[BarClose],
+    expected_session_dates: Iterable[date],
 ) -> MarketObservations:
     prices_by_date: dict[date, dict[datetime, float]] = {}
     for close in closes:
@@ -182,8 +212,11 @@ def observe_market(
     decision_prices: list[list[float]] = []
     execution_prices: list[list[float]] = []
     n_excluded_session = 0
-    for session_date in sorted(prices_by_date):
-        prices_by_time = prices_by_date[session_date]
+    expected_dates = tuple(expected_session_dates)
+    if expected_dates != tuple(sorted(set(expected_dates))):
+        raise RuntimeError("expected session dates must be unique and ordered")
+    for session_date in expected_dates:
+        prices_by_time = prices_by_date.get(session_date, {})
         decision_times = tuple(iter_decision_times(session_date))
         if any(
             decided_at not in prices_by_time or decided_at + EXECUTION_DELAY not in prices_by_time
@@ -198,6 +231,7 @@ def observe_market(
         )
     n_decision = len(tuple(iter_decision_times(session_range.started_on)))
     return MarketObservations(
+        instrument,
         session_range,
         tuple(session_dates),
         np.asarray(decision_prices, dtype=np.float64).reshape(-1, n_decision),
@@ -213,15 +247,14 @@ def round_fee_by_session(values: FloatArray) -> FloatArray:
 
 def calculate_explicit_costs(
     sell_value_by_session: FloatArray,
-    n_round_trip_by_session: IntArray,
+    sell_share_by_session: FloatArray,
+    executed_share_by_session: FloatArray,
 ) -> ExplicitCosts:
-    n_sell_share = n_round_trip_by_session.astype(np.float64) * N_SHARE
-    n_executed_share = 2 * n_sell_share
     return ExplicitCosts(
         round_fee_by_session(RATE_COMMISSION * sell_value_by_session),
         round_fee_by_session(RATE_SECTION_31 * sell_value_by_session),
-        round_fee_by_session(USD_FINRA_TAF_PER_SHARE * n_sell_share),
-        round_fee_by_session(USD_CAT_PER_SHARE * n_executed_share),
+        round_fee_by_session(USD_FINRA_TAF_PER_SHARE * sell_share_by_session),
+        round_fee_by_session(USD_CAT_PER_SHARE * executed_share_by_session),
     )
 
 
@@ -234,26 +267,35 @@ def execute_orders(
     entry_execution_prices = observations.execution_prices[:, 1:-1]
     flatten_execution_prices = observations.execution_prices[:, 2:]
     active = orders.directions != 0
+    share_quantities = np.where(active, USD_NOTIONAL / entry_decision_prices, 0.0)
     entry_fill_prices = entry_execution_prices + orders.directions * USD_SPREAD / 2
     flatten_fill_prices = flatten_execution_prices - orders.directions * USD_SPREAD / 2
     decision_outcomes = (
-        N_SHARE * orders.directions * (flatten_decision_prices - entry_decision_prices)
+        share_quantities * orders.directions * (flatten_decision_prices - entry_decision_prices)
     )
-    fill_outcomes = N_SHARE * orders.directions * (flatten_fill_prices - entry_fill_prices)
-    absolute_price_moves = N_SHARE * np.abs(flatten_decision_prices - entry_decision_prices)
+    fill_outcomes = share_quantities * orders.directions * (flatten_fill_prices - entry_fill_prices)
+    absolute_price_moves = share_quantities * np.abs(
+        flatten_decision_prices - entry_decision_prices
+    )
     execution_costs = decision_outcomes - fill_outcomes
-    sell_values = N_SHARE * np.where(
+    sell_values = share_quantities * np.where(
         orders.directions > 0,
         flatten_fill_prices,
         entry_fill_prices,
     )
     n_round_trip_by_session = active.sum(axis=1, dtype=np.int64)
+    share_quantity_by_session = share_quantities.sum(axis=1)
     sell_value_by_session = np.where(active, sell_values, 0).sum(axis=1)
     return RoundTripResult(
         n_round_trip_by_session,
+        share_quantity_by_session,
         absolute_price_moves[active],
         execution_costs[active],
-        calculate_explicit_costs(sell_value_by_session, n_round_trip_by_session),
+        calculate_explicit_costs(
+            sell_value_by_session,
+            share_quantity_by_session,
+            2 * share_quantity_by_session,
+        ),
     )
 
 
@@ -263,11 +305,35 @@ def decide_momentum_orders(observations: MarketObservations) -> OrderBatch:
     )
 
 
-def build_research_study(session_range: SessionRange) -> ResearchStudy:
-    observations = observe_market(session_range, observe_bar_closes(session_range))
+def build_research_study(
+    instrument: str,
+    session_range: SessionRange,
+    credentials: AlpacaCredentials,
+    expected_session_dates: tuple[date, ...],
+) -> ResearchStudy:
+    observations = observe_market(
+        instrument,
+        session_range,
+        observe_bar_closes(instrument, session_range, credentials),
+        expected_session_dates,
+    )
     if len(observations.session_dates) < N_SESSION_MIN:
         raise RuntimeError(f"research requires at least {N_SESSION_MIN} complete sessions")
     return ResearchStudy(
         observations,
         {DECISION_INTERVAL: execute_orders(observations, decide_momentum_orders(observations))},
+    )
+
+
+def build_research_studies(session_range: SessionRange) -> tuple[ResearchStudy, ...]:
+    credentials = load_alpaca_credentials()
+    expected_session_dates = observe_session_dates(session_range, credentials)
+    return tuple(
+        build_research_study(
+            instrument,
+            session_range,
+            credentials,
+            expected_session_dates,
+        )
+        for instrument in INSTRUMENTS
     )
