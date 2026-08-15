@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 from enum import StrEnum
@@ -33,6 +33,16 @@ class OrderRole(StrEnum):
     ENTRY = "entry"
     PROTECTIVE_STOP = "protective-stop"
     FLATTEN = "flatten"
+
+
+@dataclass(frozen=True, slots=True)
+class EntryDecision:
+    protective_stop_price: float
+
+
+def _require_positive_prices(*prices: Decimal | None) -> None:
+    if any(price is not None and (not price.is_finite() or price <= 0) for price in prices):
+        raise ValueError("strategy prices must be positive and finite")
 
 
 @dataclass(slots=True)
@@ -96,32 +106,45 @@ class PositionState:
         unrealized = (mark_price - self.average_entry_price) * self.quantity
         return self.realized_profit_and_loss + unrealized
 
-    def set_flat(self) -> None:
-        self.quantity = Decimal("0")
-        self.average_entry_price = Decimal("0")
-
 
 @dataclass(slots=True)
 class OwnedOrderState:
-    identifiers: dict[OrderRole, str] = field(default_factory=dict)
+    identifier_by_role: dict[OrderRole, str] = field(default_factory=dict)
 
     @property
-    def ids(self) -> set[str]:
-        return set(self.identifiers.values())
+    def identifiers(self) -> set[str]:
+        return set(self.identifier_by_role.values())
 
-    def get_id(self, role: OrderRole) -> str | None:
-        return self.identifiers.get(role)
+    def get_identifier(self, role: OrderRole) -> str | None:
+        return self.identifier_by_role.get(role)
 
-    def set_id(self, role: OrderRole, identifier: str | None) -> None:
+    def set_identifier(self, role: OrderRole, identifier: str | None) -> None:
         if identifier is None:
-            self.identifiers.pop(role, None)
-        else:
-            self.identifiers[role] = identifier
+            self.identifier_by_role.pop(role, None)
+            return
+        self.identifier_by_role[role] = identifier
+
+    def validate(self) -> None:
+        if len(self.identifiers) != len(self.identifier_by_role):
+            raise ValueError("owned order identifiers must be distinct")
+        if (
+            self.get_identifier(OrderRole.PROTECTIVE_STOP) is not None
+            and self.get_identifier(OrderRole.FLATTEN) is not None
+        ):
+            raise ValueError("protective stop and flatten orders cannot both be active")
 
 
 @dataclass(slots=True)
 class OpeningRangeState:
     protective_stop_price: Decimal | None = None
+
+    def validate(self, position: PositionState) -> None:
+        _require_positive_prices(self.protective_stop_price)
+        if position.direction is not Direction.FLAT and self.protective_stop_price is None:
+            raise ValueError("an opening-range position requires a protective stop price")
+
+    def clear(self) -> None:
+        self.protective_stop_price = None
 
 
 @dataclass(slots=True)
@@ -132,12 +155,57 @@ class MomentumLongState:
     trail_activation_price: Decimal | None = None
     highest_price: Decimal | None = None
 
+    def validate(self, position: PositionState) -> None:
+        _require_positive_prices(
+            self.entry_price,
+            self.initial_protective_stop_price,
+            self.active_protective_stop_price,
+            self.trail_activation_price,
+            self.highest_price,
+        )
+        if position.direction is Direction.SHORT:
+            raise ValueError("momentum-long position must not be short")
+        if position.direction is Direction.LONG and None in (
+            self.entry_price,
+            self.initial_protective_stop_price,
+            self.active_protective_stop_price,
+            self.trail_activation_price,
+            self.highest_price,
+        ):
+            raise ValueError("a momentum-long position requires complete protection state")
+
+    def clear(self) -> None:
+        self.entry_price = None
+        self.initial_protective_stop_price = None
+        self.active_protective_stop_price = None
+        self.trail_activation_price = None
+        self.highest_price = None
+
 
 @dataclass(slots=True)
 class Tfb50State:
     entered_on: date | None = None
     initial_protective_stop_price: Decimal | None = None
     active_protective_stop_price: Decimal | None = None
+
+    def validate(self, position: PositionState) -> None:
+        _require_positive_prices(
+            self.initial_protective_stop_price,
+            self.active_protective_stop_price,
+        )
+        if position.direction is Direction.SHORT:
+            raise ValueError("tfb-50 position must not be short")
+        if position.direction is Direction.LONG and None in (
+            self.entered_on,
+            self.initial_protective_stop_price,
+            self.active_protective_stop_price,
+        ):
+            raise ValueError("a tfb-50 position requires complete protection state")
+
+    def clear(self) -> None:
+        self.entered_on = None
+        self.initial_protective_stop_price = None
+        self.active_protective_stop_price = None
 
 
 type StrategyState = OpeningRangeState | MomentumLongState | Tfb50State
@@ -152,6 +220,16 @@ def create_strategy_state(strategy: StrategyName) -> StrategyState:
         case StrategyName.TFB_50:
             return Tfb50State()
     assert_never(strategy)
+
+
+def _require_strategy_state(strategy: StrategyName, state: StrategyState) -> None:
+    expected = {
+        StrategyName.OPENING_RANGE: OpeningRangeState,
+        StrategyName.MOMENTUM_LONG: MomentumLongState,
+        StrategyName.TFB_50: Tfb50State,
+    }[strategy]
+    if not isinstance(state, expected):
+        raise ValueError(f"{strategy.value} trading state has an incorrect strategy state")
 
 
 @dataclass(slots=True)
@@ -170,65 +248,15 @@ class TradingState:
             raise ValueError("instrument must not be blank")
         if self.strategy_state is None:
             self.strategy_state = create_strategy_state(self.strategy)
-        if self.strategy is StrategyName.OPENING_RANGE and not isinstance(
-            self.strategy_state, OpeningRangeState
-        ):
-            raise ValueError("opening-range trading state requires opening-range state")
-        if self.strategy is StrategyName.MOMENTUM_LONG and not isinstance(
-            self.strategy_state, MomentumLongState
-        ):
-            raise ValueError("momentum-long trading state requires momentum-long state")
-        if self.strategy is StrategyName.TFB_50 and not isinstance(self.strategy_state, Tfb50State):
-            raise ValueError("tfb-50 trading state requires tfb-50 state")
+        _require_strategy_state(self.strategy, self.strategy_state)
 
     def validate(self) -> None:
         self.__post_init__()
         self.position.validate()
-        if len(self.orders.ids) != len(self.orders.identifiers):
-            raise ValueError("owned order identifiers must be distinct")
-        if (
-            self.orders.get_id(OrderRole.PROTECTIVE_STOP) is not None
-            and self.orders.get_id(OrderRole.FLATTEN) is not None
-        ):
-            raise ValueError("protective stop and flatten orders cannot both be active")
-        strategy_state = self.strategy_state
-        if isinstance(strategy_state, OpeningRangeState):
-            if (
-                self.position.direction is not Direction.FLAT
-                and strategy_state.protective_stop_price is None
-            ):
-                raise ValueError("an opening-range position requires a protective stop price")
-        elif isinstance(strategy_state, MomentumLongState):
-            if self.position.direction is Direction.SHORT:
-                raise ValueError("momentum-long position must not be short")
-            if self.position.direction is Direction.LONG and any(
-                getattr(strategy_state, item.name) is None for item in fields(strategy_state)
-            ):
-                raise ValueError("a momentum-long position requires complete protection state")
-        elif isinstance(strategy_state, Tfb50State):
-            if self.position.direction is Direction.SHORT:
-                raise ValueError("tfb-50 position must not be short")
-            if self.position.direction is Direction.LONG and any(
-                getattr(strategy_state, item.name) is None for item in fields(strategy_state)
-            ):
-                raise ValueError("a tfb-50 position requires complete protection state")
-            if strategy_state.entered_on is not None and not isinstance(
-                strategy_state.entered_on, date
-            ):
-                raise ValueError("tfb-50 entry date must use a date value")
-        else:
+        self.orders.validate()
+        if self.strategy_state is None:
             raise RuntimeError("strategy state is not initialized")
-        strategy_prices = tuple(
-            getattr(strategy_state, item.name)
-            for item in fields(strategy_state)
-            if item.name.endswith("_price")
-        )
-        if any(
-            value is not None
-            and (not isinstance(value, Decimal) or not value.is_finite() or value <= 0)
-            for value in strategy_prices
-        ):
-            raise ValueError("strategy prices must be positive and finite")
+        self.strategy_state.validate(self.position)
 
     def start_session(self, session_date: date, *, keep_position: bool) -> None:
         if self.session_date == session_date:
@@ -241,8 +269,6 @@ class TradingState:
         self.position.realized_profit_and_loss = Decimal("0")
 
     def clear_strategy_position(self) -> None:
-        strategy_state = self.strategy_state
-        if strategy_state is None:
+        if self.strategy_state is None:
             raise RuntimeError("strategy state is not initialized")
-        for item in fields(strategy_state):
-            setattr(strategy_state, item.name, None)
+        self.strategy_state.clear()
