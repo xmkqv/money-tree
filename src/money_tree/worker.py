@@ -13,7 +13,7 @@ from money_tree.cli import (
 from money_tree.model import StrategyName, TradingMode
 
 STRATEGY_VARIABLE = "MONEY_TREE_STRATEGY"
-LIVE_VARIABLE = "MONEY_TREE_IS_LIVE"
+MODE_VARIABLE = "MONEY_TREE_MODE"
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,10 +33,12 @@ def load_worker_config(environment: Mapping[str, str] | None = None) -> WorkerCo
         choices = ", ".join(item.value for item in StrategyName)
         raise RuntimeError(f"{STRATEGY_VARIABLE} must be one of: {choices}") from error
 
-    live_text = values.get(LIVE_VARIABLE, "false")
-    if live_text not in {"false", "true"}:
-        raise RuntimeError(f"{LIVE_VARIABLE} must be true or false")
-    mode = TradingMode.LIVE if live_text == "true" else TradingMode.PAPER
+    mode_text = values.get(MODE_VARIABLE, TradingMode.PAPER.value)
+    try:
+        mode = TradingMode(mode_text)
+    except ValueError as error:
+        choices = ", ".join(item.value for item in TradingMode)
+        raise RuntimeError(f"{MODE_VARIABLE} must be one of: {choices}") from error
     return WorkerConfig(strategy=strategy, mode=mode)
 
 

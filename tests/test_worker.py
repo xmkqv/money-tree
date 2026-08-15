@@ -9,7 +9,7 @@ from money_tree.worker import WorkerConfig, load_worker_config, run_worker
 
 
 class LoadWorkerConfigTest(unittest.TestCase):
-    def test_loads_paper_mode_when_live_variable_is_absent(self) -> None:
+    def test_loads_paper_mode_when_mode_variable_is_absent(self) -> None:
         config = load_worker_config({"MONEY_TREE_STRATEGY": "opening-range"})
 
         self.assertEqual(
@@ -21,7 +21,7 @@ class LoadWorkerConfigTest(unittest.TestCase):
         config = load_worker_config(
             {
                 "MONEY_TREE_STRATEGY": "momentum-long",
-                "MONEY_TREE_IS_LIVE": "true",
+                "MONEY_TREE_MODE": "live",
             }
         )
 
@@ -31,7 +31,12 @@ class LoadWorkerConfigTest(unittest.TestCase):
         )
 
     def test_loads_tfb_50_strategy(self) -> None:
-        config = load_worker_config({"MONEY_TREE_STRATEGY": "tfb-50"})
+        config = load_worker_config(
+            {
+                "MONEY_TREE_STRATEGY": "tfb-50",
+                "MONEY_TREE_MODE": "paper",
+            }
+        )
 
         self.assertEqual(
             config,
@@ -46,12 +51,12 @@ class LoadWorkerConfigTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "MONEY_TREE_STRATEGY must be one of"):
             load_worker_config({"MONEY_TREE_STRATEGY": "unknown"})
 
-    def test_rejects_unknown_live_value(self) -> None:
-        with self.assertRaisesRegex(RuntimeError, "MONEY_TREE_IS_LIVE must be true or false"):
+    def test_rejects_unknown_mode(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "MONEY_TREE_MODE must be one of: paper, live"):
             load_worker_config(
                 {
                     "MONEY_TREE_STRATEGY": "opening-range",
-                    "MONEY_TREE_IS_LIVE": "yes",
+                    "MONEY_TREE_MODE": "unknown",
                 }
             )
 
