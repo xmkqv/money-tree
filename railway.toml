@@ -2,5 +2,5 @@
 builder = "RAILPACK"
 
 [deploy]
-startCommand = "uv run money-tree-worker"
+startCommand = "uv run --no-sync money-tree-worker"
 restartPolicyType = "ALWAYS"
