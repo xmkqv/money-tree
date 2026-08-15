@@ -3,6 +3,11 @@ name: README
 ---
 
 ```sh
+mt backtest --instrument {instrument} --strategy {strategy}
+mt trade --instrument {instrument} --strategy {strategy}
+```
+
+```sh
 uv lock --check
 uv run ruff check .
 uv run ruff format --check .
