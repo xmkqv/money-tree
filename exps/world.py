@@ -93,38 +93,19 @@ class ExplicitCosts:
 @dataclass(frozen=True, slots=True)
 class RoundTripResult:
     n_round_trip_by_session: IntArray
-    decision_profit_and_loss: FloatArray
-    fill_profit_and_loss: FloatArray
-    entry_fill_prices: FloatArray
-    fill_profit_and_loss_by_session: FloatArray
+    absolute_price_moves: FloatArray
+    execution_costs: FloatArray
     explicit_costs: ExplicitCosts
 
     @property
     def n_round_trip(self) -> int:
         return int(self.n_round_trip_by_session.sum())
 
-    @property
-    def execution_costs(self) -> FloatArray:
-        return self.decision_profit_and_loss - self.fill_profit_and_loss
-
-    @property
-    def net_profit_and_loss_by_session(self) -> FloatArray:
-        return self.fill_profit_and_loss_by_session - self.explicit_costs.by_session
-
-    @property
-    def net_profit_and_loss(self) -> float:
-        return float(self.net_profit_and_loss_by_session.sum())
-
-    @property
-    def transaction_cost(self) -> float:
-        return float(self.execution_costs.sum()) + self.explicit_costs.total
-
 
 @dataclass(frozen=True, slots=True)
 class ResearchStudy:
     observations: MarketObservations
     momentum: Mapping[timedelta, RoundTripResult]
-    oracle: RoundTripResult
 
 
 def parse_session_range(program: str) -> SessionRange:
@@ -255,10 +236,12 @@ def execute_orders(
     active = orders.directions != 0
     entry_fill_prices = entry_execution_prices + orders.directions * USD_SPREAD / 2
     flatten_fill_prices = flatten_execution_prices - orders.directions * USD_SPREAD / 2
-    decision_profit_and_loss = (
+    decision_outcomes = (
         N_SHARE * orders.directions * (flatten_decision_prices - entry_decision_prices)
     )
-    fill_profit_and_loss = N_SHARE * orders.directions * (flatten_fill_prices - entry_fill_prices)
+    fill_outcomes = N_SHARE * orders.directions * (flatten_fill_prices - entry_fill_prices)
+    absolute_price_moves = N_SHARE * np.abs(flatten_decision_prices - entry_decision_prices)
+    execution_costs = decision_outcomes - fill_outcomes
     sell_values = N_SHARE * np.where(
         orders.directions > 0,
         flatten_fill_prices,
@@ -266,13 +249,10 @@ def execute_orders(
     )
     n_round_trip_by_session = active.sum(axis=1, dtype=np.int64)
     sell_value_by_session = np.where(active, sell_values, 0).sum(axis=1)
-    fill_profit_and_loss_by_session = np.where(active, fill_profit_and_loss, 0).sum(axis=1)
     return RoundTripResult(
         n_round_trip_by_session,
-        decision_profit_and_loss[active],
-        fill_profit_and_loss[active],
-        entry_fill_prices[active],
-        fill_profit_and_loss_by_session,
+        absolute_price_moves[active],
+        execution_costs[active],
         calculate_explicit_costs(sell_value_by_session, n_round_trip_by_session),
     )
 
@@ -283,12 +263,6 @@ def decide_momentum_orders(observations: MarketObservations) -> OrderBatch:
     )
 
 
-def decide_oracle_orders(observations: MarketObservations) -> OrderBatch:
-    return OrderBatch(
-        np.sign(observations.decision_prices[:, 2:] - observations.decision_prices[:, 1:-1])
-    )
-
-
 def build_research_study(session_range: SessionRange) -> ResearchStudy:
     observations = observe_market(session_range, observe_bar_closes(session_range))
     if len(observations.session_dates) < N_SESSION_MIN:
@@ -296,9 +270,4 @@ def build_research_study(session_range: SessionRange) -> ResearchStudy:
     return ResearchStudy(
         observations,
         {DECISION_INTERVAL: execute_orders(observations, decide_momentum_orders(observations))},
-        execute_orders(observations, decide_oracle_orders(observations)),
     )
-
-
-def format_money(value: float) -> str:
-    return f"{value:+.4f}"
