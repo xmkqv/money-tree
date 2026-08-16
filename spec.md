@@ -45,14 +45,20 @@ mt backtest --strategy "$STRATEGY" --start "$BACKTEST_START" --end "$BACKTEST_EN
 uvicorn ui.app:create_app --factory --workers 1 --host "" --port "$PORT"
 ```
 
-`railway.toml` runs the bot. `railway.web.toml` runs the web service on one replica.
-The bot reaches the web service on the Railway private domain.
-The web service holds a separate paper Alpaca credential for named GET requests.
+- `railway.toml` runs the bot
+- `railway.web.toml` runs the web service on one replica
+- the bot reaches the web service on the Railway private domain
+- the web service holds a separate paper Alpaca credential for named GET requests
 
-The bot sends its newest signed snapshot with at most 50 events outside the trading path.
-The web boundary rejects oversized, expired, invalid, repeated, or stale snapshots.
+# state
 
-The dashboard reads each URL separately. FastAPI keeps no broker cache and starts no broker poller.
+- the bot sends its newest signed snapshot with at most 50 events outside the trading path
+- the web boundary rejects oversized, expired, invalid, repeated, or stale snapshots
+
+# dashboard
+
+- the dashboard reads each URL separately
+- FastAPI keeps no broker cache and starts no broker poller
 
 | response | browser lifetime |
 | --- | ---: |
