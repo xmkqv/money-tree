@@ -44,22 +44,19 @@ CONTENT_SECURITY_POLICY = "; ".join(
 )
 
 
-class StaleRuntimeError(RuntimeError):
-    pass
-
-
 class RuntimeStore:
     def __init__(self) -> None:
         self._snapshot: RuntimeSnapshot | None = None
 
-    def publish(self, snapshot: RuntimeSnapshot) -> None:
+    def publish(self, snapshot: RuntimeSnapshot) -> bool:
         current = self._snapshot
         if current is not None:
             if snapshot.run_id == current.run_id and snapshot.sequence <= current.sequence:
-                raise StaleRuntimeError("Runtime sequence is not new")
+                return False
             if snapshot.run_id != current.run_id and snapshot.started_at <= current.started_at:
-                raise StaleRuntimeError("Runtime run is not new")
+                return False
         self._snapshot = snapshot
+        return True
 
     def read(self) -> RuntimeSnapshot | None:
         return self._snapshot
@@ -222,16 +219,12 @@ def create_dashboard_router(
 
     @router.post("/internal/state", status_code=204)
     async def publish_runtime(request: Request) -> Response:
-        content_length = request.headers.get("Content-Length")
-        if content_length is not None:
-            try:
-                size = int(content_length)
-                if size < 0:
-                    return error_response("Content length is invalid", 400)
-                if size > 65_536:
-                    return error_response("Runtime snapshot is too large", 413)
-            except ValueError:
+        content_length = request.headers.get("Content-Length", "")
+        if content_length:
+            if not (content_length.isascii() and content_length.isdecimal()):
                 return error_response("Content length is invalid", 400)
+            if int(content_length) > 65_536:
+                return error_response("Runtime snapshot is too large", 413)
         chunks: list[bytes] = []
         size = 0
         async for chunk in request.stream():
@@ -268,9 +261,7 @@ def create_dashboard_router(
             return error_response("Runtime snapshot is invalid", 422)
         if abs((snapshot.heartbeat_at - signed_at).total_seconds()) > 30:
             return error_response("Runtime snapshot is invalid", 422)
-        try:
-            runtime_store.publish(snapshot)
-        except StaleRuntimeError:
+        if not runtime_store.publish(snapshot):
             return error_response("Runtime snapshot is not new", 409)
         return Response(status_code=204, headers=NO_STORE)
 
