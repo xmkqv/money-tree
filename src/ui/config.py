@@ -34,8 +34,10 @@ class WebSettings(BaseSettings):
         callback = f"{str(self.app_base_url).rstrip('/')}/auth/callback"
         if str(self.railway_oauth_redirect_uri) != callback:
             raise ValueError("RAILWAY_OAUTH_REDIRECT_URI must match APP_BASE_URL/auth/callback")
-        if len(self.allowed_subjects) != 2:
-            raise ValueError("ALLOWED_RAILWAY_SUBS must contain two unique subjects")
+        if not self.allowed_subjects:
+            raise ValueError(
+                "ALLOWED_RAILWAY_SUBS must contain at least one subject"
+            )
         if len(self.session_secret.get_secret_value()) < 32:
             raise ValueError("SESSION_SECRET must contain at least 32 characters")
         return self
