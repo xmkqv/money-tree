@@ -23,8 +23,15 @@ src/
         config.py
         backtest.py
         broker.py
+        export.py
         trade.py
     ui/
+        assets/
+            dashboard.v1.html
+            dashboard.v1.css
+            dashboard.v1.js
+        alpaca.py
+        dashboard.py
         config.py
         app.py
         auth.py
@@ -38,22 +45,31 @@ railway.web.toml
 ```
 
 The bot starts `mt trade` with the `STRATEGY` variable.
-The web service starts Uvicorn on `0.0.0.0:$PORT`.
+The web service starts one Uvicorn worker on all interfaces and uses one Railway replica.
 
-Create a confidential OAuth application in the Railway workspace.
-Set its callback to `https://<generated-domain>/auth/callback`.
+Create a confidential Railway OAuth application with the callback `https://<generated-domain>/auth/callback`.
 Set the web variables from `.env.example` on `money-tree-web`.
 
 The web service accepts only the two subjects in `ALLOWED_RAILWAY_SUBS`.
-Do not set Alpaca credentials on the web service.
+Give the web service a separate paper Alpaca credential for named GET requests.
+
+The dashboard splits data into URL-keyed HTTP atoms that the browser stores for each declared lifetime.
+FastAPI keeps no broker cache and starts no broker poller.
+
+Set the export URL and secret on the bot, and set the same secret on the web service.
+Use the Railway private domain for `STATE_EXPORT_URL`.
+The bot sends its newest signed snapshot with at most 50 events outside the trading path.
+The web boundary rejects oversized, expired, invalid, repeated, or stale snapshots.
+
+| atom | browser lifetime |
+| --- | ---: |
+| account, positions, open orders, run, events | 5 seconds |
+| newest closed orders and fills | 15 seconds |
+| historical order and fill pages | 5 minutes |
+| equity and P&L history | 1 minute |
 
 <!-- ddoc:names -->
-| lemma | count |
-| --- | ---: |
-| backtest | 2 |
-| noop | 2 |
-| strategy | 2 |
-| trade | 2 |
-| analyze | 1 |
-| run | 1 |
+| lemma | count | alternatives |
+| --- | ---: | --- |
+| analyze | 1 | analysis |
 <!-- /ddoc:names -->

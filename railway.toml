@@ -3,6 +3,6 @@ builder = "RAILPACK"
 watchPatterns = ["/src/bot/**", "/src/cli/**", "/pyproject.toml", "/uv.lock", "/railway.toml"]
 
 [deploy]
-startCommand = 'uv run --no-sync mt trade --strategy "$STRATEGY"'
+startCommand = 'uv run --locked --no-sync mt trade --strategy "$STRATEGY"'
 restartPolicyType = "ALWAYS"
 restartPolicyMaxRetries = 10
