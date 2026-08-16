@@ -65,9 +65,3 @@ The web boundary rejects oversized, expired, invalid, repeated, or stale snapsho
 | newest closed orders and fills | 15 seconds |
 | historical order and fill pages | 5 minutes |
 | equity and P&L history | 1 minute |
-
-<!-- ddoc:names -->
-| lemma | count | alternatives |
-| --- | ---: | --- |
-| analyze | 1 | analysis |
-<!-- /ddoc:names -->
