@@ -1,4 +1,4 @@
-const pageState = {
+const pages = {
   orders: { urls: ["/api/orders?limit=100"], index: 0, rows: [] },
   fills: { urls: ["/api/fills?limit=100"], index: 0, rows: [] },
 };
@@ -8,10 +8,9 @@ const money = value => value == null ? "—" : new Intl.NumberFormat("en-US", { 
 const number = value => value == null ? "—" : new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 }).format(Number(value));
 const text = value => value ?? "—";
 const timeText = value => value ? new Date(value).toLocaleString() : "—";
-const columns = fields => fields.map(([title, field, formatter]) => ({ title, field, formatter, headerFilter: "input" }));
-const table = (selector, fields) => new Tabulator(selector, { data: [], layout: "fitColumns", responsiveLayout: "collapse", columnDefaults: { minWidth: 80 }, placeholder: "No records", columns: columns(fields) });
+const createTable = (selector, fields) => new Tabulator(selector, { data: [], layout: "fitColumns", responsiveLayout: "collapse", columnDefaults: { minWidth: 80 }, placeholder: "No records", columns: fields.map(([title, field, formatter]) => ({ title, field, formatter, headerFilter: "input" })) });
 
-function mark(panelId, payload, error) {
+function showReadStatus(panelId, payload, error) {
   const panel = document.getElementById(panelId);
   const label = panel.querySelector(".freshness");
   if (error) {
@@ -24,9 +23,9 @@ function mark(panelId, payload, error) {
   label.textContent = `${payload.stale ? "stale" : "updated"} · ${timeText(payload.read_at)}`;
 }
 
-async function load(url, panelId, paint) {
+async function readPanel(url, panelId, show) {
   const isBrokerRead = !["/api/run", "/api/events"].some(path => url.startsWith(path));
-  if (isBrokerRead && Date.now() < brokerResumeAt) { mark(panelId, {}, "rate limited"); return; }
+  if (isBrokerRead && Date.now() < brokerResumeAt) { showReadStatus(panelId, {}, "rate limited"); return; }
   try {
     const response = await fetch(url, { headers: { Accept: "application/json" } });
     if (response.status === 401) { location.replace("/login"); return; }
@@ -37,14 +36,14 @@ async function load(url, panelId, paint) {
     }
     if (!response.ok) throw new Error(`read failed (${response.status})`);
     const payload = await response.json();
-    paint(payload.data, payload);
-    mark(panelId, payload);
+    show(payload.data, payload);
+    showReadStatus(panelId, payload);
   } catch (error) {
-    mark(panelId, {}, error instanceof Error ? error.message : "read failed");
+    showReadStatus(panelId, {}, error instanceof Error ? error.message : "read failed");
   }
 }
 
-function paintAccount(data) {
+function showAccount(data) {
   const fields = [["Portfolio value", "portfolio_value", money], ["Cash", "cash", money], ["Buying power", "buying_power", money], ["Equity", "equity", money], ["Last equity", "last_equity", money], ["Day trades", "daytrade_count", number], ["Status", "status", text], ["Currency", "currency", text]];
   const metrics = fields.map(([label, key, format]) => {
     const metric = document.createElement("div");
@@ -59,7 +58,7 @@ function paintAccount(data) {
   document.getElementById("account").replaceChildren(...metrics);
 }
 
-function paintRun(data, payload) {
+function showRun(data, payload) {
   const element = document.getElementById("run");
   if (!data) { element.textContent = "No runtime snapshot"; return; }
   const status = document.createElement("strong");
@@ -71,31 +70,31 @@ function paintRun(data, payload) {
   element.replaceChildren(status, strategy, heartbeat);
 }
 
-const positionTable = table("#positions", [["Symbol", "symbol"], ["Side", "side"], ["Quantity", "qty"], ["Entry", "avg_entry_price"], ["Price", "current_price"], ["Market value", "market_value"], ["Unrealized P&L", "unrealized_pl"]]);
-const openOrderTable = table("#open-orders", [["Submitted", "submitted_at"], ["Symbol", "symbol"], ["Side", "side"], ["Type", "type"], ["Quantity", "qty"], ["Filled", "filled_qty"], ["Status", "status"]]);
-const orderTable = table("#orders", [["Submitted", "submitted_at"], ["Symbol", "symbol"], ["Side", "side"], ["Type", "type"], ["Quantity", "qty"], ["Filled", "filled_qty"], ["Status", "status"]]);
-const fillTable = table("#fills", [["Time", "transaction_time"], ["Symbol", "symbol"], ["Side", "side"], ["Quantity", "qty"], ["Price", "price"], ["Order", "order_id"]]);
-const eventTable = table("#events", [["Time", "occurred_at"], ["Level", "level"], ["Kind", "kind"], ["Message", "message"]]);
+const positionTable = createTable("#positions", [["Symbol", "symbol"], ["Side", "side"], ["Quantity", "qty"], ["Entry", "avg_entry_price"], ["Price", "current_price"], ["Market value", "market_value"], ["Unrealized P&L", "unrealized_pl"]]);
+const openOrderTable = createTable("#open-orders", [["Submitted", "submitted_at"], ["Symbol", "symbol"], ["Side", "side"], ["Type", "type"], ["Quantity", "qty"], ["Filled", "filled_qty"], ["Status", "status"]]);
+const orderTable = createTable("#orders", [["Submitted", "submitted_at"], ["Symbol", "symbol"], ["Side", "side"], ["Type", "type"], ["Quantity", "qty"], ["Filled", "filled_qty"], ["Status", "status"]]);
+const fillTable = createTable("#fills", [["Time", "transaction_time"], ["Symbol", "symbol"], ["Side", "side"], ["Quantity", "qty"], ["Price", "price"], ["Order", "order_id"]]);
+const eventTable = createTable("#events", [["Time", "occurred_at"], ["Level", "level"], ["Kind", "kind"], ["Message", "message"]]);
 
 const chart = LightweightCharts.createChart(document.getElementById("equity-chart"), { autoSize: true, layout: { attributionLogo: true, background: { color: "transparent" }, textColor: "#8fa69a" }, grid: { vertLines: { color: "#172a21" }, horzLines: { color: "#172a21" } } });
 const equitySeries = chart.addSeries(LightweightCharts.AreaSeries, { lineColor: "#6ee7a5", topColor: "#245f42aa", bottomColor: "#245f4200", title: "Equity" });
 const profitSeries = chart.addSeries(LightweightCharts.LineSeries, { color: "#f4c66d", priceScaleId: "pnl", title: "P&L" });
 
-function paintEquity(data) {
+function showEquity(data) {
   const points = data.points.filter(point => point.equity != null && point.profit_loss != null);
   equitySeries.setData(points.map(point => ({ time: point.timestamp, value: Number(point.equity) })));
   profitSeries.setData(points.map(point => ({ time: point.timestamp, value: Number(point.profit_loss) })));
   chart.timeScale().fitContent();
 }
 
-function loadPage(name) {
-  const state = pageState[name];
+function readPage(name) {
+  const state = pages[name];
   const target = name === "orders" ? orderTable : fillTable;
   const previous = document.querySelector(`[data-page="${name}-prev"]`);
   const next = document.querySelector(`[data-page="${name}-next"]`);
   state.rows = [];
   previous.disabled = next.disabled = true;
-  return load(state.urls[state.index], `${name}-panel`, rows => {
+  return readPanel(state.urls[state.index], `${name}-panel`, rows => {
     state.rows = rows;
     target.replaceData(rows);
     document.getElementById(`${name}-page`).textContent = `Page ${state.index + 1}`;
@@ -105,8 +104,8 @@ function loadPage(name) {
   });
 }
 
-function turnPage(name, direction) {
-  const state = pageState[name];
+function changePage(name, direction) {
+  const state = pages[name];
   if (direction === "prev") state.index = Math.max(0, state.index - 1);
   if (direction === "next" && state.rows.length === 100) {
     const cursor = state.rows.at(-1).id;
@@ -114,17 +113,17 @@ function turnPage(name, direction) {
     state.urls.splice(state.index + 1, 1, `/api/${name}?limit=100&${key}=${encodeURIComponent(cursor)}`);
     state.index += 1;
   }
-  loadPage(name);
+  readPage(name);
 }
 
 const jobs = [
-  [5000, () => load("/api/account", "account-panel", paintAccount)],
-  [5000, () => load("/api/positions", "positions-panel", rows => positionTable.replaceData(rows))],
-  [5000, () => load("/api/orders/open", "open-orders-panel", rows => openOrderTable.replaceData(rows))],
-  [5000, () => load("/api/run", "run-panel", paintRun)],
-  [5000, () => load("/api/events?limit=50", "events-panel", rows => eventTable.replaceData(rows))],
-  [15000, () => loadPage("orders")], [15000, () => loadPage("fills")],
-  [60000, () => load(`/api/equity?period=${document.querySelector("#periods [aria-pressed=true]").dataset.period}`, "equity-panel", paintEquity)],
+  [5000, () => readPanel("/api/account", "account-panel", showAccount)],
+  [5000, () => readPanel("/api/positions", "positions-panel", rows => positionTable.replaceData(rows))],
+  [5000, () => readPanel("/api/orders/open", "open-orders-panel", rows => openOrderTable.replaceData(rows))],
+  [5000, () => readPanel("/api/run", "run-panel", showRun)],
+  [5000, () => readPanel("/api/events?limit=50", "events-panel", rows => eventTable.replaceData(rows))],
+  [15000, () => readPage("orders")], [15000, () => readPage("fills")],
+  [60000, () => readPanel(`/api/equity?period=${document.querySelector("#periods [aria-pressed=true]").dataset.period}`, "equity-panel", showEquity)],
 ].map(([delay, run]) => ({ delay, run, next: 0 }));
 
 function refresh() {
@@ -139,7 +138,7 @@ async function readSession() {
   csrfToken = (await response.json()).csrf_token;
 }
 
-document.querySelectorAll("[data-page]").forEach(button => button.addEventListener("click", () => turnPage(...button.dataset.page.split("-"))));
+document.querySelectorAll("[data-page]").forEach(button => button.addEventListener("click", () => changePage(...button.dataset.page.split("-"))));
 document.getElementById("periods").addEventListener("click", event => {
   const selected = event.target.closest("button[data-period]");
   if (!selected) return;
