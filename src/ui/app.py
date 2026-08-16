@@ -55,16 +55,10 @@ class SessionGuardMiddleware:
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 4401})
             return
-        if scope["path"].startswith("/api/"):
-            response = error_response("Authentication is required", 401)
-        elif scope["method"] in {"GET", "HEAD"}:
-            response: Response = RedirectResponse(
-                "/login",
-                status_code=303,
-                headers=NO_STORE,
-            )
+        if scope["path"].startswith("/api/") or scope["method"] not in {"GET", "HEAD"}:
+            response: Response = error_response("Authentication is required", 401)
         else:
-            response = error_response("Authentication is required", 401)
+            response = RedirectResponse("/login", status_code=303, headers=NO_STORE)
         await response(scope, receive, send)
 
 
