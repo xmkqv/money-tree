@@ -18,12 +18,8 @@ DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.v1.html").read_bytes()
 DASHBOARD_CSS = (ASSET_DIRECTORY / "dashboard.v1.css").read_bytes()
 DASHBOARD_JAVASCRIPT = (ASSET_DIRECTORY / "dashboard.v1.js").read_bytes()
 NO_STORE = {"Cache-Control": "no-store"}
-PORTFOLIO_QUERIES = {
-    "1D": ("1D", "5Min"),
-    "1W": ("1W", "15Min"),
-    "1M": ("1M", "1D"),
-    "1A": ("1A", "1D"),
-}
+HEARTBEAT_TIMEOUT = timedelta(seconds=15)
+PORTFOLIO_TIMEFRAMES = {"1D": "5Min", "1W": "15Min", "1M": "1D", "1A": "1D"}
 CONTENT_SECURITY_POLICY = "; ".join(
     (
         "default-src 'self'",
@@ -88,6 +84,11 @@ def create_dashboard_router(
 
     def alpaca(request: Request) -> AlpacaReadClient:
         return request.state.alpaca
+
+    def runtime_state() -> tuple[RuntimeSnapshot | None, bool]:
+        snapshot = runtime_store.read()
+        stale = snapshot is None or datetime.now(UTC) - snapshot.heartbeat_at > HEARTBEAT_TIMEOUT
+        return snapshot, stale
 
     @router.get("/")
     async def dashboard() -> Response:
@@ -172,27 +173,22 @@ def create_dashboard_router(
         request: Request,
         period: Literal["1D", "1W", "1M", "1A"] = "1D",
     ) -> JSONResponse:
-        query_period, timeframe = PORTFOLIO_QUERIES[period]
         return read_response(
-            await alpaca(request).equity(query_period, timeframe),
+            await alpaca(request).equity(period, PORTFOLIO_TIMEFRAMES[period]),
             60,
         )
 
     @router.get("/api/run")
     async def runtime() -> JSONResponse:
-        snapshot = runtime_store.read()
-        now = datetime.now(UTC)
-        stale = snapshot is None or now - snapshot.heartbeat_at > timedelta(seconds=15)
+        snapshot, stale = runtime_state()
         return read_response(snapshot, 5, stale=stale)
 
     @router.get("/api/events")
     async def events(
         limit: Annotated[int, Query(ge=1, le=50)] = 50,
     ) -> JSONResponse:
-        snapshot = runtime_store.read()
-        now = datetime.now(UTC)
+        snapshot, stale = runtime_state()
         data = list(reversed(snapshot.events[-limit:])) if snapshot else []
-        stale = snapshot is None or now - snapshot.heartbeat_at > timedelta(seconds=15)
         return read_response(data, 5, stale=stale)
 
     @router.post("/internal/state", status_code=204)
@@ -224,11 +220,15 @@ def create_dashboard_router(
         if abs((datetime.now(UTC) - signed_at).total_seconds()) > 30:
             return error_response("Runtime signature has expired", 401)
         signed = timestamp_text.encode() + b"." + body
-        expected = hmac.digest(
-            configuration.state_export_secret.get_secret_value().encode(),
-            signed,
-            "sha256",
-        ).hex().encode()
+        expected = (
+            hmac.digest(
+                configuration.state_export_secret.get_secret_value().encode(),
+                signed,
+                "sha256",
+            )
+            .hex()
+            .encode()
+        )
         if not hmac.compare_digest(expected, signature.encode()):
             return error_response("Runtime signature is invalid", 401)
         try:

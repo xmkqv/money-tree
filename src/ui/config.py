@@ -31,9 +31,7 @@ class WebSettings(BaseSettings):
     @cached_property
     def allowed_subjects(self) -> frozenset[str]:
         return frozenset(
-            subject.strip()
-            for subject in self.allowed_railway_subs.split(",")
-            if subject.strip()
+            subject.strip() for subject in self.allowed_railway_subs.split(",") if subject.strip()
         )
 
     @model_validator(mode="after")
@@ -42,7 +40,5 @@ class WebSettings(BaseSettings):
         if str(self.railway_oauth_redirect_uri) != callback:
             raise ValueError("RAILWAY_OAUTH_REDIRECT_URI must match APP_BASE_URL/auth/callback")
         if not self.allowed_subjects:
-            raise ValueError(
-                "ALLOWED_RAILWAY_SUBS must contain at least one subject"
-            )
+            raise ValueError("ALLOWED_RAILWAY_SUBS must contain at least one subject")
         return self
