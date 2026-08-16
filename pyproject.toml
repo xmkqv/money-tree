@@ -38,7 +38,27 @@ Issues = "https://github.com/xmkqv/money-tree/issues"
 dev = [
     "arch>=8,<9",
     "polars>=1,<2",
+    "pyright>=1.1,<2",
+    "ruff>=0.14,<1",
 ]
+
+[tool.pyright]
+include = ["src"]
+pythonVersion = "3.13"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false
+reportUnusedFunction = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["B", "E", "F", "I", "SIM", "UP"]
+ignore = ["B009"]
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
 
 [tool.hatch.build.targets.sdist]
 include = ["src/bot", "src/cli", "src/ui", "LICENSE", "README.md", "pyproject.toml"]

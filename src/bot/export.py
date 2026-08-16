@@ -1,3 +1,4 @@
+import contextlib
 import hmac
 import logging
 import queue
@@ -8,7 +9,7 @@ from typing import Literal
 from uuid import uuid4
 
 import httpx
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, UUID4
+from pydantic import UUID4, AwareDatetime, BaseModel, ConfigDict, Field
 
 
 LOGGER = logging.getLogger(__name__)
@@ -117,10 +118,8 @@ class StateExporter:
                 self.pending.put_nowait(snapshot)
                 return
             except queue.Full:
-                try:
+                with contextlib.suppress(queue.Empty):
                     self.pending.get_nowait()
-                except queue.Empty:
-                    pass
 
     def _export(self) -> None:
         with httpx.Client(timeout=1.0) as client:

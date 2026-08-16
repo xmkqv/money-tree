@@ -2,7 +2,7 @@ import base64
 import hashlib
 import secrets
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol, cast
 from urllib.parse import urlencode
 
 import httpx
@@ -60,14 +60,15 @@ class RailwayOAuthClient:
 
     async def identify(self, code: str, verifier: str) -> str:
         try:
-            async with AsyncOAuth2Client(
+            async with AsyncOAuth2Client(  # pyright: ignore[reportGeneralTypeIssues]
                 client_id=self._configuration.railway_oauth_client_id,
                 client_secret=self._configuration.railway_oauth_client_secret.get_secret_value(),
                 redirect_uri=str(self._configuration.railway_oauth_redirect_uri),
                 scope="openid",
                 token_endpoint_auth_method="client_secret_basic",
-            ) as client:
-                await client.fetch_token(
+            ) as oauth_client:  # pyright: ignore[reportUnknownVariableType]
+                client = cast(httpx.AsyncClient, oauth_client)
+                await cast(Any, client).fetch_token(
                     TOKEN_URL,
                     code=code,
                     code_verifier=verifier,
@@ -77,7 +78,7 @@ class RailwayOAuthClient:
                 identity = response.json()
                 if not isinstance(identity, dict):
                     raise RailwayIdentityError("Railway OAuth identity was invalid")
-                subject = identity.get("sub")
+                subject = cast(dict[str, Any], identity).get("sub")
         except (OAuthError, httpx.HTTPError, TypeError, ValueError) as error:
             raise RailwayIdentityError("Railway OAuth identity lookup failed") from error
         if not isinstance(subject, str) or not subject:

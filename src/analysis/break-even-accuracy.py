@@ -1,6 +1,7 @@
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from sys import stdout
+from typing import cast
 
 import numpy as np
 import polars as pl
@@ -62,21 +63,21 @@ def _main() -> None:
         raise ValueError("bootstrap counts must be positive")
     if not 0 < arguments.confidence < 1:
         raise ValueError("confidence must be between zero and one")
+    confidence = float(arguments.confidence)
     usd_absolute_price_moves, usd_transaction_costs = _read(arguments.input)
     estimate = _estimate(usd_absolute_price_moves, usd_transaction_costs).item()
-    samples = StationaryBootstrap(
+    bootstrap = StationaryBootstrap(
         arguments.block_size,
         usd_absolute_price_moves,
         usd_transaction_costs,
         seed=arguments.seed,
-    ).apply(_estimate, reps=arguments.replications)
+    )
+    samples = cast(FloatArray, bootstrap.apply(_estimate, reps=arguments.replications))
     result = pl.DataFrame(
         {
             "estimate": [estimate],
-            "confidence_bound_upper": [
-                float(np.quantile(samples[:, 0], arguments.confidence))
-            ],
-            "confidence_probability": [arguments.confidence],
+            "confidence_bound_upper": [float(np.quantile(samples[:, 0], confidence))],
+            "confidence_probability": [confidence],
             "n_session": [usd_absolute_price_moves.size],
             "n_bootstrap_block": [arguments.block_size],
             "n_bootstrap_replication": [arguments.replications],
