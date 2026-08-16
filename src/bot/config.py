@@ -4,6 +4,8 @@ from typing import Annotated, Self
 from pydantic import AnyHttpUrl, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from bot.strategies.shared import RiskParameters
+
 
 type RiskLimit = Annotated[float, Field(gt=0, le=1)]
 type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
@@ -38,7 +40,7 @@ class Settings(BaseSettings):
         return self
 
     @property
-    def risk_parameters(self) -> dict[str, float]:
+    def risk_parameters(self) -> RiskParameters:
         return {
             "risk_per_day_max": self.risk_per_day_max,
             "risk_per_trade_max": self.risk_per_trade_max,
