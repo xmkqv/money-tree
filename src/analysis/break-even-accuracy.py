@@ -1,15 +1,11 @@
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from sys import stdout
-from typing import cast
+from typing import Any, cast
 
-import numpy as np
 import polars as pl
 from arch.bootstrap import StationaryBootstrap
-from numpy.typing import NDArray
 
-
-type FloatArray = NDArray[np.float64]
 
 SCHEMA = {
     "usd_absolute_price_move": pl.Float64,
@@ -18,18 +14,17 @@ SCHEMA = {
 
 
 def _estimate(
-    usd_absolute_price_moves: FloatArray,
-    usd_transaction_costs: FloatArray,
-) -> FloatArray:
+    usd_absolute_price_moves: Any,
+    usd_transaction_costs: Any,
+) -> list[float]:
     usd_absolute_price_move = float(usd_absolute_price_moves.sum())
     usd_transaction_cost = float(usd_transaction_costs.sum())
     if usd_absolute_price_move <= 0 or usd_transaction_cost > usd_absolute_price_move:
         raise ValueError("break-even accuracy is infeasible")
-    estimate = 0.5 + usd_transaction_cost / (2 * usd_absolute_price_move)
-    return np.array([estimate], dtype=np.float64)
+    return [0.5 + usd_transaction_cost / (2 * usd_absolute_price_move)]
 
 
-def _read(path: Path) -> tuple[FloatArray, FloatArray]:
+def _read(path: Path) -> tuple[pl.Series, pl.Series]:
     sessions = (
         pl.scan_csv(path, schema_overrides=SCHEMA)
         .select(*SCHEMA)
@@ -37,14 +32,15 @@ def _read(path: Path) -> tuple[FloatArray, FloatArray]:
     )
     if sessions.is_empty():
         raise ValueError("the input must contain sessions")
-    values = sessions.to_numpy()
-    if (
-        not np.isfinite(values).all()
-        or np.any(values < 0)
-        or np.any(values[:, 1] > values[:, 0])
-    ):
+    usd_absolute_price_moves = sessions["usd_absolute_price_move"]
+    usd_transaction_costs = sessions["usd_transaction_cost"]
+    unusable = any(
+        column.null_count() or not column.is_finite().all() or (column < 0).any()
+        for column in (usd_absolute_price_moves, usd_transaction_costs)
+    )
+    if unusable or (usd_transaction_costs > usd_absolute_price_moves).any():
         raise ValueError("the input contains invalid session values")
-    return values[:, 0], values[:, 1]
+    return usd_absolute_price_moves, usd_transaction_costs
 
 
 def _arguments() -> Namespace:
@@ -65,20 +61,21 @@ def _main() -> None:
         raise ValueError("confidence must be between zero and one")
     confidence = float(arguments.confidence)
     usd_absolute_price_moves, usd_transaction_costs = _read(arguments.input)
-    estimate = _estimate(usd_absolute_price_moves, usd_transaction_costs).item()
+    estimate = _estimate(usd_absolute_price_moves, usd_transaction_costs)[0]
     bootstrap = StationaryBootstrap(
         arguments.block_size,
-        usd_absolute_price_moves,
-        usd_transaction_costs,
+        usd_absolute_price_moves.to_numpy(),
+        usd_transaction_costs.to_numpy(),
         seed=arguments.seed,
     )
-    samples = cast(FloatArray, bootstrap.apply(_estimate, reps=arguments.replications))
+    samples = bootstrap.apply(cast(Any, _estimate), reps=arguments.replications)
+    bound = pl.Series(samples[:, 0]).quantile(confidence, interpolation="linear")
     result = pl.DataFrame(
         {
             "estimate": [estimate],
-            "confidence_bound_upper": [float(np.quantile(samples[:, 0], confidence))],
+            "confidence_bound_upper": [bound],
             "confidence_probability": [confidence],
-            "n_session": [usd_absolute_price_moves.size],
+            "n_session": [len(usd_absolute_price_moves)],
             "n_bootstrap_block": [arguments.block_size],
             "n_bootstrap_replication": [arguments.replications],
             "bootstrap_seed": [arguments.seed],
