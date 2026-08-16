@@ -17,7 +17,7 @@ src/
     bot/
         strategies/
             shared.py # model, types, utils
-            basic.py # deployment-safe strategy that submits no orders
+            noop.py # deployment-safe strategy that submits no orders
             {name}.py # future trading strategy
             ...
         config.py
