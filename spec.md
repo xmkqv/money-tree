@@ -17,7 +17,8 @@ src/
     bot/
         strategies/
             shared.py # model, types, utils
-            {name}.py
+            basic.py # deployment-safe strategy that submits no orders
+            {name}.py # future trading strategy
             ...
         config.py
         backtest.py
@@ -36,7 +37,7 @@ railway.toml
 railway.web.toml
 ```
 
-The worker starts `mt trade` with the `STRATEGY` variable.
+The bot starts `mt trade` with the `STRATEGY` variable.
 The web service starts Uvicorn on `0.0.0.0:$PORT`.
 
 Create a confidential OAuth application in the Railway workspace.
@@ -45,3 +46,14 @@ Set the web variables from `.env.example` on `money-tree-web`.
 
 The web service accepts only the two subjects in `ALLOWED_RAILWAY_SUBS`.
 Do not set Alpaca credentials on the web service.
+
+<!-- ddoc:names -->
+| lemma | count |
+| --- | ---: |
+| backtest | 2 |
+| strategy | 2 |
+| trade | 2 |
+| analyze | 1 |
+| run | 1 |
+| src | 1 |
+<!-- /ddoc:names -->
