@@ -26,9 +26,7 @@ def _estimate(
 
 def _read(path: Path) -> tuple[pl.Series, pl.Series]:
     sessions = (
-        pl.scan_csv(path, schema_overrides=SCHEMA)
-        .select(*SCHEMA)
-        .collect(engine="streaming")
+        pl.scan_csv(path, schema_overrides=SCHEMA).select(*SCHEMA).collect(engine="streaming")
     )
     if sessions.is_empty():
         raise ValueError("the input must contain sessions")
