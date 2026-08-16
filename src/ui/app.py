@@ -1,16 +1,21 @@
 import hmac
 import secrets
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from ui.alpaca import AlpacaReadClient, PAPER_API_URL
 from ui.auth import IdentityClient, RailwayIdentityError, RailwayOAuthClient
 from ui.config import WebSettings
+from ui.dashboard import NO_STORE, RuntimeStore, create_dashboard_router, failure
 
 
-PUBLIC_PATHS = frozenset({"/healthz", "/login", "/auth/callback"})
+PUBLIC_PATHS = frozenset({"/healthz", "/login", "/auth/callback", "/internal/state"})
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
@@ -36,12 +41,12 @@ class SessionGuardMiddleware:
         scope.setdefault("state", {})["user_sub"] = subject
         if scope_type == "http" and scope["method"] not in SAFE_METHODS:
             csrf_token = session.get("csrf_token")
-            request_token = dict(scope["headers"]).get(b"x-csrf-token", b"").decode()
+            request_token = dict(scope["headers"]).get(b"x-csrf-token", b"")
             if not isinstance(csrf_token, str) or not hmac.compare_digest(
-                csrf_token,
+                csrf_token.encode(),
                 request_token,
             ):
-                response = JSONResponse({"detail": "CSRF token is invalid"}, status_code=403)
+                response = failure("CSRF token is invalid", 403)
                 await response(scope, receive, send)
                 return
         await self.app(scope, receive, send)
@@ -50,10 +55,16 @@ class SessionGuardMiddleware:
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 4401})
             return
-        if scope["method"] in {"GET", "HEAD"}:
-            response: Response = RedirectResponse("/login", status_code=303)
+        if scope["path"].startswith("/api/"):
+            response = failure("Authentication is required", 401)
+        elif scope["method"] in {"GET", "HEAD"}:
+            response: Response = RedirectResponse(
+                "/login",
+                status_code=303,
+                headers=NO_STORE,
+            )
         else:
-            response = JSONResponse({"detail": "Authentication is required"}, status_code=401)
+            response = failure("Authentication is required", 401)
         await response(scope, receive, send)
 
 
@@ -63,7 +74,29 @@ def create_app(
 ) -> FastAPI:
     web_configuration = configuration or WebSettings()
     oauth_client = identity_client or RailwayOAuthClient(web_configuration)
-    app = FastAPI(title="Money Tree", docs_url=None, redoc_url=None, openapi_url=None)
+    runtime_store = RuntimeStore()
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[dict[str, AlpacaReadClient]]:
+        timeout = httpx.Timeout(connect=1, read=3, write=3, pool=3)
+        headers = {
+            "APCA-API-KEY-ID": web_configuration.alpaca_api_key.get_secret_value(),
+            "APCA-API-SECRET-KEY": web_configuration.alpaca_api_secret.get_secret_value(),
+        }
+        async with httpx.AsyncClient(
+            base_url=PAPER_API_URL,
+            headers=headers,
+            timeout=timeout,
+        ) as client:
+            yield {"alpaca": AlpacaReadClient(client)}
+
+    app = FastAPI(
+        title="Money Tree",
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        lifespan=lifespan,
+    )
     app.add_middleware(SessionGuardMiddleware, configuration=web_configuration)
     app.add_middleware(
         SessionMiddleware,
@@ -75,8 +108,8 @@ def create_app(
     )
 
     @app.get("/healthz")
-    async def health() -> dict[str, str]:
-        return {"status": "ok"}
+    async def health() -> JSONResponse:
+        return JSONResponse({"status": "ok"}, headers=NO_STORE)
 
     @app.get("/login")
     async def login(request: Request) -> RedirectResponse:
@@ -84,7 +117,11 @@ def create_app(
         request.session.clear()
         request.session["oauth_state"] = authorization.state
         request.session["oauth_verifier"] = authorization.verifier
-        return RedirectResponse(authorization.url, status_code=303)
+        return RedirectResponse(
+            authorization.url,
+            status_code=303,
+            headers=NO_STORE,
+        )
 
     @app.get("/auth/callback")
     async def callback(
@@ -97,40 +134,43 @@ def create_app(
         verifier = request.session.pop("oauth_verifier", None)
         if error is not None:
             request.session.clear()
-            return JSONResponse({"detail": "Railway login was denied"}, status_code=401)
+            return failure("Railway login was denied", 401)
         if not isinstance(expected_state, str) or not isinstance(state, str):
             request.session.clear()
-            return JSONResponse({"detail": "OAuth state is invalid"}, status_code=400)
-        if not hmac.compare_digest(expected_state, state) or not isinstance(verifier, str):
+            return failure("OAuth state is invalid", 400)
+        if not hmac.compare_digest(
+            expected_state.encode(),
+            state.encode(),
+        ) or not isinstance(verifier, str):
             request.session.clear()
-            return JSONResponse({"detail": "OAuth state is invalid"}, status_code=400)
+            return failure("OAuth state is invalid", 400)
         if not isinstance(code, str) or not code:
             request.session.clear()
-            return JSONResponse({"detail": "OAuth code is missing"}, status_code=400)
+            return failure("OAuth code is missing", 400)
         try:
             subject = await oauth_client.identify(code, verifier)
         except RailwayIdentityError:
             request.session.clear()
-            return JSONResponse({"detail": "Railway login failed"}, status_code=502)
+            return failure("Railway login failed", 502)
         if subject not in web_configuration.allowed_subjects:
             request.session.clear()
-            return JSONResponse({"detail": "Railway user is not allowed"}, status_code=403)
+            return failure("Railway user is not allowed", 403)
         request.session.clear()
         request.session["user_sub"] = subject
         request.session["csrf_token"] = secrets.token_urlsafe(32)
-        return RedirectResponse("/", status_code=303)
-
-    @app.get("/")
-    async def index(request: Request) -> dict[str, str | bool]:
-        return {
-            "app": "money-tree",
-            "authenticated": True,
-            "csrf_token": request.session["csrf_token"],
-        }
+        return RedirectResponse("/", status_code=303, headers=NO_STORE)
 
     @app.post("/logout", status_code=204)
     async def logout(request: Request) -> Response:
         request.session.clear()
-        return Response(status_code=204)
+        return Response(
+            status_code=204,
+            headers={
+                **NO_STORE,
+                "Clear-Site-Data": '"cache", "storage"',
+            },
+        )
+
+    app.include_router(create_dashboard_router(web_configuration, runtime_store))
 
     return app

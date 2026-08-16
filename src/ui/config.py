@@ -1,8 +1,12 @@
 from functools import cached_property
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import AnyHttpUrl, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+type RequiredSecret = Annotated[SecretStr, Field(min_length=1)]
+type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
 
 
 class WebSettings(BaseSettings):
@@ -15,11 +19,14 @@ class WebSettings(BaseSettings):
 
     app_base_url: AnyHttpUrl
     railway_oauth_client_id: str = Field(min_length=1)
-    railway_oauth_client_secret: SecretStr
+    railway_oauth_client_secret: RequiredSecret
     railway_oauth_redirect_uri: AnyHttpUrl
     allowed_railway_subs: str = Field(min_length=1)
-    session_secret: SecretStr
+    session_secret: SigningSecret
     session_ttl_seconds: int = Field(default=28_800, gt=0, le=86_400)
+    alpaca_api_key: RequiredSecret
+    alpaca_api_secret: RequiredSecret
+    state_export_secret: SigningSecret
 
     @cached_property
     def allowed_subjects(self) -> frozenset[str]:
@@ -38,6 +45,4 @@ class WebSettings(BaseSettings):
             raise ValueError(
                 "ALLOWED_RAILWAY_SUBS must contain at least one subject"
             )
-        if len(self.session_secret.get_secret_value()) < 32:
-            raise ValueError("SESSION_SECRET must contain at least 32 characters")
         return self
