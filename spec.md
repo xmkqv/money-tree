@@ -50,18 +50,16 @@ The web service starts one Uvicorn worker on all interfaces and uses one Railway
 Create a confidential Railway OAuth application with the callback `https://<generated-domain>/auth/callback`.
 Set the web variables from `.env.example` on `money-tree-web`.
 
-The web service accepts only the two subjects in `ALLOWED_RAILWAY_SUBS`.
 Give the web service a separate paper Alpaca credential for named GET requests.
 
-The dashboard splits data into URL-keyed HTTP atoms that the browser stores for each declared lifetime.
-FastAPI keeps no broker cache and starts no broker poller.
+The dashboard reads each URL separately. The browser stores each response for its declared lifetime. FastAPI keeps no broker cache and starts no broker poller.
 
 Set the export URL and secret on the bot, and set the same secret on the web service.
 Use the Railway private domain for `STATE_EXPORT_URL`.
 The bot sends its newest signed snapshot with at most 50 events outside the trading path.
 The web boundary rejects oversized, expired, invalid, repeated, or stale snapshots.
 
-| atom | browser lifetime |
+| response | browser lifetime |
 | --- | ---: |
 | account, positions, open orders, run, events | 5 seconds |
 | newest closed orders and fills | 15 seconds |
