@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Money Tree</title>
+  <link rel="stylesheet" href="https://unpkg.com/tabulator-tables@6.5.2/dist/css/tabulator_midnight.min.css" integrity="sha384-IjPQxP4KslfqCUeR2++fWi5zeLwAG8boDCsM0yhyn08PoINK8bdzXatWy+KPm9UQ" crossorigin="anonymous">
+  <link rel="stylesheet" href="/assets/dashboard.v1.css">
+  <script defer src="https://unpkg.com/tabulator-tables@6.5.2/dist/js/tabulator.min.js" integrity="sha384-ZlfxHB5fIn8MOAuKJe8YBMi7snQXYvhy+0b3K4rGBBY2UvrJwho2jciJ5NKt0WtC" crossorigin="anonymous"></script>
+  <script defer src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js" integrity="sha384-q1KYLSKHgBnW5tWYGGR8+6YV4/iPy31dILoF2I1OD7XiVUvHEp/TaxIQVmB0j3R2" crossorigin="anonymous"></script>
+  <script defer src="/assets/dashboard.v1.js"></script>
+</head>
+<body>
+  <header>
+    <div><p class="eyebrow">ALPACA PAPER</p><h1>Money Tree</h1></div>
+    <div class="header-actions"><span id="visibility">Live</span><button id="logout" type="button">Log out</button></div>
+  </header>
+  <main>
+    <section id="account-panel" class="panel wide">
+      <div class="panel-heading"><h2>Account</h2><span class="freshness"></span></div>
+      <div id="account" class="metrics"></div>
+    </section>
+    <section id="run-panel" class="panel">
+      <div class="panel-heading"><h2>Trading run</h2><span class="freshness"></span></div>
+      <div id="run" class="run-state">No runtime snapshot</div>
+    </section>
+    <section id="equity-panel" class="panel wide chart-panel">
+      <div class="panel-heading"><h2>Equity and P&amp;L</h2><span class="freshness"></span></div>
+      <nav id="periods" aria-label="Chart period"><button type="button" data-period="1D" aria-pressed="true">1D</button><button type="button" data-period="1W" aria-pressed="false">1W</button><button type="button" data-period="1M" aria-pressed="false">1M</button><button type="button" data-period="1A" aria-pressed="false">1A</button></nav>
+      <div id="equity-chart" role="region" aria-label="Equity and profit and loss chart"></div>
+    </section>
+    <section id="positions-panel" class="panel wide">
+      <div class="panel-heading"><h2>Positions</h2><span class="freshness"></span></div>
+      <div id="positions" aria-label="Positions"></div>
+    </section>
+    <section id="open-orders-panel" class="panel wide">
+      <div class="panel-heading"><h2>Open orders</h2><span class="freshness"></span></div>
+      <div id="open-orders" aria-label="Open orders"></div>
+    </section>
+    <section id="orders-panel" class="panel wide">
+      <div class="panel-heading"><h2>Order history</h2><span class="freshness"></span></div>
+      <div id="orders" aria-label="Order history"></div>
+      <div class="pager"><button type="button" data-page="orders-prev" disabled>Previous</button><span id="orders-page" aria-live="polite">Page 1</span><button type="button" data-page="orders-next" disabled>Next</button></div>
+    </section>
+    <section id="fills-panel" class="panel wide">
+      <div class="panel-heading"><h2>Fill history</h2><span class="freshness"></span></div>
+      <div id="fills" aria-label="Fill history"></div>
+      <div class="pager"><button type="button" data-page="fills-prev" disabled>Previous</button><span id="fills-page" aria-live="polite">Page 1</span><button type="button" data-page="fills-next" disabled>Next</button></div>
+    </section>
+    <section id="events-panel" class="panel wide">
+      <div class="panel-heading"><h2>Strategy events</h2><span class="freshness"></span></div>
+      <div id="events" aria-label="Strategy events"></div>
+    </section>
+  </main>
+</body>
+</html>
