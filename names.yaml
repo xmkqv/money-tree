@@ -3,6 +3,7 @@ backtest: Project term for evaluation of a strategy with historical data
 Lumibot: Proper name of the strategy execution framework
 money-tree: Project-owned name of the trading system
 MT: Money Tree
+Railway: Proper name of the deployment platform
 strategy: Project term for rules that select market actions
 trade: Project term for a market transaction
 Yahoo: Proper name of the market-data service
