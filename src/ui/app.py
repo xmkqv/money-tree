@@ -12,7 +12,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from ui.alpaca import AlpacaReadClient, PAPER_API_URL
 from ui.auth import IdentityClient, RailwayIdentityError, RailwayOAuthClient
 from ui.config import WebSettings
-from ui.dashboard import NO_STORE, RuntimeStore, create_dashboard_router, failure
+from ui.dashboard import NO_STORE, RuntimeStore, create_dashboard_router, error_response
 
 
 PUBLIC_PATHS = frozenset({"/healthz", "/login", "/auth/callback", "/internal/state"})
@@ -21,21 +21,21 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 class SessionGuardMiddleware:
     def __init__(self, app: ASGIApp, configuration: WebSettings) -> None:
-        self.app = app
-        self.configuration = configuration
+        self._app = app
+        self._configuration = configuration
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         scope_type = scope["type"]
         if scope_type not in {"http", "websocket"}:
-            await self.app(scope, receive, send)
+            await self._app(scope, receive, send)
             return
         path = scope["path"]
         if scope_type == "http" and path in PUBLIC_PATHS:
-            await self.app(scope, receive, send)
+            await self._app(scope, receive, send)
             return
         session = scope.get("session", {})
         subject = session.get("user_sub")
-        if not isinstance(subject, str) or subject not in self.configuration.allowed_subjects:
+        if not isinstance(subject, str) or subject not in self._configuration.allowed_subjects:
             await self._reject(scope, receive, send)
             return
         scope.setdefault("state", {})["user_sub"] = subject
@@ -46,17 +46,17 @@ class SessionGuardMiddleware:
                 csrf_token.encode(),
                 request_token,
             ):
-                response = failure("CSRF token is invalid", 403)
+                response = error_response("CSRF token is invalid", 403)
                 await response(scope, receive, send)
                 return
-        await self.app(scope, receive, send)
+        await self._app(scope, receive, send)
 
     async def _reject(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 4401})
             return
         if scope["path"].startswith("/api/"):
-            response = failure("Authentication is required", 401)
+            response = error_response("Authentication is required", 401)
         elif scope["method"] in {"GET", "HEAD"}:
             response: Response = RedirectResponse(
                 "/login",
@@ -64,7 +64,7 @@ class SessionGuardMiddleware:
                 headers=NO_STORE,
             )
         else:
-            response = failure("Authentication is required", 401)
+            response = error_response("Authentication is required", 401)
         await response(scope, receive, send)
 
 
@@ -134,27 +134,27 @@ def create_app(
         verifier = request.session.pop("oauth_verifier", None)
         if error is not None:
             request.session.clear()
-            return failure("Railway login was denied", 401)
+            return error_response("Railway login was denied", 401)
         if not isinstance(expected_state, str) or not isinstance(state, str):
             request.session.clear()
-            return failure("OAuth state is invalid", 400)
+            return error_response("OAuth state is invalid", 400)
         if not hmac.compare_digest(
             expected_state.encode(),
             state.encode(),
         ) or not isinstance(verifier, str):
             request.session.clear()
-            return failure("OAuth state is invalid", 400)
+            return error_response("OAuth state is invalid", 400)
         if not isinstance(code, str) or not code:
             request.session.clear()
-            return failure("OAuth code is missing", 400)
+            return error_response("OAuth code is missing", 400)
         try:
             subject = await oauth_client.identify(code, verifier)
         except RailwayIdentityError:
             request.session.clear()
-            return failure("Railway login failed", 502)
+            return error_response("Railway login failed", 502)
         if subject not in web_configuration.allowed_subjects:
             request.session.clear()
-            return failure("Railway user is not allowed", 403)
+            return error_response("Railway user is not allowed", 403)
         request.session.clear()
         request.session["user_sub"] = subject
         request.session["csrf_token"] = secrets.token_urlsafe(32)

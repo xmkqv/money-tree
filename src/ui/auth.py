@@ -34,7 +34,7 @@ class AuthorizationRequest:
 
 class RailwayOAuthClient:
     def __init__(self, configuration: WebSettings) -> None:
-        self.configuration = configuration
+        self._configuration = configuration
 
     def authorization_request(self) -> AuthorizationRequest:
         state = secrets.token_urlsafe(32)
@@ -44,8 +44,8 @@ class RailwayOAuthClient:
         query = urlencode(
             {
                 "response_type": "code",
-                "client_id": self.configuration.railway_oauth_client_id,
-                "redirect_uri": str(self.configuration.railway_oauth_redirect_uri),
+                "client_id": self._configuration.railway_oauth_client_id,
+                "redirect_uri": str(self._configuration.railway_oauth_redirect_uri),
                 "scope": "openid",
                 "state": state,
                 "code_challenge": challenge,
@@ -61,9 +61,9 @@ class RailwayOAuthClient:
     async def identify(self, code: str, verifier: str) -> str:
         try:
             async with AsyncOAuth2Client(
-                client_id=self.configuration.railway_oauth_client_id,
-                client_secret=self.configuration.railway_oauth_client_secret.get_secret_value(),
-                redirect_uri=str(self.configuration.railway_oauth_redirect_uri),
+                client_id=self._configuration.railway_oauth_client_id,
+                client_secret=self._configuration.railway_oauth_client_secret.get_secret_value(),
+                redirect_uri=str(self._configuration.railway_oauth_redirect_uri),
                 scope="openid",
                 token_endpoint_auth_method="client_secret_basic",
             ) as client:
