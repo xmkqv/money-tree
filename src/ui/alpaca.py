@@ -72,16 +72,28 @@ def decimal_string(value: Any) -> str | None:
     raise AlpacaReadError("Alpaca portfolio history was invalid")
 
 
+def _object(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise AlpacaReadError("Alpaca response was invalid")
+    return payload
+
+
+def _objects(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
+        raise AlpacaReadError("Alpaca response was invalid")
+    return payload
+
+
 class AlpacaReadClient:
     def __init__(self, client: httpx.AsyncClient) -> None:
-        self.client = client
+        self._client = client
 
     async def account(self) -> dict[str, Any]:
-        payload = self._object(await self._get("/v2/account"))
+        payload = _object(await self._get("/v2/account"))
         return select_fields(payload, ACCOUNT_FIELDS)
 
     async def positions(self) -> list[dict[str, Any]]:
-        payload = self._objects(await self._get("/v2/positions"))
+        payload = _objects(await self._get("/v2/positions"))
         return [select_fields(item, POSITION_FIELDS) for item in payload]
 
     async def orders(
@@ -90,7 +102,7 @@ class AlpacaReadClient:
         limit: int,
         before_order_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        payload = self._objects(
+        payload = _objects(
             await self._get(
                 "/v2/orders",
                 {
@@ -109,7 +121,7 @@ class AlpacaReadClient:
         limit: int,
         page_token: str | None = None,
     ) -> list[dict[str, Any]]:
-        payload = self._objects(
+        payload = _objects(
             await self._get(
                 "/v2/account/activities",
                 {
@@ -126,7 +138,7 @@ class AlpacaReadClient:
         params = {"period": period, "timeframe": timeframe}
         if timeframe != "1D":
             params["intraday_reporting"] = "market_hours"
-        payload = self._object(await self._get("/v2/account/portfolio/history", params))
+        payload = _object(await self._get("/v2/account/portfolio/history", params))
         timestamps = payload.get("timestamp", [])
         equity = payload.get("equity", [])
         profit_loss = payload.get("profit_loss", [])
@@ -153,7 +165,7 @@ class AlpacaReadClient:
     async def _get(self, path: str, params: dict[str, object] | None = None) -> Any:
         query = {key: value for key, value in (params or {}).items() if value is not None}
         try:
-            response = await self.client.get(path, params=query)
+            response = await self._client.get(path, params=query)
         except httpx.TimeoutException as error:
             raise AlpacaTimeoutError("Alpaca read timed out") from error
         except httpx.RequestError as error:
@@ -166,13 +178,3 @@ class AlpacaReadClient:
             return response.json()
         except (httpx.HTTPError, ValueError) as error:
             raise AlpacaReadError("Alpaca read failed") from error
-
-    def _object(self, payload: Any) -> dict[str, Any]:
-        if not isinstance(payload, dict):
-            raise AlpacaReadError("Alpaca response was invalid")
-        return payload
-
-    def _objects(self, payload: Any) -> list[dict[str, Any]]:
-        if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
-            raise AlpacaReadError("Alpaca response was invalid")
-        return payload

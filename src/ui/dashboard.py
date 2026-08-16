@@ -50,20 +50,20 @@ class StaleRuntimeError(RuntimeError):
 
 class RuntimeStore:
     def __init__(self) -> None:
-        self.snapshot: RuntimeSnapshot | None = None
+        self._snapshot: RuntimeSnapshot | None = None
 
     def publish(self, snapshot: RuntimeSnapshot) -> None:
-        current = self.snapshot
+        current = self._snapshot
         if current is not None and snapshot.run_id == current.run_id:
             if snapshot.sequence <= current.sequence:
                 raise StaleRuntimeError("Runtime sequence is not new")
         if current is not None and snapshot.run_id != current.run_id:
             if snapshot.started_at <= current.started_at:
                 raise StaleRuntimeError("Runtime run is not new")
-        self.snapshot = snapshot
+        self._snapshot = snapshot
 
     def read(self) -> RuntimeSnapshot | None:
-        return self.snapshot
+        return self._snapshot
 
 
 def cache_headers(max_age: int) -> dict[str, str]:
@@ -73,7 +73,7 @@ def cache_headers(max_age: int) -> dict[str, str]:
     }
 
 
-def failure(
+def error_response(
     detail: str,
     status_code: int,
     headers: dict[str, str] | None = None,
@@ -85,28 +85,25 @@ def failure(
     )
 
 
-def atom(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
+def read_response(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
     content = {"data": data, "read_at": datetime.now(UTC), **metadata}
     return JSONResponse(jsonable_encoder(content), headers=cache_headers(max_age))
 
 
-async def broker_response(
-    operation: Awaitable[Any],
-    max_age: int,
-) -> JSONResponse:
+async def broker_read_response(operation: Awaitable[Any], max_age: int) -> JSONResponse:
     try:
         result = await operation
     except AlpacaRateError as error:
-        return failure(
+        return error_response(
             "Alpaca read limit was reached",
             503,
             {"Retry-After": error.retry_after},
         )
     except AlpacaTimeoutError:
-        return failure("Alpaca read timed out", 504)
+        return error_response("Alpaca read timed out", 504)
     except AlpacaReadError:
-        return failure("Alpaca read failed", 502)
-    return atom(result, max_age)
+        return error_response("Alpaca read failed", 502)
+    return read_response(result, max_age)
 
 
 def create_dashboard_router(
@@ -154,15 +151,15 @@ def create_dashboard_router(
 
     @router.get("/api/account")
     async def account(request: Request) -> JSONResponse:
-        return await broker_response(alpaca(request).account(), 5)
+        return await broker_read_response(alpaca(request).account(), 5)
 
     @router.get("/api/positions")
     async def positions(request: Request) -> JSONResponse:
-        return await broker_response(alpaca(request).positions(), 5)
+        return await broker_read_response(alpaca(request).positions(), 5)
 
     @router.get("/api/orders/open")
     async def open_orders(request: Request) -> JSONResponse:
-        return await broker_response(alpaca(request).orders("open", 100), 5)
+        return await broker_read_response(alpaca(request).orders("open", 100), 5)
 
     @router.get("/api/orders")
     async def orders(
@@ -172,7 +169,7 @@ def create_dashboard_router(
     ) -> JSONResponse:
         max_age = 300 if before_order_id is not None else 15
         cursor = str(before_order_id) if before_order_id is not None else None
-        return await broker_response(
+        return await broker_read_response(
             alpaca(request).orders("closed", limit, cursor),
             max_age,
         )
@@ -191,7 +188,7 @@ def create_dashboard_router(
         ] = None,
     ) -> JSONResponse:
         max_age = 300 if page_token is not None else 15
-        return await broker_response(
+        return await broker_read_response(
             alpaca(request).fills(limit, page_token),
             max_age,
         )
@@ -202,7 +199,7 @@ def create_dashboard_router(
         period: Literal["1D", "1W", "1M", "1A"] = "1D",
     ) -> JSONResponse:
         query_period, timeframe = PORTFOLIO_QUERIES[period]
-        return await broker_response(
+        return await broker_read_response(
             alpaca(request).equity(query_period, timeframe),
             60,
         )
@@ -212,7 +209,7 @@ def create_dashboard_router(
         snapshot = runtime_store.read()
         now = datetime.now(UTC)
         stale = snapshot is None or now - snapshot.heartbeat_at > timedelta(seconds=15)
-        return atom(snapshot, 5, stale=stale)
+        return read_response(snapshot, 5, stale=stale)
 
     @router.get("/api/events")
     async def events(
@@ -222,7 +219,7 @@ def create_dashboard_router(
         now = datetime.now(UTC)
         data = list(reversed(snapshot.events[-limit:])) if snapshot else []
         stale = snapshot is None or now - snapshot.heartbeat_at > timedelta(seconds=15)
-        return atom(data, 5, stale=stale)
+        return read_response(data, 5, stale=stale)
 
     @router.post("/internal/state", status_code=204)
     async def publish_runtime(request: Request) -> Response:
@@ -231,17 +228,17 @@ def create_dashboard_router(
             try:
                 size = int(content_length)
                 if size < 0:
-                    return failure("Content length is invalid", 400)
+                    return error_response("Content length is invalid", 400)
                 if size > 65_536:
-                    return failure("Runtime snapshot is too large", 413)
+                    return error_response("Runtime snapshot is too large", 413)
             except ValueError:
-                return failure("Content length is invalid", 400)
+                return error_response("Content length is invalid", 400)
         chunks = []
         size = 0
         async for chunk in request.stream():
             size += len(chunk)
             if size > 65_536:
-                return failure("Runtime snapshot is too large", 413)
+                return error_response("Runtime snapshot is too large", 413)
             chunks.append(chunk)
         body = b"".join(chunks)
         timestamp_text = request.headers.get("X-State-Timestamp", "")
@@ -251,11 +248,11 @@ def create_dashboard_router(
             and timestamp_text.isascii()
             and timestamp_text.isdecimal()
         ):
-            return failure("Runtime signature is invalid", 401)
+            return error_response("Runtime signature is invalid", 401)
         timestamp = int(timestamp_text)
         signed_at = datetime.fromtimestamp(timestamp, UTC)
         if abs((datetime.now(UTC) - signed_at).total_seconds()) > 30:
-            return failure("Runtime signature has expired", 401)
+            return error_response("Runtime signature has expired", 401)
         signed = timestamp_text.encode() + b"." + body
         expected = hmac.digest(
             configuration.state_export_secret.get_secret_value().encode(),
@@ -263,19 +260,19 @@ def create_dashboard_router(
             "sha256",
         ).hex().encode()
         if not hmac.compare_digest(expected, signature.encode()):
-            return failure("Runtime signature is invalid", 401)
+            return error_response("Runtime signature is invalid", 401)
         try:
             snapshot = RuntimeSnapshot.model_validate_json(body)
         except ValidationError:
-            return failure("Runtime snapshot is invalid", 422)
+            return error_response("Runtime snapshot is invalid", 422)
         if snapshot.started_at > snapshot.heartbeat_at:
-            return failure("Runtime snapshot is invalid", 422)
+            return error_response("Runtime snapshot is invalid", 422)
         if abs((snapshot.heartbeat_at - signed_at).total_seconds()) > 30:
-            return failure("Runtime snapshot is invalid", 422)
+            return error_response("Runtime snapshot is invalid", 422)
         try:
             runtime_store.publish(snapshot)
         except StaleRuntimeError:
-            return failure("Runtime snapshot is not new", 409)
+            return error_response("Runtime snapshot is not new", 409)
         return Response(status_code=204, headers=NO_STORE)
 
     return router
