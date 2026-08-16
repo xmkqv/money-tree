@@ -1,11 +1,26 @@
 from datetime import datetime
 from importlib import import_module
-from typing import Any
+from typing import Protocol, cast
 
 from bot.config import settings
 
 
-type StrategyType = type[Any]
+class StrategyType(Protocol):
+    def __call__(
+        self,
+        *,
+        broker: object,
+        parameters: dict[str, float],
+    ) -> object: ...
+
+    def backtest(
+        self,
+        data_source: object,
+        start: datetime,
+        end: datetime,
+        *,
+        parameters: dict[str, float],
+    ) -> object: ...
 
 
 def load_strategy(name: str) -> StrategyType:
@@ -18,7 +33,7 @@ def load_strategy(name: str) -> StrategyType:
     strategy = getattr(module, "Strategy")
     if not isinstance(strategy, type) or not issubclass(strategy, LumibotStrategy):
         raise TypeError(f"bot.strategies.{module_name}.Strategy is not a Lumibot strategy")
-    return strategy
+    return cast(StrategyType, strategy)
 
 
 def run(strategy_name: str, start: datetime, end: datetime) -> object:

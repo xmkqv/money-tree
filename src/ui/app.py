@@ -1,11 +1,10 @@
 import hmac
 import secrets
-from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
-from starlette.types import ASGIApp, Message, Receive, Scope, Send
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ui.auth import IdentityClient, RailwayIdentityError, RailwayOAuthClient
 from ui.config import WebSettings
@@ -32,7 +31,7 @@ class SessionGuardMiddleware:
         session = scope.get("session", {})
         subject = session.get("user_sub")
         if not isinstance(subject, str) or subject not in self.configuration.allowed_subjects:
-            await self._reject(scope, send)
+            await self._reject(scope, receive, send)
             return
         scope.setdefault("state", {})["user_sub"] = subject
         if scope_type == "http" and scope["method"] not in SAFE_METHODS:
@@ -47,7 +46,7 @@ class SessionGuardMiddleware:
                 return
         await self.app(scope, receive, send)
 
-    async def _reject(self, scope: Scope, send: Send) -> None:
+    async def _reject(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 4401})
             return
@@ -55,10 +54,7 @@ class SessionGuardMiddleware:
             response: Response = RedirectResponse("/login", status_code=303)
         else:
             response = JSONResponse({"detail": "Authentication is required"}, status_code=401)
-        await response(scope, self._empty_receive, send)
-
-    async def _empty_receive(self) -> Message:
-        return Message(type="http.request", body=b"", more_body=False)
+        await response(scope, receive, send)
 
 
 def create_app(

@@ -1,12 +1,20 @@
+from typing import Protocol
+
 from bot.backtest import load_strategy
 from bot.broker import build_alpaca_broker
 from bot.config import settings
 
 
-def build_trader() -> object:
-    from lumibot.traders import Trader
+class Trader(Protocol):
+    def add_strategy(self, strategy: object) -> None: ...
 
-    return Trader()
+    def run_all(self) -> object: ...
+
+
+def build_trader() -> Trader:
+    from lumibot.traders import Trader as LumibotTrader
+
+    return LumibotTrader()
 
 
 def run(strategy_name: str) -> None:
