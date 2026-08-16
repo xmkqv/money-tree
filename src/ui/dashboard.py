@@ -1,7 +1,8 @@
 import hmac
+from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any, Awaitable, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response
@@ -54,11 +55,10 @@ class RuntimeStore:
 
     def publish(self, snapshot: RuntimeSnapshot) -> None:
         current = self._snapshot
-        if current is not None and snapshot.run_id == current.run_id:
-            if snapshot.sequence <= current.sequence:
+        if current is not None:
+            if snapshot.run_id == current.run_id and snapshot.sequence <= current.sequence:
                 raise StaleRuntimeError("Runtime sequence is not new")
-        if current is not None and snapshot.run_id != current.run_id:
-            if snapshot.started_at <= current.started_at:
+            if snapshot.run_id != current.run_id and snapshot.started_at <= current.started_at:
                 raise StaleRuntimeError("Runtime run is not new")
         self._snapshot = snapshot
 
@@ -233,7 +233,7 @@ def create_dashboard_router(
                     return error_response("Runtime snapshot is too large", 413)
             except ValueError:
                 return error_response("Content length is invalid", 400)
-        chunks = []
+        chunks: list[bytes] = []
         size = 0
         async for chunk in request.stream():
             size += len(chunk)

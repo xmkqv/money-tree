@@ -1,6 +1,6 @@
 import hmac
 import secrets
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import httpx
@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ui.alpaca import AlpacaReadClient, PAPER_API_URL
+from ui.alpaca import PAPER_API_URL, AlpacaReadClient
 from ui.auth import IdentityClient, RailwayIdentityError, RailwayOAuthClient
 from ui.config import WebSettings
 from ui.dashboard import NO_STORE, RuntimeStore, create_dashboard_router, error_response
@@ -72,12 +72,12 @@ def create_app(
     configuration: WebSettings | None = None,
     identity_client: IdentityClient | None = None,
 ) -> FastAPI:
-    web_configuration = configuration or WebSettings()
+    web_configuration = configuration or WebSettings()  # pyright: ignore[reportCallIssue]
     oauth_client = identity_client or RailwayOAuthClient(web_configuration)
     runtime_store = RuntimeStore()
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[dict[str, AlpacaReadClient]]:
+    async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, AlpacaReadClient]]:
         timeout = httpx.Timeout(connect=1, read=3, write=3, pool=3)
         headers = {
             "APCA-API-KEY-ID": web_configuration.alpaca_api_key.get_secret_value(),

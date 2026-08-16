@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -75,13 +75,13 @@ def decimal_string(value: Any) -> str | None:
 def _object(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise AlpacaReadError("Alpaca response was invalid")
-    return payload
+    return cast(dict[str, Any], payload)
 
 
 def _objects(payload: Any) -> list[dict[str, Any]]:
-    if not isinstance(payload, list) or not all(isinstance(item, dict) for item in payload):
+    if not isinstance(payload, list):
         raise AlpacaReadError("Alpaca response was invalid")
-    return payload
+    return [_object(item) for item in cast(list[Any], payload)]
 
 
 class AlpacaReadClient:
@@ -135,7 +135,7 @@ class AlpacaReadClient:
         return [select_fields(item, FILL_FIELDS) for item in payload]
 
     async def equity(self, period: str, timeframe: str) -> dict[str, Any]:
-        params = {"period": period, "timeframe": timeframe}
+        params: dict[str, object] = {"period": period, "timeframe": timeframe}
         if timeframe != "1D":
             params["intraday_reporting"] = "market_hours"
         payload = _object(await self._get("/v2/account/portfolio/history", params))
@@ -163,7 +163,7 @@ class AlpacaReadClient:
         return {"points": points}
 
     async def _get(self, path: str, params: dict[str, object] | None = None) -> Any:
-        query = {key: value for key, value in (params or {}).items() if value is not None}
+        query = {key: str(value) for key, value in (params or {}).items() if value is not None}
         try:
             response = await self._client.get(path, params=query)
         except httpx.TimeoutException as error:
