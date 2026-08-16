@@ -38,7 +38,6 @@ class SessionGuardMiddleware:
         if not isinstance(subject, str) or subject not in self._configuration.allowed_subjects:
             await self._reject(scope, receive, send)
             return
-        scope.setdefault("state", {})["user_sub"] = subject
         if scope_type == "http" and scope["method"] not in SAFE_METHODS:
             csrf_token = session.get("csrf_token")
             request_token = dict(scope["headers"]).get(b"x-csrf-token", b"")
@@ -113,7 +112,7 @@ def create_app(
 
     @app.get("/login")
     async def login(request: Request) -> RedirectResponse:
-        authorization = RailwayOAuthClient(web_configuration).authorization_request()
+        authorization = oauth_client.authorization_request()
         request.session.clear()
         request.session["oauth_state"] = authorization.state
         request.session["oauth_verifier"] = authorization.verifier

@@ -143,10 +143,10 @@ def create_dashboard_router(
 
     @router.get("/api/session")
     async def session(request: Request) -> JSONResponse:
-        return JSONResponse(
-            {"csrf_token": request.session["csrf_token"]},
-            headers=NO_STORE,
-        )
+        token = request.session.get("csrf_token")
+        if not isinstance(token, str):
+            return error_response("Session is invalid", 401)
+        return JSONResponse({"csrf_token": token}, headers=NO_STORE)
 
     @router.get("/api/account")
     async def account(request: Request) -> JSONResponse:
