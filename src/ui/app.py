@@ -2,6 +2,7 @@ import hmac
 import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import cast
 
 import httpx
 from fastapi import FastAPI, Request
@@ -10,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ui.alpaca import PAPER_API_URL, AlpacaReadClient
-from ui.auth import IdentityClient, RailwayIdentityError, RailwayOAuthClient
+from ui.auth import IdentityClient, RailwayOAuthClient
 from ui.config import WebSettings
 from ui.dashboard import NO_STORE, RuntimeStore, create_dashboard_router, error_response
 
@@ -106,6 +107,26 @@ def create_app(
         https_only=True,
     )
 
+    @app.exception_handler(httpx.TimeoutException)
+    async def upstream_timeout(_: Request, __: Exception) -> JSONResponse:
+        return error_response("Upstream read timed out", 504)
+
+    @app.exception_handler(httpx.HTTPStatusError)
+    async def upstream_status(_: Request, error: Exception) -> JSONResponse:
+        response = cast(httpx.HTTPStatusError, error).response
+        if response.status_code != 429:
+            return error_response("Upstream read failed", 502)
+        retry_after = response.headers.get("Retry-After", "60")[:40]
+        return error_response(
+            "Alpaca read limit was reached",
+            503,
+            {"Retry-After": retry_after},
+        )
+
+    @app.exception_handler(httpx.HTTPError)
+    async def upstream_failed(_: Request, __: Exception) -> JSONResponse:
+        return error_response("Upstream read failed", 502)
+
     @app.get("/healthz")
     async def health() -> JSONResponse:
         return JSONResponse({"status": "ok"}, headers=NO_STORE)
@@ -146,11 +167,7 @@ def create_app(
         if not isinstance(code, str) or not code:
             request.session.clear()
             return error_response("OAuth code is missing", 400)
-        try:
-            subject = await oauth_client.identify(code, verifier)
-        except RailwayIdentityError:
-            request.session.clear()
-            return error_response("Railway login failed", 502)
+        subject = await oauth_client.identify(code, verifier)
         if subject not in web_configuration.allowed_subjects:
             request.session.clear()
             return error_response("Railway user is not allowed", 403)

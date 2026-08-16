@@ -1,5 +1,4 @@
 import hmac
-from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -10,12 +9,7 @@ from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, ValidationError
 
 from bot.export import RuntimeSnapshot
-from ui.alpaca import (
-    AlpacaRateError,
-    AlpacaReadClient,
-    AlpacaReadError,
-    AlpacaTimeoutError,
-)
+from ui.alpaca import AlpacaReadClient
 from ui.config import WebSettings
 
 
@@ -86,22 +80,6 @@ def read_response(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
     return JSONResponse(jsonable_encoder(content), headers=cache_headers(max_age))
 
 
-async def broker_read_response(operation: Awaitable[Any], max_age: int) -> JSONResponse:
-    try:
-        result = await operation
-    except AlpacaRateError as error:
-        return error_response(
-            "Alpaca read limit was reached",
-            503,
-            {"Retry-After": error.retry_after},
-        )
-    except AlpacaTimeoutError:
-        return error_response("Alpaca read timed out", 504)
-    except AlpacaReadError:
-        return error_response("Alpaca read failed", 502)
-    return read_response(result, max_age)
-
-
 def create_dashboard_router(
     configuration: WebSettings,
     runtime_store: RuntimeStore,
@@ -147,15 +125,15 @@ def create_dashboard_router(
 
     @router.get("/api/account")
     async def account(request: Request) -> JSONResponse:
-        return await broker_read_response(alpaca(request).account(), 5)
+        return read_response(await alpaca(request).account(), 5)
 
     @router.get("/api/positions")
     async def positions(request: Request) -> JSONResponse:
-        return await broker_read_response(alpaca(request).positions(), 5)
+        return read_response(await alpaca(request).positions(), 5)
 
     @router.get("/api/orders/open")
     async def open_orders(request: Request) -> JSONResponse:
-        return await broker_read_response(alpaca(request).orders("open", 100), 5)
+        return read_response(await alpaca(request).orders("open", 100), 5)
 
     @router.get("/api/orders")
     async def orders(
@@ -165,8 +143,8 @@ def create_dashboard_router(
     ) -> JSONResponse:
         max_age = 300 if until is not None else 15
         cursor = until.isoformat() if until is not None else None
-        return await broker_read_response(
-            alpaca(request).orders("closed", limit, cursor),
+        return read_response(
+            await alpaca(request).orders("closed", limit, cursor),
             max_age,
         )
 
@@ -184,8 +162,8 @@ def create_dashboard_router(
         ] = None,
     ) -> JSONResponse:
         max_age = 300 if page_token is not None else 15
-        return await broker_read_response(
-            alpaca(request).fills(limit, page_token),
+        return read_response(
+            await alpaca(request).fills(limit, page_token),
             max_age,
         )
 
@@ -195,8 +173,8 @@ def create_dashboard_router(
         period: Literal["1D", "1W", "1M", "1A"] = "1D",
     ) -> JSONResponse:
         query_period, timeframe = PORTFOLIO_QUERIES[period]
-        return await broker_read_response(
-            alpaca(request).equity(query_period, timeframe),
+        return read_response(
+            await alpaca(request).equity(query_period, timeframe),
             60,
         )
 

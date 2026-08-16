@@ -6,7 +6,6 @@ from typing import Any, Protocol, cast
 from urllib.parse import urlencode
 
 import httpx
-from authlib.integrations.base_client.errors import OAuthError
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 
 from ui.config import WebSettings
@@ -15,10 +14,6 @@ from ui.config import WebSettings
 AUTHORIZATION_URL = "https://backboard.railway.com/oauth/auth"
 TOKEN_URL = "https://backboard.railway.com/oauth/token"
 IDENTITY_URL = "https://backboard.railway.com/oauth/me"
-
-
-class RailwayIdentityError(RuntimeError):
-    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,28 +56,25 @@ class RailwayOAuthClient:
         )
 
     async def identify(self, code: str, verifier: str) -> str:
-        try:
-            async with AsyncOAuth2Client(  # pyright: ignore[reportGeneralTypeIssues]
-                client_id=self._configuration.railway_oauth_client_id,
-                client_secret=self._configuration.railway_oauth_client_secret.get_secret_value(),
-                redirect_uri=str(self._configuration.railway_oauth_redirect_uri),
-                scope="openid",
-                token_endpoint_auth_method="client_secret_basic",
-            ) as oauth_client:  # pyright: ignore[reportUnknownVariableType]
-                client = cast(httpx.AsyncClient, oauth_client)
-                await cast(Any, client).fetch_token(
-                    TOKEN_URL,
-                    code=code,
-                    code_verifier=verifier,
-                )
-                response = await client.get(IDENTITY_URL)
-                response.raise_for_status()
-                identity = response.json()
-                if not isinstance(identity, dict):
-                    raise RailwayIdentityError("Railway OAuth identity was invalid")
-                subject = cast(dict[str, Any], identity).get("sub")
-        except (OAuthError, httpx.HTTPError, TypeError, ValueError) as error:
-            raise RailwayIdentityError("Railway OAuth identity lookup failed") from error
+        async with AsyncOAuth2Client(  # pyright: ignore[reportGeneralTypeIssues]
+            client_id=self._configuration.railway_oauth_client_id,
+            client_secret=self._configuration.railway_oauth_client_secret.get_secret_value(),
+            redirect_uri=str(self._configuration.railway_oauth_redirect_uri),
+            scope="openid",
+            token_endpoint_auth_method="client_secret_basic",
+        ) as oauth_client:  # pyright: ignore[reportUnknownVariableType]
+            client = cast(httpx.AsyncClient, oauth_client)
+            await cast(Any, client).fetch_token(
+                TOKEN_URL,
+                code=code,
+                code_verifier=verifier,
+            )
+            response = await client.get(IDENTITY_URL)
+            response.raise_for_status()
+            identity = response.json()
+            if not isinstance(identity, dict):
+                raise TypeError("Railway OAuth identity was invalid")
+            subject = cast(dict[str, Any], identity).get("sub")
         if not isinstance(subject, str) or not subject:
-            raise RailwayIdentityError("Railway OAuth identity did not contain a subject")
+            raise ValueError("Railway OAuth identity did not contain a subject")
         return subject
