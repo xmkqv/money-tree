@@ -51,9 +51,9 @@ Do not set Alpaca credentials on the web service.
 | lemma | count |
 | --- | ---: |
 | backtest | 2 |
+| noop | 2 |
 | strategy | 2 |
 | trade | 2 |
 | analyze | 1 |
 | run | 1 |
-| src | 1 |
 <!-- /ddoc:names -->
