@@ -21,15 +21,17 @@ class RailwayIdentityError(RuntimeError):
     pass
 
 
-class IdentityClient(Protocol):
-    async def identify(self, code: str, verifier: str) -> str: ...
-
-
 @dataclass(frozen=True, slots=True)
 class AuthorizationRequest:
     url: str
     state: str
     verifier: str
+
+
+class IdentityClient(Protocol):
+    def authorization_request(self) -> AuthorizationRequest: ...
+
+    async def identify(self, code: str, verifier: str) -> str: ...
 
 
 class RailwayOAuthClient:
