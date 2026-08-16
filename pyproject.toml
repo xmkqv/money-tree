@@ -1,14 +1,19 @@
 [project]
 name = "money-tree"
 version = "0.1.0"
-description = "A three-strategy risk-limited trading system"
+description = "Lumibot strategy runner"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.13,<3.15"
 dependencies = [
-    "alpaca-py>=0.44,<1",
+    "authlib>=1.6,<2",
+    "fastapi>=0.116,<1",
+    "httpx>=0.28,<1",
+    "itsdangerous>=2.2,<3",
     "lumibot>=4,<5",
-    "polars>=1,<2",
+    "pydantic-settings>=2,<3",
+    "typer>=0.16,<1",
+    "uvicorn>=0.35,<1",
 ]
 keywords = ["algorithmic-trading", "alpaca", "lumibot", "systematic-trading"]
 classifiers = [
@@ -19,8 +24,7 @@ classifiers = [
 ]
 
 [project.scripts]
-money-tree = "money_tree.cli:main"
-money-tree-worker = "money_tree.worker:main"
+mt = "cli.__main__:app"
 
 [build-system]
 requires = ["hatchling>=1.27"]
@@ -33,30 +37,11 @@ Issues = "https://github.com/xmkqv/money-tree/issues"
 [dependency-groups]
 dev = [
     "arch>=8,<9",
-    "numpy>=2,<3",
-    "ruff>=0.16",
-    "ty>=0.0.69",
+    "polars>=1,<2",
 ]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/money_tree", "LICENSE", "README.md", "pyproject.toml"]
+include = ["src/bot", "src/cli", "src/ui", "LICENSE", "README.md", "pyproject.toml"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/money_tree"]
-
-[tool.ruff]
-line-length = 100
-
-[tool.ruff.lint]
-select = ["B", "E4", "E7", "E9", "F", "I", "RUF", "SIM", "UP"]
-
-[tool.ty.src]
-include = ["src/money_tree", "research"]
-
-[tool.ty.analysis]
-allowed-unresolved-imports = [
-    "lumibot.backtesting",
-    "lumibot.brokers",
-    "lumibot.entities",
-    "lumibot.strategies",
-]
+packages = ["src/bot", "src/cli", "src/ui"]
