@@ -40,24 +40,19 @@ src/
 # deploy
 
 ```sh
-railway.toml
-railway.web.toml
+mt trade --strategy "$STRATEGY"
+mt backtest --strategy "$STRATEGY" --start "$BACKTEST_START" --end "$BACKTEST_END"
+uvicorn ui.app:create_app --factory --workers 1 --host "" --port "$PORT"
 ```
 
-The bot starts `mt trade` with the `STRATEGY` variable.
-The web service starts one Uvicorn worker on all interfaces and uses one Railway replica.
+`railway.toml` runs the bot. `railway.web.toml` runs the web service on one replica.
+The bot reaches the web service on the Railway private domain.
+The web service holds a separate paper Alpaca credential for named GET requests.
 
-Create a confidential Railway OAuth application with the callback `https://<generated-domain>/auth/callback`.
-Set the web variables from `.env.example` on `money-tree-web`.
-
-Give the web service a separate paper Alpaca credential for named GET requests.
-
-The dashboard reads each URL separately. The browser stores each response for its declared lifetime. FastAPI keeps no broker cache and starts no broker poller.
-
-Set the export URL and secret on the bot, and set the same secret on the web service.
-Use the Railway private domain for `STATE_EXPORT_URL`.
 The bot sends its newest signed snapshot with at most 50 events outside the trading path.
 The web boundary rejects oversized, expired, invalid, repeated, or stale snapshots.
+
+The dashboard reads each URL separately. FastAPI keeps no broker cache and starts no broker poller.
 
 | response | browser lifetime |
 | --- | ---: |
