@@ -1,6 +1,6 @@
 const pages = {
-  orders: { urls: ["/api/orders?limit=100"], index: 0, rows: [] },
-  fills: { urls: ["/api/fills?limit=100"], index: 0, rows: [] },
+  orders: { urls: ["/api/orders?limit=100"], cursors: [null], index: 0, rows: [], full: 0 },
+  fills: { urls: ["/api/fills?limit=100"], cursors: [null], index: 0, rows: [], full: 0 },
 };
 let csrfToken = "", brokerResumeAt = 0;
 
@@ -93,24 +93,28 @@ function readPage(name) {
   const previous = document.querySelector(`[data-page="${name}-prev"]`);
   const next = document.querySelector(`[data-page="${name}-next"]`);
   state.rows = [];
+  state.full = 0;
   previous.disabled = next.disabled = true;
   return readPanel(state.urls[state.index], `${name}-panel`, rows => {
-    state.rows = rows;
-    target.replaceData(rows);
+    state.full = rows.length;
+    state.rows = rows[0]?.id === state.cursors[state.index] ? rows.slice(1) : rows;
+    target.replaceData(state.rows);
     document.getElementById(`${name}-page`).textContent = `Page ${state.index + 1}`;
   }).finally(() => {
     previous.disabled = state.index === 0;
-    next.disabled = state.rows.length < 100;
+    next.disabled = state.full < 100;
   });
 }
 
 function changePage(name, direction) {
   const state = pages[name];
   if (direction === "prev") state.index = Math.max(0, state.index - 1);
-  if (direction === "next" && state.rows.length === 100) {
-    const cursor = state.rows.at(-1).id;
-    const key = name === "orders" ? "before_order_id" : "page_token";
+  if (direction === "next" && state.full === 100) {
+    const last = state.rows.at(-1);
+    const key = name === "orders" ? "until" : "page_token";
+    const cursor = name === "orders" ? last.submitted_at : last.id;
     state.urls.splice(state.index + 1, 1, `/api/${name}?limit=100&${key}=${encodeURIComponent(cursor)}`);
+    state.cursors.splice(state.index + 1, 1, last.id);
     state.index += 1;
   }
   readPage(name);

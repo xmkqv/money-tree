@@ -100,7 +100,7 @@ class AlpacaReadClient:
         self,
         status: str,
         limit: int,
-        before_order_id: str | None = None,
+        until: str | None = None,
     ) -> list[dict[str, Any]]:
         payload = _objects(
             await self._get(
@@ -110,7 +110,7 @@ class AlpacaReadClient:
                     "limit": limit,
                     "direction": "desc",
                     "nested": "true",
-                    "before_order_id": before_order_id,
+                    "until": until,
                 },
             )
         )
