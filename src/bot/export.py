@@ -16,6 +16,9 @@ LOGGER = logging.getLogger(__name__)
 EXPORT_INTERVAL_SECONDS = 5
 ERROR_LOG_INTERVAL_SECONDS = 60
 
+type RunStatus = Literal["starting", "running", "stopped", "failed"]
+type EventLevel = Literal["info", "warning", "error"]
+
 
 class RuntimeEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
@@ -23,7 +26,7 @@ class RuntimeEvent(BaseModel):
     id: str = Field(min_length=1, max_length=100)
     kind: str = Field(min_length=1, max_length=100)
     occurred_at: AwareDatetime
-    level: Literal["info", "warning", "error"]
+    level: EventLevel
     message: str = Field(min_length=1, max_length=500)
 
 
@@ -33,7 +36,7 @@ class RuntimeSnapshot(BaseModel):
     schema_version: Literal[1] = 1
     run_id: UUID4
     sequence: int = Field(ge=1)
-    status: Literal["starting", "running", "stopped", "failed"]
+    status: RunStatus
     strategy: str = Field(min_length=1, max_length=100)
     started_at: AwareDatetime
     heartbeat_at: AwareDatetime
@@ -47,7 +50,7 @@ class StateExporter:
         self.strategy = strategy[:100] or "unknown"
         self.run_id = uuid4()
         self.started_at = datetime.now(UTC)
-        self.status: Literal["starting", "running", "stopped", "failed"] = "starting"
+        self.status: RunStatus = "starting"
         self.events: list[RuntimeEvent] = []
         self.sequence = 0
         self.pending: queue.Queue[RuntimeSnapshot] = queue.Queue(maxsize=1)
@@ -63,13 +66,7 @@ class StateExporter:
     def start(self) -> None:
         self.thread.start()
 
-    def publish(
-        self,
-        status: Literal["starting", "running", "stopped", "failed"],
-        kind: str,
-        level: Literal["info", "warning", "error"],
-        message: str,
-    ) -> None:
+    def publish(self, status: RunStatus, kind: str, level: EventLevel, message: str) -> None:
         with self.lock:
             self.status = status
             self.sequence += 1
@@ -86,12 +83,8 @@ class StateExporter:
             snapshot = self._snapshot()
         self._replace_pending(snapshot)
 
-    def close(
-        self,
-        status: Literal["stopped", "failed"],
-        message: str,
-    ) -> None:
-        level: Literal["info", "error"] = "info" if status == "stopped" else "error"
+    def close(self, status: Literal["stopped", "failed"], message: str) -> None:
+        level: EventLevel = "info" if status == "stopped" else "error"
         self.publish(status, status, level, message)
         self.stopping.set()
         self.thread.join(timeout=3)
