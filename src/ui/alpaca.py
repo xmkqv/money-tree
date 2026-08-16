@@ -44,20 +44,6 @@ FILL_FIELDS = (
 )
 
 
-class AlpacaReadError(RuntimeError):
-    pass
-
-
-class AlpacaTimeoutError(AlpacaReadError):
-    pass
-
-
-class AlpacaRateError(AlpacaReadError):
-    def __init__(self, retry_after: str) -> None:
-        super().__init__("Alpaca read limit was reached")
-        self.retry_after = retry_after
-
-
 def select_fields(payload: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
     return {field: payload.get(field) for field in fields}
 
@@ -69,18 +55,18 @@ def decimal_string(value: Any) -> str | None:
         return value
     if isinstance(value, int | float) and not isinstance(value, bool):
         return str(value)
-    raise AlpacaReadError("Alpaca portfolio history was invalid")
+    raise TypeError("Alpaca portfolio history was invalid")
 
 
 def _object(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
-        raise AlpacaReadError("Alpaca response was invalid")
+        raise TypeError("Alpaca response was invalid")
     return cast(dict[str, Any], payload)
 
 
 def _objects(payload: Any) -> list[dict[str, Any]]:
     if not isinstance(payload, list):
-        raise AlpacaReadError("Alpaca response was invalid")
+        raise TypeError("Alpaca response was invalid")
     return [_object(item) for item in cast(list[Any], payload)]
 
 
@@ -143,38 +129,24 @@ class AlpacaReadClient:
         equity = payload.get("equity", [])
         profit_loss = payload.get("profit_loss", [])
         if not all(isinstance(values, list) for values in (timestamps, equity, profit_loss)):
-            raise AlpacaReadError("Alpaca portfolio history was invalid")
-        try:
-            points = [
-                {
-                    "timestamp": timestamp,
-                    "equity": decimal_string(equity_value),
-                    "profit_loss": decimal_string(profit_loss_value),
-                }
-                for timestamp, equity_value, profit_loss_value in zip(
-                    timestamps,
-                    equity,
-                    profit_loss,
-                    strict=True,
-                )
-            ]
-        except ValueError as error:
-            raise AlpacaReadError("Alpaca portfolio history was invalid") from error
+            raise TypeError("Alpaca portfolio history was invalid")
+        points = [
+            {
+                "timestamp": timestamp,
+                "equity": decimal_string(equity_value),
+                "profit_loss": decimal_string(profit_loss_value),
+            }
+            for timestamp, equity_value, profit_loss_value in zip(
+                timestamps,
+                equity,
+                profit_loss,
+                strict=True,
+            )
+        ]
         return {"points": points}
 
     async def _get(self, path: str, params: dict[str, object] | None = None) -> Any:
         query = {key: str(value) for key, value in (params or {}).items() if value is not None}
-        try:
-            response = await self._client.get(path, params=query)
-        except httpx.TimeoutException as error:
-            raise AlpacaTimeoutError("Alpaca read timed out") from error
-        except httpx.RequestError as error:
-            raise AlpacaReadError("Alpaca read failed") from error
-        if response.status_code == 429:
-            retry_after = response.headers.get("Retry-After", "60")[:40]
-            raise AlpacaRateError(retry_after)
-        try:
-            response.raise_for_status()
-            return response.json()
-        except (httpx.HTTPError, ValueError) as error:
-            raise AlpacaReadError("Alpaca read failed") from error
+        response = await self._client.get(path, params=query)
+        response.raise_for_status()
+        return response.json()
