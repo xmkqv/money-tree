@@ -74,8 +74,11 @@ class RailwayOAuthClient:
                 )
                 response = await client.get(IDENTITY_URL)
                 response.raise_for_status()
-                subject = response.json().get("sub")
-        except (OAuthError, httpx.HTTPError, KeyError, TypeError, ValueError) as error:
+                identity = response.json()
+                if not isinstance(identity, dict):
+                    raise RailwayIdentityError("Railway OAuth identity was invalid")
+                subject = identity.get("sub")
+        except (OAuthError, httpx.HTTPError, TypeError, ValueError) as error:
             raise RailwayIdentityError("Railway OAuth identity lookup failed") from error
         if not isinstance(subject, str) or not subject:
             raise RailwayIdentityError("Railway OAuth identity did not contain a subject")
