@@ -17,7 +17,7 @@ class Settings(BaseSettings):
         frozen=True,
     )
 
-    strategy: str = "readme"
+    strategy: str = "noop"
     backtest_start: date = date(2023, 1, 1)
     backtest_end: date = date(2024, 1, 1)
     alpaca_api_key: SecretStr | None = None
