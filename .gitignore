@@ -1,6 +1,5 @@
 .DS_Store
 .mypy_cache/
-.pytest_cache/
 .qlty/
 .ruff_cache/
 __pycache__/
