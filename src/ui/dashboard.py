@@ -3,12 +3,11 @@ from collections.abc import Awaitable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
-from uuid import UUID
 
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
+from pydantic import AwareDatetime, ValidationError
 
 from bot.export import RuntimeSnapshot
 from ui.alpaca import (
@@ -165,10 +164,10 @@ def create_dashboard_router(
     async def orders(
         request: Request,
         limit: Annotated[int, Query(ge=1, le=100)] = 100,
-        before_order_id: UUID | None = None,
+        until: AwareDatetime | None = None,
     ) -> JSONResponse:
-        max_age = 300 if before_order_id is not None else 15
-        cursor = str(before_order_id) if before_order_id is not None else None
+        max_age = 300 if until is not None else 15
+        cursor = until.isoformat() if until is not None else None
         return await broker_read_response(
             alpaca(request).orders("closed", limit, cursor),
             max_age,
