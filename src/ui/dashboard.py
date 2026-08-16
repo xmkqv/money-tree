@@ -1,0 +1,281 @@
+import hmac
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from typing import Annotated, Any, Awaitable, Literal
+from uuid import UUID
+
+from fastapi import APIRouter, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+from pydantic import ValidationError
+
+from bot.export import RuntimeSnapshot
+from ui.alpaca import (
+    AlpacaRateError,
+    AlpacaReadClient,
+    AlpacaReadError,
+    AlpacaTimeoutError,
+)
+from ui.config import WebSettings
+
+
+ASSET_DIRECTORY = Path(__file__).with_name("assets")
+DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.v1.html").read_bytes()
+DASHBOARD_CSS = (ASSET_DIRECTORY / "dashboard.v1.css").read_bytes()
+DASHBOARD_JAVASCRIPT = (ASSET_DIRECTORY / "dashboard.v1.js").read_bytes()
+NO_STORE = {"Cache-Control": "no-store"}
+PORTFOLIO_QUERIES = {
+    "1D": ("1D", "5Min"),
+    "1W": ("1W", "15Min"),
+    "1M": ("1M", "1D"),
+    "1A": ("1A", "1D"),
+}
+CONTENT_SECURITY_POLICY = "; ".join(
+    (
+        "default-src 'self'",
+        "script-src 'self' https://unpkg.com",
+        "style-src 'self' https://unpkg.com",
+        "connect-src 'self'",
+        "img-src 'self' data:",
+        "object-src 'none'",
+        "base-uri 'none'",
+        "frame-ancestors 'none'",
+    )
+)
+
+
+class StaleRuntimeError(RuntimeError):
+    pass
+
+
+class RuntimeStore:
+    def __init__(self) -> None:
+        self.snapshot: RuntimeSnapshot | None = None
+
+    def publish(self, snapshot: RuntimeSnapshot) -> None:
+        current = self.snapshot
+        if current is not None and snapshot.run_id == current.run_id:
+            if snapshot.sequence <= current.sequence:
+                raise StaleRuntimeError("Runtime sequence is not new")
+        if current is not None and snapshot.run_id != current.run_id:
+            if snapshot.started_at <= current.started_at:
+                raise StaleRuntimeError("Runtime run is not new")
+        self.snapshot = snapshot
+
+    def read(self) -> RuntimeSnapshot | None:
+        return self.snapshot
+
+
+def cache_headers(max_age: int) -> dict[str, str]:
+    return {
+        "Cache-Control": f"private, max-age={max_age}, must-revalidate",
+        "Vary": "Cookie",
+    }
+
+
+def failure(
+    detail: str,
+    status_code: int,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    return JSONResponse(
+        {"detail": detail},
+        status_code=status_code,
+        headers={**NO_STORE, **(headers or {})},
+    )
+
+
+def atom(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
+    content = {"data": data, "read_at": datetime.now(UTC), **metadata}
+    return JSONResponse(jsonable_encoder(content), headers=cache_headers(max_age))
+
+
+async def broker_response(
+    operation: Awaitable[Any],
+    max_age: int,
+) -> JSONResponse:
+    try:
+        result = await operation
+    except AlpacaRateError as error:
+        return failure(
+            "Alpaca read limit was reached",
+            503,
+            {"Retry-After": error.retry_after},
+        )
+    except AlpacaTimeoutError:
+        return failure("Alpaca read timed out", 504)
+    except AlpacaReadError:
+        return failure("Alpaca read failed", 502)
+    return atom(result, max_age)
+
+
+def create_dashboard_router(
+    configuration: WebSettings,
+    runtime_store: RuntimeStore,
+) -> APIRouter:
+    router = APIRouter()
+
+    def alpaca(request: Request) -> AlpacaReadClient:
+        return request.state.alpaca
+
+    @router.get("/")
+    async def dashboard() -> Response:
+        return Response(
+            DASHBOARD_HTML,
+            media_type="text/html",
+            headers={
+                "Cache-Control": "private, no-cache",
+                "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+            },
+        )
+
+    @router.get("/assets/dashboard.v1.css")
+    async def dashboard_css() -> Response:
+        return Response(
+            DASHBOARD_CSS,
+            media_type="text/css",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
+
+    @router.get("/assets/dashboard.v1.js")
+    async def dashboard_javascript() -> Response:
+        return Response(
+            DASHBOARD_JAVASCRIPT,
+            media_type="text/javascript",
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
+
+    @router.get("/api/session")
+    async def session(request: Request) -> JSONResponse:
+        return JSONResponse(
+            {"csrf_token": request.session["csrf_token"]},
+            headers=NO_STORE,
+        )
+
+    @router.get("/api/account")
+    async def account(request: Request) -> JSONResponse:
+        return await broker_response(alpaca(request).account(), 5)
+
+    @router.get("/api/positions")
+    async def positions(request: Request) -> JSONResponse:
+        return await broker_response(alpaca(request).positions(), 5)
+
+    @router.get("/api/orders/open")
+    async def open_orders(request: Request) -> JSONResponse:
+        return await broker_response(alpaca(request).orders("open", 100), 5)
+
+    @router.get("/api/orders")
+    async def orders(
+        request: Request,
+        limit: Annotated[int, Query(ge=1, le=100)] = 100,
+        before_order_id: UUID | None = None,
+    ) -> JSONResponse:
+        max_age = 300 if before_order_id is not None else 15
+        cursor = str(before_order_id) if before_order_id is not None else None
+        return await broker_response(
+            alpaca(request).orders("closed", limit, cursor),
+            max_age,
+        )
+
+    @router.get("/api/fills")
+    async def fills(
+        request: Request,
+        limit: Annotated[int, Query(ge=1, le=100)] = 100,
+        page_token: Annotated[
+            str | None,
+            Query(
+                min_length=55,
+                max_length=55,
+                pattern=r"^[0-9]{17}::[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$",
+            ),
+        ] = None,
+    ) -> JSONResponse:
+        max_age = 300 if page_token is not None else 15
+        return await broker_response(
+            alpaca(request).fills(limit, page_token),
+            max_age,
+        )
+
+    @router.get("/api/equity")
+    async def equity(
+        request: Request,
+        period: Literal["1D", "1W", "1M", "1A"] = "1D",
+    ) -> JSONResponse:
+        query_period, timeframe = PORTFOLIO_QUERIES[period]
+        return await broker_response(
+            alpaca(request).equity(query_period, timeframe),
+            60,
+        )
+
+    @router.get("/api/run")
+    async def runtime() -> JSONResponse:
+        snapshot = runtime_store.read()
+        now = datetime.now(UTC)
+        stale = snapshot is None or now - snapshot.heartbeat_at > timedelta(seconds=15)
+        return atom(snapshot, 5, stale=stale)
+
+    @router.get("/api/events")
+    async def events(
+        limit: Annotated[int, Query(ge=1, le=50)] = 50,
+    ) -> JSONResponse:
+        snapshot = runtime_store.read()
+        now = datetime.now(UTC)
+        data = list(reversed(snapshot.events[-limit:])) if snapshot else []
+        stale = snapshot is None or now - snapshot.heartbeat_at > timedelta(seconds=15)
+        return atom(data, 5, stale=stale)
+
+    @router.post("/internal/state", status_code=204)
+    async def publish_runtime(request: Request) -> Response:
+        content_length = request.headers.get("Content-Length")
+        if content_length is not None:
+            try:
+                size = int(content_length)
+                if size < 0:
+                    return failure("Content length is invalid", 400)
+                if size > 65_536:
+                    return failure("Runtime snapshot is too large", 413)
+            except ValueError:
+                return failure("Content length is invalid", 400)
+        chunks = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > 65_536:
+                return failure("Runtime snapshot is too large", 413)
+            chunks.append(chunk)
+        body = b"".join(chunks)
+        timestamp_text = request.headers.get("X-State-Timestamp", "")
+        signature = request.headers.get("X-State-Signature", "")
+        if not (
+            1 <= len(timestamp_text) <= 10
+            and timestamp_text.isascii()
+            and timestamp_text.isdecimal()
+        ):
+            return failure("Runtime signature is invalid", 401)
+        timestamp = int(timestamp_text)
+        signed_at = datetime.fromtimestamp(timestamp, UTC)
+        if abs((datetime.now(UTC) - signed_at).total_seconds()) > 30:
+            return failure("Runtime signature has expired", 401)
+        signed = timestamp_text.encode() + b"." + body
+        expected = hmac.digest(
+            configuration.state_export_secret.get_secret_value().encode(),
+            signed,
+            "sha256",
+        ).hex().encode()
+        if not hmac.compare_digest(expected, signature.encode()):
+            return failure("Runtime signature is invalid", 401)
+        try:
+            snapshot = RuntimeSnapshot.model_validate_json(body)
+        except ValidationError:
+            return failure("Runtime snapshot is invalid", 422)
+        if snapshot.started_at > snapshot.heartbeat_at:
+            return failure("Runtime snapshot is invalid", 422)
+        if abs((snapshot.heartbeat_at - signed_at).total_seconds()) > 30:
+            return failure("Runtime snapshot is invalid", 422)
+        try:
+            runtime_store.publish(snapshot)
+        except StaleRuntimeError:
+            return failure("Runtime snapshot is not new", 409)
+        return Response(status_code=204, headers=NO_STORE)
+
+    return router
