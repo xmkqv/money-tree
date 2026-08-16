@@ -55,7 +55,6 @@ target-version = "py313"
 
 [tool.ruff.lint]
 select = ["B", "E", "F", "I", "SIM", "UP"]
-ignore = ["B009"]
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
