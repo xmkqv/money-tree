@@ -1,6 +1,6 @@
 [build]
 builder = "RAILPACK"
-watchPatterns = ["/src/ui/**", "/src/bot/export.py", "/pyproject.toml", "/uv.lock", "/railway.web.toml"]
+watchPatterns = ["/src/ui/**", "/src/bot/export.py", "/pyproject.toml", "/uv.lock", "/mise.toml", "/railway.web.toml"]
 
 [deploy]
 startCommand = 'uv run --locked --no-sync uvicorn ui.app:create_app --factory --workers 1 --host "" --port "$PORT"'
