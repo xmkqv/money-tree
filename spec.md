@@ -1,20 +1,8 @@
 ---
-name: spec
 refs:
     - [Lumibot](https://github.com/Lumiwealth/lumibot#quick-start)
     - [env](./.env.example)
 ---
-
-names:
-    Alpaca: Proper name of the brokerage service
-    backtest: Project term for evaluation of a strategy with historical data
-    Lumibot: Proper name of the strategy execution framework
-    money-tree: Project-owned name of the trading system
-    MT: Money Tree
-    Railway: Proper name of the deployment platform
-    strategy: Project term for rules that select market actions
-    trade: Project term for a market transaction
-    Yahoo: Proper name of the market-data service
 
 # code
 
@@ -22,15 +10,12 @@ names:
 src/
     analysis/
         break-even-accuracy.py
-        ...
     cli/
         __main__.py
     bot/
         strategies/
-            shared.py # model, types, utils
+            shared.py # strategy base class and loader
             noop.py # deployment-safe strategy that submits no orders
-            {name}.py # future trading strategy
-            ...
         config.py
         backtest.py
         broker.py
@@ -59,7 +44,7 @@ uvicorn ui.app:create_app --factory --workers 1 --host "" --port "$PORT"
 - `railway.toml` runs the bot
 - `railway.web.toml` runs the web service on one replica
 - the bot reaches the web service on the Railway private domain
-- the web service holds a separate paper Alpaca credential for named GET requests
+- the web service reads Alpaca with its own paper credential
 
 # state
 
@@ -69,7 +54,6 @@ uvicorn ui.app:create_app --factory --workers 1 --host "" --port "$PORT"
 # dashboard
 
 - the dashboard reads each URL separately
-- FastAPI keeps no broker cache and starts no broker poller
 
 | response                                     | browser lifetime |
 |----------------------------------------------|-----------------:|
