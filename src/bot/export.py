@@ -9,35 +9,12 @@ from typing import Literal
 from uuid import uuid4
 
 import httpx
-from pydantic import UUID4, AwareDatetime, BaseModel, ConfigDict, Field
+
+from bot.types import EventLevel, RunStatus, RuntimeEvent, RuntimeSnapshot
 
 
 logger = logging.getLogger(__name__)
 EXPORT_INTERVAL_SECONDS = 5
-
-type RunStatus = Literal["starting", "running", "stopped", "failed"]
-type EventLevel = Literal["info", "warning", "error"]
-
-
-class _RuntimeModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
-
-class RuntimeEvent(_RuntimeModel):
-    kind: str = Field(min_length=1, max_length=100)
-    occurred_at: AwareDatetime
-    level: EventLevel
-    message: str = Field(min_length=1, max_length=500)
-
-
-class RuntimeSnapshot(_RuntimeModel):
-    run_id: UUID4
-    sequence: int = Field(ge=1)
-    status: RunStatus
-    strategy: str = Field(min_length=1, max_length=100)
-    started_at: AwareDatetime
-    heartbeat_at: AwareDatetime
-    events: list[RuntimeEvent] = Field(max_length=50)
 
 
 class StateExporter:

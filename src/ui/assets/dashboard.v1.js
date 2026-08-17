@@ -46,7 +46,7 @@ async function refreshPanel(url, panelId, render) {
 }
 
 function renderAccount(data) {
-  const fields = [["Portfolio value", "portfolio_value", formatMoney], ["Cash", "cash", formatMoney], ["Buying power", "buying_power", formatMoney], ["Equity", "equity", formatMoney], ["Last equity", "last_equity", formatMoney], ["Day trades", "daytrade_count", formatNumber], ["Status", "status", formatText], ["Currency", "currency", formatText]];
+  const fields = [["Account ID", "id", formatText], ["Portfolio value", "portfolio_value", formatMoney], ["Cash", "cash", formatMoney], ["Buying power", "buying_power", formatMoney], ["Equity", "equity", formatMoney], ["Last equity", "last_equity", formatMoney], ["Day trades", "daytrade_count", formatNumber], ["Status", "status", formatText], ["Currency", "currency", formatText]];
   const metrics = fields.map(([label, key, format]) => {
     const metric = document.createElement("div");
     const name = document.createElement("span");

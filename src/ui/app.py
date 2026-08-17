@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ui.alpaca import PAPER_API_URL, AlpacaReadClient
+from ui.alpaca import AlpacaReadClient, alpaca_api_url
 from ui.auth import RailwayOAuthClient
 from ui.config import WebSettings
 from ui.dashboard import NO_STORE, RuntimeStore, create_dashboard_router, error_response
@@ -56,7 +56,7 @@ def create_app() -> FastAPI:
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, AlpacaReadClient]]:
         async with httpx.AsyncClient(
-            base_url=PAPER_API_URL,
+            base_url=alpaca_api_url(configuration.alpaca_is_paper),
             headers={
                 "APCA-API-KEY-ID": configuration.alpaca_api_key.get_secret_value(),
                 "APCA-API-SECRET-KEY": configuration.alpaca_api_secret.get_secret_value(),

@@ -1,21 +1,19 @@
 import json
 from collections import defaultdict, deque
-from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import replace
 from datetime import datetime
 from numbers import Real
 from pathlib import Path
 from typing import Any, cast
 
-from pydantic import BaseModel, ConfigDict, Field
+import pandas
+from pandas import DataFrame, Series
 
+from bot.types import Fill, ReportData, ReportRow, RoundTrip, RunSettings, TradeStats
 
-type Series = Any
-type Row = list[str]
-type Formatter = Callable[[float], str]
 
 TRADING_ZONE = "America/New_York"
-SECONDS_PER_DAY = 86400.0
 LUMIBOT_FALLBACK = "4.5.83"
 TRADE_ROW_MAX = 10
 EMPTY_TRADES_MESSAGE = "No round-trip trades in window"
@@ -37,7 +35,7 @@ def _format_count(value: float) -> str:
     return f"{value:,.0f}"
 
 
-SCALAR_ROWS: tuple[tuple[str, str, Formatter, str], ...] = (
+SCALAR_ROWS: tuple[tuple[str, str, Callable[[float], str], str], ...] = (
     ("Sortino", "Sortino", _format_ratio, "Strategy"),
     ("Calmar", "Calmar", _format_ratio, "Strategy"),
     ("Time in Market", "Time in market", format_percent, "Strategy"),
@@ -48,81 +46,6 @@ SCALAR_ROWS: tuple[tuple[str, str, Formatter, str], ...] = (
 )
 
 
-class RunSettings(BaseModel):
-    model_config = ConfigDict(extra="ignore", frozen=True)
-
-    budget: float | None = None
-    benchmark_asset: str | dict[str, object] | None = None
-    lumibot_version: str | None = None
-    parameters: dict[str, object] = Field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class Fill:
-    symbol: str
-    sign: int
-    quantity: float
-    price: float
-    filled_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class RoundTrip:
-    symbol: str
-    sign: int
-    quantity: float
-    entry_at: datetime
-    exit_at: datetime
-    entry_price: float
-    exit_price: float
-
-    @property
-    def pnl_usd(self) -> float:
-        return self.sign * (self.exit_price - self.entry_price) * self.quantity
-
-    @property
-    def return_fraction(self) -> float:
-        return self.sign * (self.exit_price / self.entry_price - 1.0)
-
-    @property
-    def holding_days(self) -> float:
-        return (self.exit_at - self.entry_at).total_seconds() / SECONDS_PER_DAY
-
-
-@dataclass(frozen=True, slots=True)
-class Performance:
-    total_return: float | None
-    cagr: float | None
-    volatility: float | None
-    sharpe: float | None
-    max_drawdown: float | None
-    max_drawdown_on: str | None
-    romad: float | None
-
-
-@dataclass(frozen=True, slots=True)
-class TradeStats:
-    count: int
-    win_rate: float | None
-    profit_factor: float | None
-    average_win: float | None
-    average_loss: float | None
-    best: float | None
-    worst: float | None
-    average_days: float | None
-
-
-@dataclass(frozen=True, slots=True)
-class ReportData:
-    equity: Series
-    returns: Series
-    trips: list[RoundTrip]
-    settings: RunSettings
-    performance: Performance
-    trades: TradeStats
-    scalars: dict[str, object]
-
-
 def _number(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, Real):
         return None
@@ -131,7 +54,7 @@ def _number(value: object) -> float | None:
 
 
 def _leg(value: object, leg: str) -> object:
-    return cast(dict[str, object], value).get(leg) if isinstance(value, dict) else value
+    return cast(Mapping[str, object], value).get(leg) if isinstance(value, Mapping) else value
 
 
 def _load_settings(output_dir: Path) -> RunSettings:
@@ -157,28 +80,32 @@ def _load_scalars(output_dir: Path) -> dict[str, object]:
     return cast(dict[str, object], scalars) if isinstance(scalars, dict) else {}
 
 
-def _load_equity(output_dir: Path) -> Series:
-    import pandas
-
+def _load_history(output_dir: Path) -> tuple[Series, Series]:
     pd = cast(Any, pandas)
-    frame = pd.read_csv(output_dir / "stats.csv")
-    stamps = pd.to_datetime(frame["datetime"], utc=True).dt.tz_convert(TRADING_ZONE)
-    series = pd.Series(frame["portfolio_value"].astype(float).to_numpy(), index=stamps)
-    return series.resample("D").last().dropna()
+    frame: DataFrame = pd.read_csv(
+        output_dir / "stats.csv", usecols=["datetime", "portfolio_value", "return"]
+    )
+    values = cast(Any, frame)
+    stamps = pd.to_datetime(values["datetime"], utc=True).dt.tz_convert(TRADING_ZONE)
+    equity = cast(
+        Series, pd.Series(values["portfolio_value"].astype(float).to_numpy(), index=stamps)
+    )
+    returns = cast(Series, pd.Series(values["return"].astype(float).to_numpy(), index=stamps))
+    return cast(Series, cast(Any, equity).resample("D").last().dropna()), cast(
+        Series, cast(Any, returns).dropna()
+    )
 
 
 def _load_round_trips(output_dir: Path) -> list[RoundTrip]:
-    import pandas
-
-    pd = cast(Any, pandas)
     path = output_dir / "trades.csv"
     if not path.exists():
         return []
-    frame = pd.read_csv(path)
+    pd = cast(Any, pandas)
+    frame: DataFrame = pd.read_csv(path)
     if frame.empty:
         return []
     fills: list[Fill] = []
-    records = cast(list[dict[str, object]], frame.to_dict("records"))
+    records = cast(list[dict[str, object]], cast(Any, frame).to_dict("records"))
     for record in records:
         symbol = record.get("symbol")
         side = record.get("side")
@@ -227,24 +154,6 @@ def _pair_fills(fills: Iterable[Fill]) -> list[RoundTrip]:
     return trips
 
 
-def _performance(results: object) -> Performance:
-    values = cast(dict[str, object], results) if isinstance(results, dict) else {}
-    drawdown = _leg(values.get("max_drawdown"), "drawdown")
-    depth = _number(drawdown)
-    drawdown_at = _leg(values.get("max_drawdown"), "date")
-    return Performance(
-        total_return=_number(values.get("total_return")),
-        cagr=_number(values.get("cagr")),
-        volatility=_number(values.get("volatility")),
-        sharpe=_number(values.get("sharpe")),
-        max_drawdown=None if depth is None else -abs(depth),
-        max_drawdown_on=drawdown_at.date().isoformat()
-        if isinstance(drawdown_at, datetime)
-        else None,
-        romad=_number(values.get("romad")),
-    )
-
-
 def _trade_stats(trips: Sequence[RoundTrip]) -> TradeStats:
     if not trips:
         return TradeStats(0, None, None, None, None, None, None, None)
@@ -263,38 +172,40 @@ def _trade_stats(trips: Sequence[RoundTrip]) -> TradeStats:
     )
 
 
-def load_report_data(output_dir: Path, results: object) -> ReportData:
-    equity = _load_equity(output_dir)
+def load_report_data(output_dir: Path, results: Mapping[str, object]) -> ReportData:
+    equity, returns = _load_history(output_dir)
     trips = _load_round_trips(output_dir)
     return ReportData(
         equity=equity,
-        returns=equity.pct_change().dropna(),
+        returns=returns,
         trips=trips,
         settings=_load_settings(output_dir),
-        performance=_performance(results),
+        analytics=results,
         trades=_trade_stats(trips),
         scalars=_load_scalars(output_dir),
     )
 
 
-def performance_rows(data: ReportData) -> list[Row]:
-    rows: list[Row] = [["Metric", "Value"]]
+def performance_rows(data: ReportData) -> list[ReportRow]:
+    rows: list[ReportRow] = [["Metric", "Value"]]
 
-    def add(label: str, value: float | None, formatter: Formatter) -> None:
+    def add(label: str, value: float | None, formatter: Callable[[float], str]) -> None:
         if value is not None:
             rows.append([label, formatter(value)])
 
-    performance = data.performance
+    analytics = data.analytics
     trades = data.trades
-    add("Total return", performance.total_return, format_percent)
-    add("CAGR", performance.cagr, format_percent)
-    add("Volatility (ann.)", performance.volatility, format_percent)
-    add("Sharpe", performance.sharpe, _format_ratio)
-    if performance.max_drawdown is not None:
-        depth = format_percent(performance.max_drawdown)
-        on_date = performance.max_drawdown_on
+    add("Total return", _number(analytics.get("total_return")), format_percent)
+    add("CAGR", _number(analytics.get("cagr")), format_percent)
+    add("Volatility (ann.)", _number(analytics.get("volatility")), format_percent)
+    add("Sharpe", _number(analytics.get("sharpe")), _format_ratio)
+    max_drawdown = _number(_leg(analytics.get("max_drawdown"), "drawdown"))
+    if max_drawdown is not None:
+        depth = format_percent(-abs(max_drawdown))
+        drawdown_at = _leg(analytics.get("max_drawdown"), "date")
+        on_date = drawdown_at.date().isoformat() if isinstance(drawdown_at, datetime) else None
         rows.append(["Max drawdown", f"{depth} on {on_date}" if on_date else depth])
-    add("Return over max drawdown", performance.romad, _format_ratio)
+    add("Return over max drawdown", _number(analytics.get("romad")), _format_ratio)
     for key, label, formatter, leg in SCALAR_ROWS:
         add(label, _number(_leg(data.scalars.get(key), leg)), formatter)
     rows.append(["Round-trip trades", _format_count(trades.count)])
@@ -310,7 +221,7 @@ def performance_rows(data: ReportData) -> list[Row]:
 
 def methodology_rows(
     symbols: Sequence[str], start: datetime, end: datetime, settings: RunSettings
-) -> list[Row]:
+) -> list[ReportRow]:
     version = settings.lumibot_version or LUMIBOT_FALLBACK
     risk = _number(settings.parameters.get("risk_per_trade_max"))
     sizing = f"{format_percent(risk)} of equity risked per trade" if risk else "strategy-defined"
@@ -328,7 +239,7 @@ def methodology_rows(
     ]
 
 
-def trade_rows(trips: Sequence[RoundTrip]) -> list[Row]:
+def trade_rows(trips: Sequence[RoundTrip]) -> list[ReportRow]:
     ranked = sorted(trips, key=lambda trip: abs(trip.pnl_usd), reverse=True)[:TRADE_ROW_MAX]
     return [
         [
@@ -358,21 +269,24 @@ def summary_text(
 ) -> str:
     instrument_count = len(symbols)
     universe = f"{instrument_count} instrument{'' if instrument_count == 1 else 's'}"
-    performance = data.performance
-    total = (
-        format_percent(performance.total_return) if performance.total_return is not None else "flat"
-    )
+    analytics = data.analytics
+    total_return = _number(analytics.get("total_return"))
+    total = format_percent(total_return) if total_return is not None else "flat"
     window = f"{start:%b %Y} to {end:%b %Y}"
     first = f"The {strategy_name} strategy returned {total} across {universe} from {window}"
-    if performance.cagr is not None:
-        first = f"{first}, compounding at {format_percent(performance.cagr)} a year"
+    cagr = _number(analytics.get("cagr"))
+    if cagr is not None:
+        first = f"{first}, compounding at {format_percent(cagr)} a year"
     parts: list[str] = []
-    if performance.max_drawdown is not None:
-        depth = format_percent(performance.max_drawdown)
-        on_date = performance.max_drawdown_on
+    max_drawdown = _number(_leg(analytics.get("max_drawdown"), "drawdown"))
+    if max_drawdown is not None:
+        depth = format_percent(-abs(max_drawdown))
+        drawdown_at = _leg(analytics.get("max_drawdown"), "date")
+        on_date = drawdown_at.date().isoformat() if isinstance(drawdown_at, datetime) else None
         parts.append(f"the deepest drawdown was {depth}{f' on {on_date}' if on_date else ''}")
-    if performance.sharpe is not None:
-        parts.append(f"the Sharpe ratio came in at {_format_ratio(performance.sharpe)}")
+    sharpe = _number(analytics.get("sharpe"))
+    if sharpe is not None:
+        parts.append(f"the Sharpe ratio came in at {_format_ratio(sharpe)}")
     if data.trades.count and data.trades.win_rate is not None:
         parts.append(
             f"{data.trades.count} round-trip trades closed at a "
@@ -384,8 +298,9 @@ def summary_text(
 
 
 def equity_caption(equity: Series) -> str:
-    opening = float(equity.iloc[0])
-    closing = float(equity.iloc[-1])
+    values = cast(Any, equity)
+    opening = float(values.iloc[0])
+    closing = float(values.iloc[-1])
     direction = "up" if closing >= opening else "down"
     return (
         f"Portfolio value closed the window at {format_money(closing)}, {direction} "
@@ -394,7 +309,8 @@ def equity_caption(equity: Series) -> str:
 
 
 def drawdown_caption(equity: Series) -> str:
-    drawdown = equity / equity.cummax() - 1.0
+    values = cast(Any, equity)
+    drawdown = values / values.cummax() - 1.0
     return (
         f"The worst drawdown reached {format_percent(float(drawdown.min()))}, and "
         f"{int((drawdown < 0).sum())} of {len(drawdown)} days closed below a prior peak."
@@ -404,7 +320,7 @@ def drawdown_caption(equity: Series) -> str:
 def monthly_returns(returns: Series) -> dict[tuple[int, int], float]:
     if returns.empty:
         return {}
-    compounded = (1.0 + returns).resample("ME").prod() - 1.0
+    compounded = (1.0 + cast(Any, returns)).resample("ME").prod() - 1.0
     return {(stamp.year, stamp.month): float(value) for stamp, value in compounded.items()}
 
 

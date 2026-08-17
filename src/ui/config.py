@@ -20,6 +20,7 @@ class WebSettings(BaseSettings):
     allowed_railway_emails: Annotated[frozenset[str], NoDecode, Field(min_length=1)]
     session_secret: SigningSecret
     session_ttl_seconds: int = Field(default=28_800, gt=0, le=86_400)
+    alpaca_is_paper: bool = True
     alpaca_api_key: RequiredSecret
     alpaca_api_secret: RequiredSecret
     state_export_secret: SigningSecret
