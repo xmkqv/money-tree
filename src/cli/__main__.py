@@ -16,8 +16,9 @@ def backtest(
     strategy: Annotated[str, typer.Option()] = settings.strategy,
     start: Annotated[datetime, typer.Option()] = settings.backtest_start,
     end: Annotated[datetime, typer.Option()] = settings.backtest_end,
+    symbols: Annotated[str, typer.Option()] = "",
 ) -> None:
-    run_backtest(strategy, start, end)
+    run_backtest(strategy, start, end, [name for name in symbols.split(",") if name] or None)
 
 
 @app.command()
