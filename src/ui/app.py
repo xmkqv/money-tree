@@ -43,8 +43,7 @@ class SessionGuardMiddleware:
             csrf_token = session.get("csrf_token")
             request_token = dict(scope["headers"]).get(b"x-csrf-token", b"")
             if not isinstance(csrf_token, str) or not hmac.compare_digest(
-                csrf_token.encode(),
-                request_token,
+                csrf_token.encode(), request_token
             ):
                 response = error_response("CSRF token is invalid", 403)
                 await response(scope, receive, send)
@@ -71,11 +70,7 @@ def create_app() -> FastAPI:
             yield {"alpaca": AlpacaReadClient(client)}
 
     app = FastAPI(
-        title="Money Tree",
-        docs_url=None,
-        redoc_url=None,
-        openapi_url=None,
-        lifespan=lifespan,
+        title="Money Tree", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
     )
     app.add_middleware(SessionGuardMiddleware, configuration=configuration)
     app.add_middleware(
@@ -135,8 +130,7 @@ def create_app() -> FastAPI:
     async def logout(request: Request) -> Response:
         request.session.clear()
         return Response(
-            status_code=204,
-            headers={**NO_STORE, "Clear-Site-Data": '"cache", "storage"'},
+            status_code=204, headers={**NO_STORE, "Clear-Site-Data": '"cache", "storage"'}
         )
 
     app.include_router(create_dashboard_router(configuration, runtime_store))

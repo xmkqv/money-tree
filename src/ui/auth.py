@@ -42,9 +42,7 @@ class RailwayOAuthClient:
             }
         )
         return AuthorizationRequest(
-            url=f"{AUTHORIZATION_URL}?{query}",
-            state=state,
-            verifier=verifier,
+            url=f"{AUTHORIZATION_URL}?{query}", state=state, verifier=verifier
         )
 
     async def identify(self, code: str, verifier: str) -> str:
@@ -65,8 +63,7 @@ class RailwayOAuthClient:
             )
             token.raise_for_status()
             identity = await client.get(
-                IDENTITY_URL,
-                headers={"Authorization": f"Bearer {token.json()['access_token']}"},
+                IDENTITY_URL, headers={"Authorization": f"Bearer {token.json()['access_token']}"}
             )
             identity.raise_for_status()
             subject = identity.json()["sub"]

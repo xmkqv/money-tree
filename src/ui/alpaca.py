@@ -18,8 +18,7 @@ class AlpacaReadClient:
 
     async def orders(self, status: str, limit: int, until: str | None = None) -> Any:
         return await self._get(
-            "/v2/orders",
-            {"status": status, "limit": limit, "direction": "desc", "until": until},
+            "/v2/orders", {"status": status, "limit": limit, "direction": "desc", "until": until}
         )
 
     async def fills(self, limit: int, page_token: str | None = None) -> Any:
@@ -41,10 +40,7 @@ class AlpacaReadClient:
         points = [
             {"timestamp": timestamp, "equity": equity, "profit_loss": profit_loss}
             for timestamp, equity, profit_loss in zip(
-                history["timestamp"],
-                history["equity"],
-                history["profit_loss"],
-                strict=True,
+                history["timestamp"], history["equity"], history["profit_loss"], strict=True
             )
         ]
         return {"points": points}

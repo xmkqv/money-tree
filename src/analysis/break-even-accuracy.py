@@ -7,20 +7,14 @@ import polars as pl
 from arch.bootstrap import StationaryBootstrap
 
 
-SCHEMA = {
-    "usd_absolute_price_move": pl.Float64,
-    "usd_transaction_cost": pl.Float64,
-}
+SCHEMA = {"usd_absolute_price_move": pl.Float64, "usd_transaction_cost": pl.Float64}
 BLOCK_SIZE = 5
 CONFIDENCE = 0.95
 REPLICATIONS = 10_000
 SEED = 20_260_816
 
 
-def _estimate(
-    usd_absolute_price_moves: Any,
-    usd_transaction_costs: Any,
-) -> list[float]:
+def _estimate(usd_absolute_price_moves: Any, usd_transaction_costs: Any) -> list[float]:
     usd_absolute_price_move = float(usd_absolute_price_moves.sum())
     usd_transaction_cost = float(usd_transaction_costs.sum())
     if usd_absolute_price_move <= 0 or usd_transaction_cost > usd_absolute_price_move:
@@ -49,10 +43,7 @@ def _main() -> None:
     usd_absolute_price_moves, usd_transaction_costs = _read(parser.parse_args().input)
     estimate = _estimate(usd_absolute_price_moves, usd_transaction_costs)[0]
     bootstrap = StationaryBootstrap(
-        BLOCK_SIZE,
-        usd_absolute_price_moves.to_numpy(),
-        usd_transaction_costs.to_numpy(),
-        seed=SEED,
+        BLOCK_SIZE, usd_absolute_price_moves.to_numpy(), usd_transaction_costs.to_numpy(), seed=SEED
     )
     samples = bootstrap.apply(cast(Any, _estimate), reps=REPLICATIONS)
     bound = pl.Series(samples[:, 0]).quantile(CONFIDENCE, interpolation="linear")

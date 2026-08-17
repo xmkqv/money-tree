@@ -53,11 +53,7 @@ class StateExporter:
         self.pending: queue.Queue[RuntimeSnapshot] = queue.Queue(maxsize=1)
         self.stopping = threading.Event()
         self.lock = threading.Lock()
-        self.thread = threading.Thread(
-            target=self._export,
-            name="state-exporter",
-            daemon=True,
-        )
+        self.thread = threading.Thread(target=self._export, name="state-exporter", daemon=True)
 
     def start(self) -> None:
         self.thread.start()
@@ -67,12 +63,7 @@ class StateExporter:
             self.status = status
             self.sequence += 1
             self.events.append(
-                RuntimeEvent(
-                    kind=kind,
-                    occurred_at=datetime.now(UTC),
-                    level=level,
-                    message=message,
-                )
+                RuntimeEvent(kind=kind, occurred_at=datetime.now(UTC), level=level, message=message)
             )
             self.events = self.events[-50:]
             with contextlib.suppress(queue.Empty):
