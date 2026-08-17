@@ -92,11 +92,7 @@ def create_app() -> FastAPI:
         if not isinstance(error, httpx.HTTPStatusError) or error.response.status_code != 429:
             return error_response("Upstream read failed", 502)
         retry_after = error.response.headers.get("Retry-After", "60")[:40]
-        return error_response(
-            "Alpaca read limit was reached",
-            503,
-            {"Retry-After": retry_after},
-        )
+        return error_response("Alpaca read limit was reached", 503, {"Retry-After": retry_after})
 
     @app.get("/healthz")
     async def health() -> JSONResponse:
