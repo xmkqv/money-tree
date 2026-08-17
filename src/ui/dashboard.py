@@ -8,7 +8,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from pydantic import AwareDatetime, ValidationError
 
-from bot.export import RuntimeSnapshot
+from bot.types import RuntimeSnapshot
 from ui.alpaca import AlpacaReadClient
 from ui.config import WebSettings
 
@@ -68,6 +68,8 @@ def read_response(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
 
 def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeStore) -> APIRouter:
     router = APIRouter()
+    mode = b"PAPER" if configuration.alpaca_is_paper else b"LIVE"
+    dashboard_html = DASHBOARD_HTML.replace(b"{{ ALPACA_MODE }}", mode)
 
     def alpaca(request: Request) -> AlpacaReadClient:
         return request.state.alpaca
@@ -79,7 +81,7 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
 
     @router.get("/")
     async def dashboard() -> Response:
-        return Response(DASHBOARD_HTML, media_type="text/html", headers=DASHBOARD_HEADERS)
+        return Response(dashboard_html, media_type="text/html", headers=DASHBOARD_HEADERS)
 
     @router.get("/assets/dashboard.v1.css")
     async def dashboard_css() -> Response:

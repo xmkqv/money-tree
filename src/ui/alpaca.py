@@ -3,7 +3,12 @@ from typing import Any
 import httpx
 
 
+LIVE_API_URL = "https://api.alpaca.markets"
 PAPER_API_URL = "https://paper-api.alpaca.markets"
+
+
+def alpaca_api_url(is_paper: bool) -> str:
+    return PAPER_API_URL if is_paper else LIVE_API_URL
 
 
 class AlpacaReadClient:
