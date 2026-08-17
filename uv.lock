@@ -2832,7 +2832,6 @@ name = "money-tree"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "authlib" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "itsdangerous" },
@@ -2852,7 +2851,6 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "authlib", specifier = ">=1.6,<2" },
     { name = "fastapi", specifier = ">=0.116,<1" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "itsdangerous", specifier = ">=2.2,<3" },
