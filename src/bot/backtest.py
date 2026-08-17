@@ -1,11 +1,11 @@
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import cast
 
 from bot.config import settings
 
 
-ARTIFACTS = {
+ARTIFACT_NAMES = {
     "stats_file": "stats.csv",
     "trades_file": "trades.csv",
     "settings_file": "settings.json",
@@ -16,9 +16,9 @@ ARTIFACTS = {
 }
 
 
-def _files(output_dir: Path) -> dict[str, Any]:
+def _artifact_paths(output_dir: Path) -> dict[str, str]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    return {key: str(output_dir / name) for key, name in ARTIFACTS.items()}
+    return {key: str(output_dir / name) for key, name in ARTIFACT_NAMES.items()}
 
 
 def run(
@@ -47,6 +47,6 @@ def run(
         show_indicators=False,
         show_progress_bar=False,
         save_tearsheet=True,
-        **({} if output_dir is None else _files(output_dir)),
+        **({} if output_dir is None else _artifact_paths(output_dir)),
     )
     return cast(dict[str, object], results or {})

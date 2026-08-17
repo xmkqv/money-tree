@@ -3,28 +3,38 @@ from typing import Annotated
 
 import typer
 
-from bot.backtest import run as run_backtest
+from bot import backtest, report, trade
 from bot.config import settings
-from bot.trade import run as run_trade
 
 
 app = typer.Typer(no_args_is_help=True)
 
 
-@app.command()
-def backtest(
+def _parse_symbols(value: str) -> list[str]:
+    return [symbol for item in value.split(",") if (symbol := item.strip())]
+
+
+@app.command("backtest")
+def run_backtest(
     strategy: Annotated[str, typer.Option()] = settings.strategy,
     start: Annotated[datetime, typer.Option()] = settings.backtest_start,
     end: Annotated[datetime, typer.Option()] = settings.backtest_end,
     symbols: Annotated[str, typer.Option()] = "",
 ) -> None:
-    run_backtest(strategy, start, end, [name for name in symbols.split(",") if name] or None)
+    backtest.run(strategy, start, end, _parse_symbols(symbols) or None)
 
 
-@app.command()
-def trade(strategy: Annotated[str, typer.Option()] = settings.strategy) -> None:
-    run_trade(strategy)
+@app.command("report")
+def run_report(
+    strategy: Annotated[str, typer.Option()] = settings.strategy,
+    symbols: Annotated[str, typer.Option()] = "SPY",
+    start: Annotated[datetime, typer.Option()] = settings.backtest_start,
+    end: Annotated[datetime, typer.Option()] = settings.backtest_end,
+    label: Annotated[str | None, typer.Option()] = None,
+) -> None:
+    report.run(strategy, _parse_symbols(symbols), start, end, label)
 
 
-if __name__ == "__main__":
-    app()
+@app.command("trade")
+def run_trade(strategy: Annotated[str, typer.Option()] = settings.strategy) -> None:
+    trade.run(strategy)
