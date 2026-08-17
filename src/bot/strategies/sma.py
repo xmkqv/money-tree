@@ -13,11 +13,10 @@ MIN_BARS = 205
 PERIOD = 14
 STOP_MULTIPLE = 1.5
 MIN_NOTIONAL_USD = 1.0
-SHARE_INCREMENT = Decimal("0.000000001")
 TRADING_ZONE = ZoneInfo("America/New_York")
 
 
-def _wilder(values: Series, period: int) -> Series:
+def wilder(values: Series, period: int) -> Series:
     observed = cast(Any, values).dropna().astype(float)
     seeded = observed.copy()
     seeded.iloc[: period - 1] = float("nan")
@@ -25,14 +24,14 @@ def _wilder(values: Series, period: int) -> Series:
     return cast(Series, seeded.ewm(alpha=1.0 / period, adjust=False).mean())
 
 
-def _rsi(close: Series, period: int) -> Series:
+def rsi(close: Series, period: int) -> Series:
     delta = cast(Any, close).diff().dropna()
-    gain = _wilder(cast(Series, delta.clip(lower=0.0)), period)
-    loss = _wilder(cast(Series, (-delta).clip(lower=0.0)), period)
+    gain = wilder(cast(Series, delta.clip(lower=0.0)), period)
+    loss = wilder(cast(Series, (-delta).clip(lower=0.0)), period)
     return cast(Series, 100.0 - 100.0 / (1.0 + cast(Any, gain) / cast(Any, loss)))
 
 
-def _true_range(high: Series, low: Series, close: Series) -> Series:
+def true_range(high: Series, low: Series, close: Series) -> Series:
     high_values = cast(Any, high)
     low_values = cast(Any, low)
     previous = cast(Any, close).shift(1)
@@ -43,23 +42,24 @@ def _true_range(high: Series, low: Series, close: Series) -> Series:
     return cast(Series, widest.where(widest >= low_gap, low_gap).dropna())
 
 
-def _adx(high: Series, low: Series, close: Series, period: int) -> Series:
-    average_range = _wilder(_true_range(high, low, close), period)
+def adx(high: Series, low: Series, close: Series, period: int) -> Series:
+    average_range = wilder(true_range(high, low, close), period)
     up = cast(Any, high).diff().dropna()
     down = (-cast(Any, low).diff()).dropna()
-    rising = _wilder(cast(Series, up.where((up > down) & (up > 0.0), 0.0)), period)
-    falling = _wilder(cast(Series, down.where((down > up) & (down > 0.0), 0.0)), period)
+    rising = wilder(cast(Series, up.where((up > down) & (up > 0.0), 0.0)), period)
+    falling = wilder(cast(Series, down.where((down > up) & (down > 0.0), 0.0)), period)
     plus = 100.0 * cast(Any, rising) / cast(Any, average_range)
     minus = 100.0 * cast(Any, falling) / cast(Any, average_range)
-    return _wilder(cast(Series, 100.0 * (plus - minus).abs() / (plus + minus)), period)
+    return wilder(cast(Series, 100.0 * (plus - minus).abs() / (plus + minus)), period)
 
 
-def _entry_quantity(
+def entry_quantity(
     equity: float,
     price: float,
     stop_distance: float,
     position_fraction_max: float,
     risk_per_trade_max: float,
+    fractional_orders: bool,
 ) -> Decimal:
     if equity <= 0 or price <= 0 or stop_distance <= 0:
         return Decimal(0)
@@ -69,7 +69,8 @@ def _entry_quantity(
     )
     if quantity * price < MIN_NOTIONAL_USD:
         return Decimal(0)
-    return Decimal(str(quantity)).quantize(SHARE_INCREMENT, rounding=ROUND_DOWN)
+    increment = Decimal("0.000000001" if fractional_orders else "1")
+    return Decimal(str(quantity)).quantize(increment, rounding=ROUND_DOWN)
 
 
 class Strategy(StrategyBase):
@@ -100,18 +101,21 @@ class Strategy(StrategyBase):
             self._locked_on = None
         if self._locked_on == day:
             return
-        risk_per_day_max = float(parameters.get("risk_per_day_max", 0.02))
+        risk_per_day_max = float(parameters["risk_per_day_max"])
         if equity <= self._baseline_equity * (1.0 - risk_per_day_max):
             self._flatten(day)
             return
         if self._evaluated_on == day:
             return
         self._evaluated_on = day
-        position_fraction_max = float(parameters.get("position_fraction_max", 0.20))
-        risk_per_trade_max = float(parameters.get("risk_per_trade_max", 0.005))
+        position_fraction_max = float(parameters["position_fraction_max"])
+        risk_per_trade_max = float(parameters["risk_per_trade_max"])
+        fractional_orders = bool(parameters["fractional_orders"])
         symbols: list[str] = parameters.get("symbols") or ["SPY"]
         for symbol in symbols:
-            self._trade(symbol, equity, position_fraction_max, risk_per_trade_max)
+            self._trade(
+                symbol, equity, position_fraction_max, risk_per_trade_max, fractional_orders
+            )
 
     def on_filled_order(
         self,
@@ -173,6 +177,7 @@ class Strategy(StrategyBase):
         equity: float,
         position_fraction_max: float,
         risk_per_trade_max: float,
+        fractional_orders: bool,
     ) -> None:
         bars: Any = self.get_historical_prices(symbol, LOOKBACK, "day")
         frame: DataFrame | None = None if bars is None else bars.df
@@ -186,8 +191,8 @@ class Strategy(StrategyBase):
         sma20 = close_values.rolling(20).mean()
         last = float(close_values.iloc[-1])
         trend = float(sma20.iloc[-1])
-        strength = float(cast(Any, _rsi(close, PERIOD)).iloc[-1])
-        average_range = float(cast(Any, _wilder(_true_range(high, low, close), PERIOD)).iloc[-1])
+        strength = float(cast(Any, rsi(close, PERIOD)).iloc[-1])
+        average_range = float(cast(Any, wilder(true_range(high, low, close), PERIOD)).iloc[-1])
         position: Any = self.get_position(symbol)
         held = 0.0 if position is None else float(position.quantity)
         if held > 0:
@@ -205,11 +210,16 @@ class Strategy(StrategyBase):
         sma200 = float(close_values.rolling(200).mean().iloc[-1])
         if not (crossed and last > sma50 > sma200 and 50.0 <= strength <= 70.0):
             return
-        if float(cast(Any, _adx(high, low, close, PERIOD)).iloc[-1]) <= 25.0:
+        if float(cast(Any, adx(high, low, close, PERIOD)).iloc[-1]) <= 25.0:
             return
         stop_distance = STOP_MULTIPLE * average_range
-        quantity = _entry_quantity(
-            equity, last, stop_distance, position_fraction_max, risk_per_trade_max
+        quantity = entry_quantity(
+            equity,
+            last,
+            stop_distance,
+            position_fraction_max,
+            risk_per_trade_max,
+            fractional_orders,
         )
         if quantity <= 0:
             return

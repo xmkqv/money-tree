@@ -14,9 +14,9 @@ from ui.config import WebSettings
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
-DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.v2.html").read_bytes()
-DASHBOARD_CSS = (ASSET_DIRECTORY / "dashboard.v2.css").read_bytes()
-DASHBOARD_JAVASCRIPT = (ASSET_DIRECTORY / "dashboard.v2.js").read_bytes()
+DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.v3.html").read_bytes()
+DASHBOARD_CSS = (ASSET_DIRECTORY / "dashboard.v3.css").read_bytes()
+DASHBOARD_JAVASCRIPT = (ASSET_DIRECTORY / "dashboard.v3.js").read_bytes()
 NO_STORE = {"Cache-Control": "no-store"}
 IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
 HEARTBEAT_TIMEOUT = timedelta(seconds=15)
@@ -83,11 +83,11 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
     async def dashboard() -> Response:
         return Response(dashboard_html, media_type="text/html", headers=DASHBOARD_HEADERS)
 
-    @router.get("/assets/dashboard.v2.css")
+    @router.get("/assets/dashboard.v3.css")
     async def dashboard_css() -> Response:
         return Response(DASHBOARD_CSS, media_type="text/css", headers=IMMUTABLE)
 
-    @router.get("/assets/dashboard.v2.js")
+    @router.get("/assets/dashboard.v3.js")
     async def dashboard_javascript() -> Response:
         return Response(DASHBOARD_JAVASCRIPT, media_type="text/javascript", headers=IMMUTABLE)
 

@@ -32,7 +32,7 @@ def run(
 
     from bot.strategies.shared import load_strategy
 
-    parameters: dict[str, object] = {**settings.risk_parameters}
+    parameters: dict[str, object] = settings.trading_configuration.model_dump()
     if symbols:
         parameters["symbols"] = symbols
     results = load_strategy(strategy_name).backtest(

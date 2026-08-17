@@ -16,6 +16,7 @@ src/
         strategies/
             shared.py # strategy base class and loader
             noop.py # deployment-safe strategy that submits no orders
+            portfolio.py # selected live strategy engines and portfolio risk
         config.py
         backtest.py
         broker.py
@@ -23,9 +24,9 @@ src/
         trade.py
     ui/
         assets/
-            dashboard.v1.html
-            dashboard.v1.css
-            dashboard.v1.js
+            dashboard.v3.html
+            dashboard.v3.css
+            dashboard.v3.js
         alpaca.py
         dashboard.py
         config.py
@@ -36,8 +37,8 @@ src/
 # deploy
 
 ```sh
-mt trade --strategy "$STRATEGY"
-mt backtest --strategy "$STRATEGY" --start "$BACKTEST_START" --end "$BACKTEST_END"
+mt trade --strategies "$STRATEGIES"
+mt backtest --strategy "${STRATEGIES%%,*}" --start 2023-01-01 --end 2024-01-01
 uvicorn ui.app:create_app --factory --workers 1 --host "" --port "$PORT"
 ```
 
@@ -49,6 +50,7 @@ uvicorn ui.app:create_app --factory --workers 1 --host "" --port "$PORT"
 
 - the bot sends its newest signed snapshot with at most 50 events outside the trading path
 - the web boundary rejects oversized, expired, invalid, or repeated snapshots
+- the live runner reads comma-separated `STRATEGIES` and uses one portfolio strategy
 
 # dashboard
 
