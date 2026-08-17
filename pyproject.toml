@@ -15,24 +15,12 @@ dependencies = [
     "typer>=0.16,<1",
     "uvicorn>=0.35,<1",
 ]
-keywords = ["algorithmic-trading", "alpaca", "lumibot", "systematic-trading"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Intended Audience :: Financial and Insurance Industry",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.13",
-]
-
 [project.scripts]
 mt = "cli.__main__:app"
 
 [build-system]
 requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
-
-[project.urls]
-Repository = "https://github.com/xmkqv/money-tree"
-Issues = "https://github.com/xmkqv/money-tree/issues"
 
 [dependency-groups]
 dev = [

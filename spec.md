@@ -64,7 +64,7 @@ uvicorn ui.app:create_app --factory --workers 1 --host "" --port "$PORT"
 # state
 
 - the bot sends its newest signed snapshot with at most 50 events outside the trading path
-- the web boundary rejects oversized, expired, invalid, repeated, or stale snapshots
+- the web boundary rejects oversized, expired, invalid, or repeated snapshots
 
 # dashboard
 
