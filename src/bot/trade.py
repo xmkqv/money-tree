@@ -7,7 +7,6 @@ from bot.export import StateExporter
 def run(strategy_name: str) -> None:
     from lumibot.traders import Trader
 
-
     exporter = None
     if settings.state_export_url is not None and settings.state_export_secret is not None:
         exporter = StateExporter(

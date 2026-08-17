@@ -74,10 +74,7 @@ def read_response(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
     return JSONResponse(jsonable_encoder(content), headers=cache_headers(max_age))
 
 
-def create_dashboard_router(
-    configuration: WebSettings,
-    runtime_store: RuntimeStore,
-) -> APIRouter:
+def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeStore) -> APIRouter:
     router = APIRouter()
 
     def alpaca(request: Request) -> AlpacaReadClient:
@@ -127,10 +124,7 @@ def create_dashboard_router(
     ) -> JSONResponse:
         max_age = 300 if until is not None else 15
         cursor = until.isoformat() if until is not None else None
-        return read_response(
-            await alpaca(request).orders("closed", limit, cursor),
-            max_age,
-        )
+        return read_response(await alpaca(request).orders("closed", limit, cursor), max_age)
 
     @router.get("/api/fills")
     async def fills(
@@ -146,20 +140,14 @@ def create_dashboard_router(
         ] = None,
     ) -> JSONResponse:
         max_age = 300 if page_token is not None else 15
-        return read_response(
-            await alpaca(request).fills(limit, page_token),
-            max_age,
-        )
+        return read_response(await alpaca(request).fills(limit, page_token), max_age)
 
     @router.get("/api/equity")
     async def equity(
         request: Request,
         period: Literal["1D", "1W", "1M", "1A"] = "1D",
     ) -> JSONResponse:
-        return read_response(
-            await alpaca(request).equity(period, PORTFOLIO_TIMEFRAMES[period]),
-            60,
-        )
+        return read_response(await alpaca(request).equity(period, PORTFOLIO_TIMEFRAMES[period]), 60)
 
     @router.get("/api/run")
     async def runtime() -> JSONResponse:
@@ -167,9 +155,7 @@ def create_dashboard_router(
         return read_response(snapshot, 5, stale=stale)
 
     @router.get("/api/events")
-    async def events(
-        limit: Annotated[int, Query(ge=1, le=50)] = 50,
-    ) -> JSONResponse:
+    async def events(limit: Annotated[int, Query(ge=1, le=50)] = 50) -> JSONResponse:
         snapshot, stale = runtime_state()
         data = list(reversed(snapshot.events[-limit:])) if snapshot else []
         return read_response(data, 5, stale=stale)
