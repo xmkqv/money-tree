@@ -3,6 +3,6 @@ builder = "DOCKERFILE"
 watchPatterns = ["/src/bot/**", "/src/cli/**", "/pyproject.toml", "/uv.lock", "/Dockerfile", "/railway.toml"]
 
 [deploy]
-startCommand = 'sh -c "exec uv run --locked --no-sync mt trade --strategy $STRATEGY"'
+startCommand = 'sh -c "exec uv run --locked --no-sync mt trade --strategies $STRATEGIES"'
 restartPolicyType = "ALWAYS"
 restartPolicyMaxRetries = 10

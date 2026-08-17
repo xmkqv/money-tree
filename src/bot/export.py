@@ -10,7 +10,7 @@ from uuid import uuid4
 
 import httpx
 
-from bot.types import EventLevel, RunStatus, RuntimeEvent, RuntimeSnapshot
+from bot.types import EventLevel, RunStatus, RuntimeEvent, RuntimeSnapshot, TradingConfiguration
 
 
 logger = logging.getLogger(__name__)
@@ -18,10 +18,13 @@ EXPORT_INTERVAL_SECONDS = 5
 
 
 class StateExporter:
-    def __init__(self, url: str, secret: str, strategy: str) -> None:
+    def __init__(
+        self, url: str, secret: str, strategies: list[str], configuration: TradingConfiguration
+    ) -> None:
         self.url = url
         self.secret = secret.encode()
-        self.strategy = strategy
+        self.strategies = strategies
+        self.configuration = configuration
         self.run_id = uuid4()
         self.started_at = datetime.now(UTC)
         self.status: RunStatus = "starting"
@@ -60,9 +63,10 @@ class StateExporter:
             run_id=self.run_id,
             sequence=self.sequence,
             status=self.status,
-            strategy=self.strategy,
+            strategies=self.strategies,
             started_at=self.started_at,
             heartbeat_at=datetime.now(UTC),
+            configuration=self.configuration,
             events=list(self.events),
         )
 
