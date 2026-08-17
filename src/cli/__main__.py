@@ -14,14 +14,10 @@ app = typer.Typer(no_args_is_help=True)
 @app.command()
 def backtest(
     strategy: Annotated[str, typer.Option()] = settings.strategy,
-    start: Annotated[str, typer.Option()] = settings.backtest_start.isoformat(),
-    end: Annotated[str, typer.Option()] = settings.backtest_end.isoformat(),
+    start: Annotated[datetime, typer.Option()] = settings.backtest_start,
+    end: Annotated[datetime, typer.Option()] = settings.backtest_end,
 ) -> None:
-    run_backtest(
-        strategy,
-        datetime.fromisoformat(start),
-        datetime.fromisoformat(end),
-    )
+    run_backtest(strategy, start, end)
 
 
 @app.command()

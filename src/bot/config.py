@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import datetime
 from typing import Annotated, Self
 
 from pydantic import AnyHttpUrl, Field, SecretStr, model_validator
@@ -20,8 +20,8 @@ class Settings(BaseSettings):
     )
 
     strategy: str = "noop"
-    backtest_start: date = date(2023, 1, 1)
-    backtest_end: date = date(2024, 1, 1)
+    backtest_start: datetime = datetime(2023, 1, 1)
+    backtest_end: datetime = datetime(2024, 1, 1)
     alpaca_api_key: SecretStr | None = None
     alpaca_api_secret: SecretStr | None = None
     alpaca_is_paper: bool = True

@@ -150,7 +150,7 @@ document.getElementById("periods").addEventListener("click", event => {
   jobs.at(-1).next = 0;
   refresh();
 });
-document.addEventListener("visibilitychange", () => { document.getElementById("visibility").textContent = document.hidden ? "Paused" : "Live"; if (!document.hidden) { jobs.forEach(job => job.next = 0); refresh(); } });
+document.addEventListener("visibilitychange", () => { if (document.hidden) return; jobs.forEach(job => job.next = 0); refresh(); });
 window.addEventListener("pageshow", event => { if (event.persisted) readSession(); });
 document.getElementById("logout").addEventListener("click", async () => {
   const response = await fetch("/logout", { method: "POST", headers: { "X-CSRF-Token": csrfToken } });

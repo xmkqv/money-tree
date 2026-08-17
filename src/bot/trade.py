@@ -1,24 +1,13 @@
-from typing import Protocol
-
 from bot.backtest import load_strategy
 from bot.broker import build_alpaca_broker
 from bot.config import settings
 from bot.export import StateExporter
 
 
-class Trader(Protocol):
-    def add_strategy(self, strategy: object) -> None: ...
-
-    def run_all(self) -> object: ...
-
-
-def build_trader() -> Trader:
-    from lumibot.traders import Trader as LumibotTrader
-
-    return LumibotTrader()
-
-
 def run(strategy_name: str) -> None:
+    from lumibot.traders import Trader
+
+
     exporter = None
     if settings.state_export_url is not None and settings.state_export_secret is not None:
         exporter = StateExporter(
@@ -35,7 +24,7 @@ def run(strategy_name: str) -> None:
             broker=broker,
             parameters=settings.risk_parameters,
         )
-        trader = build_trader()
+        trader = Trader()
         trader.add_strategy(strategy)
         if exporter is not None:
             exporter.publish("running", "run", "info", "Trading run is active")

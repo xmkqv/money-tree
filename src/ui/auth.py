@@ -2,11 +2,9 @@ import base64
 import hashlib
 import secrets
 from dataclasses import dataclass
-from typing import Any, Protocol, cast
 from urllib.parse import urlencode
 
 import httpx
-from authlib.integrations.httpx_client import AsyncOAuth2Client
 
 from ui.config import WebSettings
 
@@ -21,12 +19,6 @@ class AuthorizationRequest:
     url: str
     state: str
     verifier: str
-
-
-class IdentityClient(Protocol):
-    def authorization_request(self) -> AuthorizationRequest: ...
-
-    async def identify(self, code: str, verifier: str) -> str: ...
 
 
 class RailwayOAuthClient:
@@ -56,25 +48,28 @@ class RailwayOAuthClient:
         )
 
     async def identify(self, code: str, verifier: str) -> str:
-        async with AsyncOAuth2Client(  # pyright: ignore[reportGeneralTypeIssues]
-            client_id=self._configuration.railway_oauth_client_id,
-            client_secret=self._configuration.railway_oauth_client_secret.get_secret_value(),
-            redirect_uri=str(self._configuration.railway_oauth_redirect_uri),
-            scope="openid",
-            token_endpoint_auth_method="client_secret_basic",
-        ) as oauth_client:  # pyright: ignore[reportUnknownVariableType]
-            client = cast(httpx.AsyncClient, oauth_client)
-            await cast(Any, client).fetch_token(
+        configuration = self._configuration
+        async with httpx.AsyncClient(timeout=10) as client:
+            token = await client.post(
                 TOKEN_URL,
-                code=code,
-                code_verifier=verifier,
+                data={
+                    "grant_type": "authorization_code",
+                    "code": code,
+                    "code_verifier": verifier,
+                    "redirect_uri": str(configuration.railway_oauth_redirect_uri),
+                },
+                auth=(
+                    configuration.railway_oauth_client_id,
+                    configuration.railway_oauth_client_secret.get_secret_value(),
+                ),
             )
-            response = await client.get(IDENTITY_URL)
-            response.raise_for_status()
-            identity = response.json()
-            if not isinstance(identity, dict):
-                raise TypeError("Railway OAuth identity was invalid")
-            subject = cast(dict[str, Any], identity).get("sub")
+            token.raise_for_status()
+            identity = await client.get(
+                IDENTITY_URL,
+                headers={"Authorization": f"Bearer {token.json()['access_token']}"},
+            )
+            identity.raise_for_status()
+            subject = identity.json()["sub"]
         if not isinstance(subject, str) or not subject:
             raise ValueError("Railway OAuth identity did not contain a subject")
         return subject

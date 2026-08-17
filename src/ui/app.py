@@ -2,7 +2,6 @@ import hmac
 import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import cast
 
 import httpx
 from fastapi import FastAPI, Request
@@ -11,7 +10,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ui.alpaca import PAPER_API_URL, AlpacaReadClient
-from ui.auth import IdentityClient, RailwayOAuthClient
+from ui.auth import RailwayOAuthClient
 from ui.config import WebSettings
 from ui.dashboard import NO_STORE, RuntimeStore, create_dashboard_router, error_response
 
@@ -26,20 +25,21 @@ class SessionGuardMiddleware:
         self._configuration = configuration
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        scope_type = scope["type"]
-        if scope_type not in {"http", "websocket"}:
-            await self._app(scope, receive, send)
-            return
-        path = scope["path"]
-        if scope_type == "http" and path in PUBLIC_PATHS:
+        if scope["type"] != "http" or scope["path"] in PUBLIC_PATHS:
             await self._app(scope, receive, send)
             return
         session = scope.get("session", {})
         subject = session.get("user_sub")
         if not isinstance(subject, str) or subject not in self._configuration.allowed_subjects:
-            await self._reject(scope, receive, send)
+            redirects = scope["method"] in {"GET", "HEAD"} and not scope["path"].startswith("/api/")
+            rejection: Response = (
+                RedirectResponse("/login", status_code=303, headers=NO_STORE)
+                if redirects
+                else error_response("Authentication is required", 401)
+            )
+            await rejection(scope, receive, send)
             return
-        if scope_type == "http" and scope["method"] not in SAFE_METHODS:
+        if scope["method"] not in SAFE_METHODS:
             csrf_token = session.get("csrf_token")
             request_token = dict(scope["headers"]).get(b"x-csrf-token", b"")
             if not isinstance(csrf_token, str) or not hmac.compare_digest(
@@ -51,36 +51,22 @@ class SessionGuardMiddleware:
                 return
         await self._app(scope, receive, send)
 
-    async def _reject(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] == "websocket":
-            await send({"type": "websocket.close", "code": 4401})
-            return
-        if scope["path"].startswith("/api/") or scope["method"] not in {"GET", "HEAD"}:
-            response: Response = error_response("Authentication is required", 401)
-        else:
-            response = RedirectResponse("/login", status_code=303, headers=NO_STORE)
-        await response(scope, receive, send)
 
-
-def create_app(
-    configuration: WebSettings | None = None,
-    identity_client: IdentityClient | None = None,
-) -> FastAPI:
-    web_configuration = configuration or WebSettings()  # pyright: ignore[reportCallIssue]
-    oauth_client = identity_client or RailwayOAuthClient(web_configuration)
+def create_app() -> FastAPI:
+    configuration = WebSettings()  # pyright: ignore[reportCallIssue]
+    oauth_client = RailwayOAuthClient(configuration)
     runtime_store = RuntimeStore()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, AlpacaReadClient]]:
-        timeout = httpx.Timeout(connect=1, read=3, write=3, pool=3)
         headers = {
-            "APCA-API-KEY-ID": web_configuration.alpaca_api_key.get_secret_value(),
-            "APCA-API-SECRET-KEY": web_configuration.alpaca_api_secret.get_secret_value(),
+            "APCA-API-KEY-ID": configuration.alpaca_api_key.get_secret_value(),
+            "APCA-API-SECRET-KEY": configuration.alpaca_api_secret.get_secret_value(),
         }
         async with httpx.AsyncClient(
             base_url=PAPER_API_URL,
             headers=headers,
-            timeout=timeout,
+            timeout=httpx.Timeout(connect=1, read=3, write=3, pool=3),
         ) as client:
             yield {"alpaca": AlpacaReadClient(client)}
 
@@ -91,35 +77,26 @@ def create_app(
         openapi_url=None,
         lifespan=lifespan,
     )
-    app.add_middleware(SessionGuardMiddleware, configuration=web_configuration)
+    app.add_middleware(SessionGuardMiddleware, configuration=configuration)
     app.add_middleware(
         SessionMiddleware,
-        secret_key=web_configuration.session_secret.get_secret_value(),
+        secret_key=configuration.session_secret.get_secret_value(),
         session_cookie="money_tree_session",
-        max_age=web_configuration.session_ttl_seconds,
+        max_age=configuration.session_ttl_seconds,
         same_site="lax",
         https_only=True,
     )
 
-    @app.exception_handler(httpx.TimeoutException)
-    async def upstream_timeout(_: Request, __: Exception) -> JSONResponse:
-        return error_response("Upstream read timed out", 504)
-
-    @app.exception_handler(httpx.HTTPStatusError)
-    async def upstream_status(_: Request, error: Exception) -> JSONResponse:
-        response = cast(httpx.HTTPStatusError, error).response
-        if response.status_code != 429:
+    @app.exception_handler(httpx.HTTPError)
+    async def upstream_failed(_: Request, error: Exception) -> JSONResponse:
+        if not isinstance(error, httpx.HTTPStatusError) or error.response.status_code != 429:
             return error_response("Upstream read failed", 502)
-        retry_after = response.headers.get("Retry-After", "60")[:40]
+        retry_after = error.response.headers.get("Retry-After", "60")[:40]
         return error_response(
             "Alpaca read limit was reached",
             503,
             {"Retry-After": retry_after},
         )
-
-    @app.exception_handler(httpx.HTTPError)
-    async def upstream_failed(_: Request, __: Exception) -> JSONResponse:
-        return error_response("Upstream read failed", 502)
 
     @app.get("/healthz")
     async def health() -> JSONResponse:
@@ -131,11 +108,7 @@ def create_app(
         request.session.clear()
         request.session["oauth_state"] = authorization.state
         request.session["oauth_verifier"] = authorization.verifier
-        return RedirectResponse(
-            authorization.url,
-            status_code=303,
-            headers=NO_STORE,
-        )
+        return RedirectResponse(authorization.url, status_code=303, headers=NO_STORE)
 
     @app.get("/auth/callback")
     async def callback(
@@ -146,26 +119,18 @@ def create_app(
     ) -> Response:
         expected_state = request.session.pop("oauth_state", None)
         verifier = request.session.pop("oauth_verifier", None)
+        request.session.clear()
         if error is not None:
-            request.session.clear()
             return error_response("Railway login was denied", 401)
-        if not isinstance(expected_state, str) or not isinstance(state, str):
-            request.session.clear()
+        if not isinstance(expected_state, str) or not isinstance(verifier, str) or state is None:
             return error_response("OAuth state is invalid", 400)
-        if not hmac.compare_digest(
-            expected_state.encode(),
-            state.encode(),
-        ) or not isinstance(verifier, str):
-            request.session.clear()
+        if not hmac.compare_digest(expected_state.encode(), state.encode()):
             return error_response("OAuth state is invalid", 400)
-        if not isinstance(code, str) or not code:
-            request.session.clear()
+        if not code:
             return error_response("OAuth code is missing", 400)
         subject = await oauth_client.identify(code, verifier)
-        if subject not in web_configuration.allowed_subjects:
-            request.session.clear()
+        if subject not in configuration.allowed_subjects:
             return error_response("Railway user is not allowed", 403)
-        request.session.clear()
         request.session["user_sub"] = subject
         request.session["csrf_token"] = secrets.token_urlsafe(32)
         return RedirectResponse("/", status_code=303, headers=NO_STORE)
@@ -175,12 +140,9 @@ def create_app(
         request.session.clear()
         return Response(
             status_code=204,
-            headers={
-                **NO_STORE,
-                "Clear-Site-Data": '"cache", "storage"',
-            },
+            headers={**NO_STORE, "Clear-Site-Data": '"cache", "storage"'},
         )
 
-    app.include_router(create_dashboard_router(web_configuration, runtime_store))
+    app.include_router(create_dashboard_router(configuration, runtime_store))
 
     return app
