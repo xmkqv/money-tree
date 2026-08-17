@@ -82,6 +82,8 @@ class StateExporter:
             self.pending.put_nowait(self._snapshot())
 
     def close(self, status: Literal["stopped", "failed"], message: str) -> None:
+        if self.stopping.is_set():
+            return
         level: EventLevel = "info" if status == "stopped" else "error"
         self.publish(status, status, level, message)
         self.stopping.set()

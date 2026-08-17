@@ -30,7 +30,7 @@ class SessionGuardMiddleware:
             return
         session = scope.get("session", {})
         subject = session.get("user_sub")
-        if not isinstance(subject, str) or subject not in self._configuration.allowed_subjects:
+        if not isinstance(subject, str) or subject not in self._configuration.allowed_railway_subs:
             redirects = scope["method"] in {"GET", "HEAD"} and not scope["path"].startswith("/api/")
             rejection: Response = (
                 RedirectResponse("/login", status_code=303, headers=NO_STORE)
@@ -125,7 +125,7 @@ def create_app() -> FastAPI:
         if not code:
             return error_response("OAuth code is missing", 400)
         subject = await oauth_client.identify(code, verifier)
-        if subject not in configuration.allowed_subjects:
+        if subject not in configuration.allowed_railway_subs:
             return error_response("Railway user is not allowed", 403)
         request.session["user_sub"] = subject
         request.session["csrf_token"] = secrets.token_urlsafe(32)

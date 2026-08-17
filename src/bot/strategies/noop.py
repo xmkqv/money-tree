@@ -1,16 +1,7 @@
-from typing import ClassVar
-
-from lumibot.strategies import Strategy as LumibotStrategy
-
-from bot.strategies.shared import RiskParameters
+from bot.strategies.shared import StrategyBase
 
 
-class Strategy(LumibotStrategy):
-    parameters: ClassVar[RiskParameters] = {
-        "risk_per_day_max": 0.02,
-        "risk_per_trade_max": 0.005,
-    }
-
+class Strategy(StrategyBase):
     def initialize(self) -> None:
         self.sleeptime = "1D"
 
