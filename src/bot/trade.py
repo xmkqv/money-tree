@@ -30,6 +30,9 @@ def run(strategy_name: str) -> None:
         if exporter is not None:
             exporter.publish("running", "run", "info", "Trading run is active")
         trader.run_all()
-    finally:
+    except BaseException:
         if exporter is not None:
             exporter.close("failed", "Trading run failed")
+        raise
+    if exporter is not None:
+        exporter.close("stopped", "Trading run stopped")
