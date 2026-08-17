@@ -52,17 +52,15 @@ class SessionGuardMiddleware:
 def create_app() -> FastAPI:
     configuration = WebSettings()  # pyright: ignore[reportCallIssue]
     oauth_client = RailwayOAuthClient(configuration)
-    runtime_store = RuntimeStore()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, AlpacaReadClient]]:
-        headers = {
-            "APCA-API-KEY-ID": configuration.alpaca_api_key.get_secret_value(),
-            "APCA-API-SECRET-KEY": configuration.alpaca_api_secret.get_secret_value(),
-        }
         async with httpx.AsyncClient(
             base_url=PAPER_API_URL,
-            headers=headers,
+            headers={
+                "APCA-API-KEY-ID": configuration.alpaca_api_key.get_secret_value(),
+                "APCA-API-SECRET-KEY": configuration.alpaca_api_secret.get_secret_value(),
+            },
             timeout=httpx.Timeout(connect=1, read=3, write=3, pool=3),
         ) as client:
             yield {"alpaca": AlpacaReadClient(client)}
@@ -131,6 +129,6 @@ def create_app() -> FastAPI:
             status_code=204, headers={**NO_STORE, "Clear-Site-Data": '"cache", "storage"'}
         )
 
-    app.include_router(create_dashboard_router(configuration, runtime_store))
+    app.include_router(create_dashboard_router(configuration, RuntimeStore()))
 
     return app

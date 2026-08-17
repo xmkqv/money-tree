@@ -26,30 +26,30 @@
     </section>
     <section id="equity-panel" class="panel wide">
       <div class="panel-heading"><h2>Equity and P&amp;L</h2><span class="freshness"></span></div>
-      <nav id="periods" aria-label="Chart period"><button type="button" data-period="1D" aria-pressed="true">1D</button><button type="button" data-period="1W" aria-pressed="false">1W</button><button type="button" data-period="1M" aria-pressed="false">1M</button><button type="button" data-period="1A" aria-pressed="false">1A</button></nav>
+      <div id="periods" role="group" aria-label="Chart period"><button type="button" data-period="1D" aria-pressed="true">1D</button><button type="button" data-period="1W" aria-pressed="false">1W</button><button type="button" data-period="1M" aria-pressed="false">1M</button><button type="button" data-period="1A" aria-pressed="false">1A</button></div>
       <div id="equity-chart" role="region" aria-label="Equity and profit and loss chart"></div>
     </section>
     <section id="positions-panel" class="panel wide">
       <div class="panel-heading"><h2>Positions</h2><span class="freshness"></span></div>
-      <div id="positions" aria-label="Positions"></div>
+      <div id="positions" role="region" aria-label="Positions"></div>
     </section>
     <section id="open-orders-panel" class="panel wide">
       <div class="panel-heading"><h2>Open orders</h2><span class="freshness"></span></div>
-      <div id="open-orders" aria-label="Open orders"></div>
+      <div id="open-orders" role="region" aria-label="Open orders"></div>
     </section>
     <section id="orders-panel" class="panel wide">
       <div class="panel-heading"><h2>Order history</h2><span class="freshness"></span></div>
-      <div id="orders" aria-label="Order history"></div>
+      <div id="orders" role="region" aria-label="Order history"></div>
       <div class="pager"><button type="button" data-page="orders-prev" disabled>Previous</button><span id="orders-page" aria-live="polite">Page 1</span><button type="button" data-page="orders-next" disabled>Next</button></div>
     </section>
     <section id="fills-panel" class="panel wide">
       <div class="panel-heading"><h2>Fill history</h2><span class="freshness"></span></div>
-      <div id="fills" aria-label="Fill history"></div>
+      <div id="fills" role="region" aria-label="Fill history"></div>
       <div class="pager"><button type="button" data-page="fills-prev" disabled>Previous</button><span id="fills-page" aria-live="polite">Page 1</span><button type="button" data-page="fills-next" disabled>Next</button></div>
     </section>
     <section id="events-panel" class="panel wide">
       <div class="panel-heading"><h2>Strategy events</h2><span class="freshness"></span></div>
-      <div id="events" aria-label="Strategy events"></div>
+      <div id="events" role="region" aria-label="Strategy events"></div>
     </section>
   </main>
 </body>
