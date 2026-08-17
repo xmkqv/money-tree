@@ -1,7 +1,7 @@
 import base64
 import hashlib
 import secrets
-from dataclasses import dataclass
+from typing import NamedTuple
 from urllib.parse import urlencode
 
 import httpx
@@ -14,11 +14,15 @@ TOKEN_URL = "https://backboard.railway.com/oauth/token"
 IDENTITY_URL = "https://backboard.railway.com/oauth/me"
 
 
-@dataclass(frozen=True, slots=True)
-class AuthorizationRequest:
+class AuthorizationRequest(NamedTuple):
     url: str
     state: str
     verifier: str
+
+
+class RailwayIdentity(NamedTuple):
+    subject: str
+    email: str
 
 
 class RailwayOAuthClient:
@@ -35,17 +39,15 @@ class RailwayOAuthClient:
                 "response_type": "code",
                 "client_id": self._configuration.railway_oauth_client_id,
                 "redirect_uri": str(self._configuration.railway_oauth_redirect_uri),
-                "scope": "openid",
+                "scope": "openid email",
                 "state": state,
                 "code_challenge": challenge,
                 "code_challenge_method": "S256",
             }
         )
-        return AuthorizationRequest(
-            url=f"{AUTHORIZATION_URL}?{query}", state=state, verifier=verifier
-        )
+        return AuthorizationRequest(f"{AUTHORIZATION_URL}?{query}", state, verifier)
 
-    async def identify(self, code: str, verifier: str) -> str:
+    async def identify(self, code: str, verifier: str) -> RailwayIdentity:
         configuration = self._configuration
         async with httpx.AsyncClient(timeout=10) as client:
             token = await client.post(
@@ -66,7 +68,8 @@ class RailwayOAuthClient:
                 IDENTITY_URL, headers={"Authorization": f"Bearer {token.json()['access_token']}"}
             )
             identity.raise_for_status()
-            subject = identity.json()["sub"]
-        if not isinstance(subject, str) or not subject:
-            raise ValueError("Railway OAuth identity did not contain a subject")
-        return subject
+            claims = identity.json()
+            subject, email = claims["sub"], claims["email"]
+        if not isinstance(subject, str) or not subject or not isinstance(email, str) or not email:
+            raise ValueError("Railway OAuth identity did not contain a subject and email")
+        return RailwayIdentity(subject, email)

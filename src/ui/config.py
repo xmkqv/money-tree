@@ -17,17 +17,16 @@ class WebSettings(BaseSettings):
     railway_oauth_client_id: str = Field(min_length=1)
     railway_oauth_client_secret: RequiredSecret
     railway_oauth_redirect_uri: AnyHttpUrl
-    allowed_railway_subs: Annotated[frozenset[str], NoDecode, Field(min_length=1)]
+    allowed_railway_emails: Annotated[frozenset[str], NoDecode, Field(min_length=1)]
     session_secret: SigningSecret
     session_ttl_seconds: int = Field(default=28_800, gt=0, le=86_400)
     alpaca_api_key: RequiredSecret
     alpaca_api_secret: RequiredSecret
     state_export_secret: SigningSecret
 
-    @field_validator("allowed_railway_subs", mode="before")
-    @classmethod
-    def split_subjects(cls, value: str) -> frozenset[str]:
-        return frozenset(subject.strip() for subject in value.split(",") if subject.strip())
+    @field_validator("allowed_railway_emails", mode="before")
+    def split_emails(cls, value: str) -> frozenset[str]:
+        return frozenset(email.strip().casefold() for email in value.split(",") if email.strip())
 
     @model_validator(mode="after")
     def validate_web_configuration(self) -> Self:

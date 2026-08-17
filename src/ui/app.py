@@ -20,17 +20,15 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 class SessionGuardMiddleware:
-    def __init__(self, app: ASGIApp, configuration: WebSettings) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         self._app = app
-        self._configuration = configuration
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["path"] in PUBLIC_PATHS:
             await self._app(scope, receive, send)
             return
         session = scope.get("session", {})
-        subject = session.get("user_sub")
-        if not isinstance(subject, str) or subject not in self._configuration.allowed_railway_subs:
+        if not isinstance(subject := session.get("user_sub"), str) or not subject:
             redirects = scope["method"] in {"GET", "HEAD"} and not scope["path"].startswith("/api/")
             rejection: Response = (
                 RedirectResponse("/login", status_code=303, headers=NO_STORE)
@@ -72,7 +70,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Money Tree", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
     )
-    app.add_middleware(SessionGuardMiddleware, configuration=configuration)
+    app.add_middleware(SessionGuardMiddleware)
     app.add_middleware(
         SessionMiddleware,
         secret_key=configuration.session_secret.get_secret_value(),
@@ -119,10 +117,10 @@ def create_app() -> FastAPI:
             return error_response("OAuth state is invalid", 400)
         if not code:
             return error_response("OAuth code is missing", 400)
-        subject = await oauth_client.identify(code, verifier)
-        if subject not in configuration.allowed_railway_subs:
+        identity = await oauth_client.identify(code, verifier)
+        if identity.email.strip().casefold() not in configuration.allowed_railway_emails:
             return error_response("Railway user is not allowed", 403)
-        request.session["user_sub"] = subject
+        request.session["user_sub"] = identity.subject
         request.session["csrf_token"] = secrets.token_urlsafe(32)
         return RedirectResponse("/", status_code=303, headers=NO_STORE)
 
