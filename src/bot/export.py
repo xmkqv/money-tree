@@ -12,25 +12,25 @@ import httpx
 from pydantic import UUID4, AwareDatetime, BaseModel, ConfigDict, Field
 
 
-LOGGER = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 EXPORT_INTERVAL_SECONDS = 5
 
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
 type EventLevel = Literal["info", "warning", "error"]
 
 
-class RuntimeEvent(BaseModel):
+class _RuntimeModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
+
+class RuntimeEvent(_RuntimeModel):
     kind: str = Field(min_length=1, max_length=100)
     occurred_at: AwareDatetime
     level: EventLevel
     message: str = Field(min_length=1, max_length=500)
 
 
-class RuntimeSnapshot(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
-
+class RuntimeSnapshot(_RuntimeModel):
     run_id: UUID4
     sequence: int = Field(ge=1)
     status: RunStatus
@@ -121,4 +121,4 @@ class StateExporter:
             )
             response.raise_for_status()
         except httpx.HTTPError as error:
-            LOGGER.warning("State export failed: %s", type(error).__name__)
+            logger.warning("State export failed: %s", type(error).__name__)
