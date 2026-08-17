@@ -76,7 +76,7 @@ class StateExporter:
         level: EventLevel = "info" if status == "stopped" else "error"
         self.publish(status, status, level, message)
         self.stopping.set()
-        self.thread.join(timeout=3)
+        self.thread.join(timeout=5)
 
     def _snapshot(self) -> RuntimeSnapshot:
         return RuntimeSnapshot(
