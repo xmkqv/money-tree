@@ -11,10 +11,7 @@ type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore",
-        frozen=True,
+        env_file=".env", env_file_encoding="utf-8", extra="ignore", frozen=True
     )
 
     strategy: str = "noop"

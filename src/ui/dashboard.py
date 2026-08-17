@@ -51,14 +51,10 @@ class RuntimeStore:
 
 
 def error_response(
-    detail: str,
-    status_code: int,
-    headers: dict[str, str] | None = None,
+    detail: str, status_code: int, headers: dict[str, str] | None = None
 ) -> JSONResponse:
     return JSONResponse(
-        {"detail": detail},
-        status_code=status_code,
-        headers={**NO_STORE, **(headers or {})},
+        {"detail": detail}, status_code=status_code, headers={**NO_STORE, **(headers or {})}
     )
 
 
@@ -140,8 +136,7 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
 
     @router.get("/api/equity")
     async def equity(
-        request: Request,
-        period: Literal["1D", "1W", "1M", "1A"] = "1D",
+        request: Request, period: Literal["1D", "1W", "1M", "1A"] = "1D"
     ) -> JSONResponse:
         return read_response(await alpaca(request).equity(period, PORTFOLIO_TIMEFRAMES[period]), 60)
 
