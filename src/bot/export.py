@@ -70,26 +70,22 @@ class StateExporter:
             self.events.append(
                 RuntimeEvent(
                     id=f"{self.run_id}:{self.sequence}",
-                    kind=kind[:100] or "event",
+                    kind=kind,
                     occurred_at=datetime.now(UTC),
                     level=level,
-                    message=message[:500] or "Runtime state changed",
+                    message=message,
                 )
             )
             self.events = self.events[-50:]
-            snapshot = self._snapshot()
-        self._replace_pending(snapshot)
+            with contextlib.suppress(queue.Empty):
+                self.pending.get_nowait()
+            self.pending.put_nowait(self._snapshot())
 
     def close(self, status: Literal["stopped", "failed"], message: str) -> None:
         level: EventLevel = "info" if status == "stopped" else "error"
         self.publish(status, status, level, message)
         self.stopping.set()
         self.thread.join(timeout=3)
-
-    def _heartbeat(self) -> RuntimeSnapshot:
-        with self.lock:
-            self.sequence += 1
-            return self._snapshot()
 
     def _snapshot(self) -> RuntimeSnapshot:
         return RuntimeSnapshot(
@@ -102,15 +98,6 @@ class StateExporter:
             events=list(self.events),
         )
 
-    def _replace_pending(self, snapshot: RuntimeSnapshot) -> None:
-        while True:
-            try:
-                self.pending.put_nowait(snapshot)
-                return
-            except queue.Full:
-                with contextlib.suppress(queue.Empty):
-                    self.pending.get_nowait()
-
     def _export(self) -> None:
         with httpx.Client(timeout=1.0) as client:
             while True:
@@ -119,7 +106,9 @@ class StateExporter:
                 except queue.Empty:
                     if self.stopping.is_set():
                         return
-                    snapshot = self._heartbeat()
+                    with self.lock:
+                        self.sequence += 1
+                        snapshot = self._snapshot()
                 self._send(client, snapshot)
                 if self.stopping.is_set() and self.pending.empty():
                     return
@@ -141,7 +130,4 @@ class StateExporter:
             )
             response.raise_for_status()
         except httpx.HTTPError as error:
-            now = time.monotonic()
-            if now - self.last_error_log >= ERROR_LOG_INTERVAL_SECONDS:
-                LOGGER.warning("State export failed: %s", type(error).__name__)
-                self.last_error_log = now
+            LOGGER.warning("State export failed: %s", type(error).__name__)

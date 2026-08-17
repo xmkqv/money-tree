@@ -18,20 +18,18 @@ DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.v1.html").read_bytes()
 DASHBOARD_CSS = (ASSET_DIRECTORY / "dashboard.v1.css").read_bytes()
 DASHBOARD_JAVASCRIPT = (ASSET_DIRECTORY / "dashboard.v1.js").read_bytes()
 NO_STORE = {"Cache-Control": "no-store"}
+IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
 HEARTBEAT_TIMEOUT = timedelta(seconds=15)
+SIGNATURE_WINDOW_SECONDS = 30
 PORTFOLIO_TIMEFRAMES = {"1D": "5Min", "1W": "15Min", "1M": "1D", "1A": "1D"}
-CONTENT_SECURITY_POLICY = "; ".join(
-    (
-        "default-src 'self'",
-        "script-src 'self' https://unpkg.com",
-        "style-src 'self' https://unpkg.com",
-        "connect-src 'self'",
-        "img-src 'self' data:",
-        "object-src 'none'",
-        "base-uri 'none'",
-        "frame-ancestors 'none'",
-    )
-)
+DASHBOARD_HEADERS = {
+    "Cache-Control": "private, no-cache",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self' https://unpkg.com; "
+        "style-src 'self' https://unpkg.com; connect-src 'self'; img-src 'self' data:; "
+        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    ),
+}
 
 
 class RuntimeStore:
@@ -92,30 +90,15 @@ def create_dashboard_router(
 
     @router.get("/")
     async def dashboard() -> Response:
-        return Response(
-            DASHBOARD_HTML,
-            media_type="text/html",
-            headers={
-                "Cache-Control": "private, no-cache",
-                "Content-Security-Policy": CONTENT_SECURITY_POLICY,
-            },
-        )
+        return Response(DASHBOARD_HTML, media_type="text/html", headers=DASHBOARD_HEADERS)
 
     @router.get("/assets/dashboard.v1.css")
     async def dashboard_css() -> Response:
-        return Response(
-            DASHBOARD_CSS,
-            media_type="text/css",
-            headers={"Cache-Control": "public, max-age=31536000, immutable"},
-        )
+        return Response(DASHBOARD_CSS, media_type="text/css", headers=IMMUTABLE)
 
     @router.get("/assets/dashboard.v1.js")
     async def dashboard_javascript() -> Response:
-        return Response(
-            DASHBOARD_JAVASCRIPT,
-            media_type="text/javascript",
-            headers={"Cache-Control": "public, max-age=31536000, immutable"},
-        )
+        return Response(DASHBOARD_JAVASCRIPT, media_type="text/javascript", headers=IMMUTABLE)
 
     @router.get("/api/session")
     async def session(request: Request) -> JSONResponse:
@@ -193,12 +176,6 @@ def create_dashboard_router(
 
     @router.post("/internal/state", status_code=204)
     async def publish_runtime(request: Request) -> Response:
-        content_length = request.headers.get("Content-Length", "")
-        if content_length:
-            if not (content_length.isascii() and content_length.isdecimal()):
-                return error_response("Content length is invalid", 400)
-            if int(content_length) > 65_536:
-                return error_response("Runtime snapshot is too large", 413)
         chunks: list[bytes] = []
         size = 0
         async for chunk in request.stream():
@@ -210,34 +187,25 @@ def create_dashboard_router(
         timestamp_text = request.headers.get("X-State-Timestamp", "")
         signature = request.headers.get("X-State-Signature", "")
         if not (
-            1 <= len(timestamp_text) <= 10
-            and timestamp_text.isascii()
-            and timestamp_text.isdecimal()
+            len(timestamp_text) <= 10 and timestamp_text.isascii() and timestamp_text.isdecimal()
         ):
             return error_response("Runtime signature is invalid", 401)
-        timestamp = int(timestamp_text)
-        signed_at = datetime.fromtimestamp(timestamp, UTC)
-        if abs((datetime.now(UTC) - signed_at).total_seconds()) > 30:
+        signed_at = datetime.fromtimestamp(int(timestamp_text), UTC)
+        if abs((datetime.now(UTC) - signed_at).total_seconds()) > SIGNATURE_WINDOW_SECONDS:
             return error_response("Runtime signature has expired", 401)
-        signed = timestamp_text.encode() + b"." + body
-        expected = (
-            hmac.digest(
-                configuration.state_export_secret.get_secret_value().encode(),
-                signed,
-                "sha256",
-            )
-            .hex()
-            .encode()
-        )
-        if not hmac.compare_digest(expected, signature.encode()):
+        expected = hmac.digest(
+            configuration.state_export_secret.get_secret_value().encode(),
+            timestamp_text.encode() + b"." + body,
+            "sha256",
+        ).hex()
+        if not hmac.compare_digest(expected.encode(), signature.encode()):
             return error_response("Runtime signature is invalid", 401)
         try:
             snapshot = RuntimeSnapshot.model_validate_json(body)
         except ValidationError:
             return error_response("Runtime snapshot is invalid", 422)
-        if snapshot.started_at > snapshot.heartbeat_at:
-            return error_response("Runtime snapshot is invalid", 422)
-        if abs((snapshot.heartbeat_at - signed_at).total_seconds()) > 30:
+        drift = abs((snapshot.heartbeat_at - signed_at).total_seconds())
+        if snapshot.started_at > snapshot.heartbeat_at or drift > SIGNATURE_WINDOW_SECONDS:
             return error_response("Runtime snapshot is invalid", 422)
         if not runtime_store.publish(snapshot):
             return error_response("Runtime snapshot is not new", 409)

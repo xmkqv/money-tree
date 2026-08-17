@@ -13,10 +13,6 @@ class Strategy(LumibotStrategy):
 
     def initialize(self) -> None:
         self.sleeptime = "1D"
-        self.risk_limits: RiskParameters = {
-            "risk_per_day_max": float(self.parameters["risk_per_day_max"]),
-            "risk_per_trade_max": float(self.parameters["risk_per_trade_max"]),
-        }
 
     def on_trading_iteration(self) -> None:
         return
