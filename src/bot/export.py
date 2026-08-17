@@ -14,7 +14,6 @@ from pydantic import UUID4, AwareDatetime, BaseModel, ConfigDict, Field
 
 LOGGER = logging.getLogger(__name__)
 EXPORT_INTERVAL_SECONDS = 5
-ERROR_LOG_INTERVAL_SECONDS = 60
 
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
 type EventLevel = Literal["info", "warning", "error"]
@@ -33,7 +32,6 @@ class RuntimeEvent(BaseModel):
 class RuntimeSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    schema_version: Literal[1] = 1
     run_id: UUID4
     sequence: int = Field(ge=1)
     status: RunStatus
@@ -47,7 +45,7 @@ class StateExporter:
     def __init__(self, url: str, secret: str, strategy: str) -> None:
         self.url = url
         self.secret = secret.encode()
-        self.strategy = strategy[:100] or "unknown"
+        self.strategy = strategy
         self.run_id = uuid4()
         self.started_at = datetime.now(UTC)
         self.status: RunStatus = "starting"
@@ -56,7 +54,6 @@ class StateExporter:
         self.pending: queue.Queue[RuntimeSnapshot] = queue.Queue(maxsize=1)
         self.stopping = threading.Event()
         self.lock = threading.Lock()
-        self.last_error_log = -ERROR_LOG_INTERVAL_SECONDS
         self.thread = threading.Thread(
             target=self._export,
             name="state-exporter",
