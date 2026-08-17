@@ -1,6 +1,6 @@
 [build]
-builder = "RAILPACK"
-watchPatterns = ["/src/bot/**", "/src/cli/**", "/pyproject.toml", "/uv.lock", "/mise.toml", "/railway.toml"]
+builder = "DOCKERFILE"
+watchPatterns = ["/src/bot/**", "/src/cli/**", "/pyproject.toml", "/uv.lock", "/Dockerfile", "/railway.toml"]
 
 [deploy]
 startCommand = 'uv run --locked --no-sync mt trade --strategy "$STRATEGY"'

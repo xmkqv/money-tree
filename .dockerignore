@@ -1,0 +1,5 @@
+.env
+.git
+.ruff_cache
+.venv
+logs
