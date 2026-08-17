@@ -44,7 +44,6 @@ uvicorn ui.app:create_app --factory --workers 1 --host "" --port "$PORT"
 - `railway.toml` runs the bot
 - `railway.web.toml` runs the web service on one replica
 - the bot reaches the web service on the Railway private domain
-- the web service reads Alpaca with its own paper credential
 
 # state
 
