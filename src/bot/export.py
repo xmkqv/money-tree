@@ -22,7 +22,6 @@ type EventLevel = Literal["info", "warning", "error"]
 class RuntimeEvent(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
-    id: str = Field(min_length=1, max_length=100)
     kind: str = Field(min_length=1, max_length=100)
     occurred_at: AwareDatetime
     level: EventLevel
@@ -69,7 +68,6 @@ class StateExporter:
             self.sequence += 1
             self.events.append(
                 RuntimeEvent(
-                    id=f"{self.run_id}:{self.sequence}",
                     kind=kind,
                     occurred_at=datetime.now(UTC),
                     level=level,

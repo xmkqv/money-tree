@@ -50,13 +50,6 @@ class RuntimeStore:
         return self._snapshot
 
 
-def cache_headers(max_age: int) -> dict[str, str]:
-    return {
-        "Cache-Control": f"private, max-age={max_age}, must-revalidate",
-        "Vary": "Cookie",
-    }
-
-
 def error_response(
     detail: str,
     status_code: int,
@@ -71,7 +64,10 @@ def error_response(
 
 def read_response(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
     content = {"data": data, "read_at": datetime.now(UTC), **metadata}
-    return JSONResponse(jsonable_encoder(content), headers=cache_headers(max_age))
+    return JSONResponse(
+        jsonable_encoder(content),
+        headers={"Cache-Control": f"private, max-age={max_age}, must-revalidate", "Vary": "Cookie"},
+    )
 
 
 def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeStore) -> APIRouter:

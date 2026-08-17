@@ -22,7 +22,7 @@
     line-height: 1.5;
   }
   body { min-width: 320px; }
-  header, main { margin: auto; max-width: 1440px; position: relative; }
+  header, main { margin: auto; max-width: 1440px; }
   header { align-items: end; display: flex; justify-content: space-between; padding: 34px 28px 20px; }
   h1 { font-family: Georgia, serif; font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 500; }
   h2 { font-size: .88rem; letter-spacing: .08em; text-transform: uppercase; }

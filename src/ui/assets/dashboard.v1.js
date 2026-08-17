@@ -8,7 +8,7 @@ const money = value => value == null ? "—" : new Intl.NumberFormat("en-US", { 
 const number = value => value == null ? "—" : new Intl.NumberFormat("en-US", { maximumFractionDigits: 6 }).format(Number(value));
 const text = value => value ?? "—";
 const timeText = value => value ? new Date(value).toLocaleString() : "—";
-const createTable = (selector, fields) => new Tabulator(selector, { data: [], layout: "fitColumns", responsiveLayout: "collapse", columnDefaults: { minWidth: 80 }, placeholder: "No records", columns: fields.map(([title, field, formatter]) => ({ title, field, formatter, headerFilter: "input" })) });
+const createTable = (selector, fields) => new Tabulator(selector, { data: [], layout: "fitColumns", responsiveLayout: "collapse", columnDefaults: { minWidth: 80 }, placeholder: "No records", columns: fields.map(([title, field]) => ({ title, field, headerFilter: "input" })) });
 
 function showReadStatus(panelId, payload, error) {
   const panel = document.getElementById(panelId);
