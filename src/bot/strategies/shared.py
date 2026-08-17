@@ -21,7 +21,7 @@ class StrategyBase(LumibotStrategy):
 
 
 def load_strategy(name: str) -> type[StrategyBase]:
-    strategy = import_module(f"bot.strategies.{name}").Strategy
-    if not isinstance(strategy, type) or not issubclass(strategy, StrategyBase):
+    strategy_class = import_module(f"bot.strategies.{name}").Strategy
+    if not isinstance(strategy_class, type) or not issubclass(strategy_class, StrategyBase):
         raise TypeError(f"bot.strategies.{name}.Strategy must subclass StrategyBase")
-    return strategy
+    return strategy_class

@@ -4,7 +4,7 @@ from typing import Any
 from bot.strategies.shared import StrategyBase
 
 
-type Series = Any
+type PriceSeries = Any
 
 LOOKBACK = 260
 MIN_BARS = 205
@@ -12,38 +12,38 @@ PERIOD = 14
 STOP_MULTIPLE = 1.5
 
 
-def _wilder(values: Series, period: int) -> Series:
-    observed: Series = values.dropna().astype(float)
-    seeded: Series = observed.copy()
+def _wilder(values: PriceSeries, period: int) -> PriceSeries:
+    observed: PriceSeries = values.dropna().astype(float)
+    seeded: PriceSeries = observed.copy()
     seeded.iloc[: period - 1] = float("nan")
     seeded.iloc[period - 1] = observed.iloc[:period].mean()
     return seeded.ewm(alpha=1.0 / period, adjust=False).mean()
 
 
-def _rsi(close: Series, period: int) -> Series:
-    delta: Series = close.diff().dropna()
-    gain: Series = _wilder(delta.clip(lower=0.0), period)
-    loss: Series = _wilder((-delta).clip(lower=0.0), period)
+def _rsi(close: PriceSeries, period: int) -> PriceSeries:
+    delta: PriceSeries = close.diff().dropna()
+    gain: PriceSeries = _wilder(delta.clip(lower=0.0), period)
+    loss: PriceSeries = _wilder((-delta).clip(lower=0.0), period)
     return 100.0 - 100.0 / (1.0 + gain / loss)
 
 
-def _true_range(high: Series, low: Series, close: Series) -> Series:
-    previous: Series = close.shift(1)
-    high_gap: Series = (high - previous).abs()
-    low_gap: Series = (low - previous).abs()
-    widest: Series = high - low
+def _true_range(high: PriceSeries, low: PriceSeries, close: PriceSeries) -> PriceSeries:
+    previous: PriceSeries = close.shift(1)
+    high_gap: PriceSeries = (high - previous).abs()
+    low_gap: PriceSeries = (low - previous).abs()
+    widest: PriceSeries = high - low
     widest = widest.where(widest >= high_gap, high_gap)
     return widest.where(widest >= low_gap, low_gap).dropna()
 
 
-def _adx(high: Series, low: Series, close: Series, period: int) -> Series:
-    average_range: Series = _wilder(_true_range(high, low, close), period)
-    up: Series = high.diff().dropna()
-    down: Series = (-low.diff()).dropna()
-    rising: Series = _wilder(up.where((up > down) & (up > 0.0), 0.0), period)
-    falling: Series = _wilder(down.where((down > up) & (down > 0.0), 0.0), period)
-    plus: Series = 100.0 * rising / average_range
-    minus: Series = 100.0 * falling / average_range
+def _adx(high: PriceSeries, low: PriceSeries, close: PriceSeries, period: int) -> PriceSeries:
+    average_range: PriceSeries = _wilder(_true_range(high, low, close), period)
+    up: PriceSeries = high.diff().dropna()
+    down: PriceSeries = (-low.diff()).dropna()
+    rising: PriceSeries = _wilder(up.where((up > down) & (up > 0.0), 0.0), period)
+    falling: PriceSeries = _wilder(down.where((down > up) & (down > 0.0), 0.0), period)
+    plus: PriceSeries = 100.0 * rising / average_range
+    minus: PriceSeries = 100.0 * falling / average_range
     return _wilder(100.0 * (plus - minus).abs() / (plus + minus), period)
 
 
@@ -63,13 +63,13 @@ class Strategy(StrategyBase):
 
     def _trade(self, symbol: str, fraction: float) -> None:
         bars: Any = self.get_historical_prices(symbol, LOOKBACK, "day")
-        frame: Series = None if bars is None else bars.df
+        frame: PriceSeries = None if bars is None else bars.df
         if frame is None or len(frame) < MIN_BARS:
             return
-        high: Series = frame["high"]
-        low: Series = frame["low"]
-        close: Series = frame["close"]
-        sma20: Series = close.rolling(20).mean()
+        high: PriceSeries = frame["high"]
+        low: PriceSeries = frame["low"]
+        close: PriceSeries = frame["close"]
+        sma20: PriceSeries = close.rolling(20).mean()
         last = float(close.iloc[-1])
         trend = float(sma20.iloc[-1])
         strength = float(_rsi(close, PERIOD).iloc[-1])

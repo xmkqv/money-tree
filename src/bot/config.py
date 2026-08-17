@@ -29,8 +29,7 @@ class Settings(BaseSettings):
     def validate_limits(self) -> Self:
         if self.risk_per_trade_max > self.risk_per_day_max:
             raise ValueError("risk per trade must not exceed risk per day")
-        export_values = (self.state_export_url, self.state_export_secret)
-        if any(export_values) and not all(export_values):
+        if (self.state_export_url is None) != (self.state_export_secret is None):
             raise ValueError("state export URL and secret must be set together")
         return self
 
