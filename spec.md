@@ -5,6 +5,17 @@ refs:
     - [env](./.env.example)
 ---
 
+names:
+    Alpaca: Proper name of the brokerage service
+    backtest: Project term for evaluation of a strategy with historical data
+    Lumibot: Proper name of the strategy execution framework
+    money-tree: Project-owned name of the trading system
+    MT: Money Tree
+    Railway: Proper name of the deployment platform
+    strategy: Project term for rules that select market actions
+    trade: Project term for a market transaction
+    Yahoo: Proper name of the market-data service
+
 # code
 
 ```sh
@@ -60,9 +71,9 @@ uvicorn ui.app:create_app --factory --workers 1 --host "" --port "$PORT"
 - the dashboard reads each URL separately
 - FastAPI keeps no broker cache and starts no broker poller
 
-| response | browser lifetime |
-| --- | ---: |
-| account, positions, open orders, run, events | 5 seconds |
-| newest closed orders and fills | 15 seconds |
-| historical order and fill pages | 5 minutes |
-| equity and P&L history | 1 minute |
+| response                                     | browser lifetime |
+|----------------------------------------------|-----------------:|
+| account, positions, open orders, run, events |        5 seconds |
+| newest closed orders and fills               |       15 seconds |
+| historical order and fill pages              |        5 minutes |
+| equity and P&L history                       |         1 minute |
