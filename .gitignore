@@ -13,3 +13,4 @@ wheels/
 .env.*
 !.env.example
 data/
+logs/
