@@ -27,7 +27,7 @@
   h1 { font-family: Georgia, serif; font-size: clamp(2rem, 5vw, 3.5rem); font-weight: 500; }
   h2 { font-size: .88rem; letter-spacing: .08em; text-transform: uppercase; }
   button { background: var(--raised); border: 1px solid var(--line); border-radius: 999px; color: var(--ink); cursor: pointer; font: inherit; padding: 8px 14px; }
-  button:hover, button[aria-pressed="true"] { background: var(--accent); color: var(--canvas); }
+  button:hover:not(:disabled), button[aria-pressed="true"] { background: var(--accent); color: var(--canvas); }
   button:focus-visible { outline: 3px solid var(--warning); outline-offset: 2px; }
   button:disabled { cursor: default; opacity: .35; }
   main { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 0 28px 48px; }
@@ -54,8 +54,8 @@
 @layer responsive {
   @media (max-width: 720px) {
     header { align-items: start; }
-    main { display: block; padding-inline: 12px; }
-    .panel { margin-bottom: 12px; padding: 13px; }
+    main { grid-template-columns: 1fr; padding-inline: 12px; }
+    .panel { grid-column: auto; padding: 13px; }
     .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
 }
