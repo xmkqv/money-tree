@@ -36,25 +36,15 @@ src/
 
 # deploy
 
+[bot](./railway.toml) → [web](./railway.web.toml)
+
 ```sh
 mt trade --strategies "$STRATEGIES"
 mt backtest --strategy "${STRATEGIES%%,*}" --start 2023-01-01 --end 2024-01-01
 uvicorn ui.app:create_app --factory --workers 1 --host "" --port "$PORT"
 ```
 
-- `railway.toml` runs the bot
-- `railway.web.toml` runs the web service on one replica
-- the bot reaches the web service on the Railway private domain
-
-# state
-
-- the bot sends its newest signed snapshot with at most 50 events outside the trading path
-- the web boundary rejects oversized, expired, invalid, or repeated snapshots
-- the live runner reads comma-separated `STRATEGIES` and uses one portfolio strategy
-
 # dashboard
-
-- the dashboard reads each URL separately
 
 | response                                     | browser lifetime |
 |----------------------------------------------|-----------------:|
