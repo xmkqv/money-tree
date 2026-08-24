@@ -49,12 +49,26 @@ class StateExporter:
     def start(self) -> None:
         self.thread.start()
 
-    def publish(self, status: RunStatus, kind: str, level: EventLevel, message: str) -> None:
+    def publish(
+        self,
+        status: RunStatus,
+        kind: str,
+        level: EventLevel,
+        message: str,
+        *,
+        strategy: str | None = None,
+    ) -> None:
         with self.lock:
             self.status = status
             self.sequence += 1
             self.events.append(
-                RuntimeEvent(kind=kind, occurred_at=datetime.now(UTC), level=level, message=message)
+                RuntimeEvent(
+                    kind=kind,
+                    occurred_at=datetime.now(UTC),
+                    level=level,
+                    message=message,
+                    strategy=strategy,
+                )
             )
             self.events = self.events[-50:]
             with contextlib.suppress(queue.Empty):

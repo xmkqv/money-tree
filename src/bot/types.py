@@ -92,6 +92,7 @@ class RuntimeEvent(_StrictModel):
     occurred_at: AwareDatetime
     level: EventLevel
     message: str = Field(min_length=1, max_length=500)
+    strategy: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 class RuntimeSnapshot(_StrictModel):

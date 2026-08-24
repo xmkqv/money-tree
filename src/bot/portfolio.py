@@ -16,6 +16,7 @@ from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.requests import GetOrdersRequest
 from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
+from bot.attribution import STRATEGY_CODES, find_order_strategy
 from bot.config import settings
 from bot.strategies.base import StrategyBase
 from bot.strategies.orb_base import relative_volume_ready
@@ -35,21 +36,13 @@ from bot.strategies.shared import (
     signal_exit,
     tfb_entry,
 )
-from bot.types import EventLevel, StrategyName
+from bot.types import STRATEGY_LABELS, EventLevel, StrategyName
 
 
 FIVE_MINUTES = TimeFrame(5, cast(TimeFrameUnit, TimeFrameUnit.Minute))
 TEN_MINUTES = TimeFrame(10, cast(TimeFrameUnit, TimeFrameUnit.Minute))
 UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
 PREPARATION_ATTEMPTS_MAX = 2
-ENGINE_CODES: dict[StrategyName, str] = {
-    "noop": "n",
-    "orb": "o",
-    "sma": "s",
-    "tfb_50": "t",
-    "orb_momentum": "m",
-}
-CODES_ENGINE: dict[str, StrategyName] = {code: name for name, code in ENGINE_CODES.items()}
 
 
 @dataclass(slots=True)
@@ -183,12 +176,19 @@ class Strategy(StrategyBase):
         elif asset in self._holdings:
             self._protect(self._holdings[asset], remaining)
 
-    def _event(self, key: str, level: EventLevel, message: str) -> None:
+    def _event(
+        self,
+        key: str,
+        level: EventLevel,
+        message: str,
+        strategy: StrategyName | None = None,
+    ) -> None:
         if key in self._events:
             return
         self._events.add(key)
         if self.exporter is not None:
-            self.exporter.publish("running", key, level, message)
+            label = None if strategy is None else STRATEGY_LABELS[strategy]
+            self.exporter.publish("running", key, level, message, strategy=label)
 
     def _begin_day(self, day: date) -> None:
         if day == self._day:
@@ -294,6 +294,7 @@ class Strategy(StrategyBase):
                     f"exit-only-{engine}",
                     "warning",
                     f"{engine} is managing existing positions only",
+                    engine,
                 )
         self._restored = True
 
@@ -519,6 +520,7 @@ class Strategy(StrategyBase):
                     f"earnings-{symbol}",
                     "error",
                     f"Earnings calendar unavailable for {symbol}: {type(error).__name__}",
+                    "sma",
                 )
                 continue
             if blocked:
@@ -683,6 +685,7 @@ class Strategy(StrategyBase):
                 f"earnings-{holding.signal}",
                 "error",
                 f"Earnings calendar unavailable for {holding.signal}: {type(error).__name__}",
+                holding.engine,
             )
             exit_for_earnings = False
         if exit_for_earnings and now.time() >= time(15, 50):
@@ -776,6 +779,7 @@ class Strategy(StrategyBase):
                     f"short-{asset}-{now.date()}",
                     "warning",
                     f"Short entry skipped for {asset}: security is not shortable",
+                    engine,
                 )
                 return False
         account = self.broker.api.get_account()
@@ -916,11 +920,10 @@ class Strategy(StrategyBase):
 
     def _order_id(self, engine: StrategyName, kind: str, signal: str, risk: float) -> str:
         scaled = round(risk * 1_000_000)
-        return f"mt-{ENGINE_CODES[engine]}-{kind}-{signal}-{scaled}-{uuid4().hex[:8]}"
+        return f"mt-{STRATEGY_CODES[engine]}-{kind}-{signal}-{scaled}-{uuid4().hex[:8]}"
 
     def _order_engine(self, value: str) -> StrategyName | None:
-        parts = value.split("-")
-        return CODES_ENGINE.get(parts[1]) if len(parts) == 6 and parts[0] == "mt" else None
+        return find_order_strategy(value)
 
     def _order_signal(self, value: str) -> str | None:
         parts = value.split("-")

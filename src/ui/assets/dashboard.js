@@ -12,6 +12,7 @@ const formatPercent = value => value == null ? "—" : percentFormatter.format(N
 const formatText = value => value ?? "—";
 const formatTime = value => value ? new Date(value).toLocaleString() : "—";
 const formatToggle = value => value == null ? "—" : value ? "Enabled" : "Disabled";
+const withStrategy = (rows, fallback = "—") => rows.map(row => ({ ...row, strategy: row.strategy ?? fallback }));
 const createTextElement = (tag, text) => Object.assign(document.createElement(tag), { textContent: text });
 const createTable = (selector, fields) => new Tabulator(selector, { data: [], layout: "fitColumns", responsiveLayout: "collapse", columnDefaults: { minWidth: 80 }, placeholder: "No records", columns: fields.map(([title, field]) => ({ title, field, headerFilter: "input" })) });
 function renderPanelStatus(panelIds, payload, error) {
@@ -61,11 +62,11 @@ function renderConfiguration(data) {
   if (!data) { document.getElementById("configuration").textContent = "No runtime snapshot"; return; }
   renderMetrics(document.getElementById("configuration"), data.configuration, [["Trade risk", "risk_per_trade_max", formatPercent], ["Daily loss limit", "risk_per_day_max", formatPercent], ["Fractional orders", "fractional_orders", formatToggle], ["Position cap", "position_fraction_max", formatPercent]]);
 }
-const positionTable = createTable("#positions", [["Symbol", "symbol"], ["Side", "side"], ["Quantity", "qty"], ["Entry", "avg_entry_price"], ["Price", "current_price"], ["Market value", "market_value"], ["Unrealized P&L", "unrealized_pl"]]);
-const openOrderTable = createTable("#open-orders", [["Submitted", "submitted_at"], ["Symbol", "symbol"], ["Side", "side"], ["Type", "type"], ["Quantity", "qty"], ["Filled", "filled_qty"], ["Status", "status"]]);
-const orderTable = createTable("#orders", [["Submitted", "submitted_at"], ["Symbol", "symbol"], ["Side", "side"], ["Type", "type"], ["Quantity", "qty"], ["Filled", "filled_qty"], ["Status", "status"]]);
-const fillTable = createTable("#fills", [["Time", "transaction_time"], ["Symbol", "symbol"], ["Side", "side"], ["Quantity", "qty"], ["Price", "price"], ["Order", "order_id"]]);
-const eventTable = createTable("#events", [["Time", "occurred_at"], ["Level", "level"], ["Kind", "kind"], ["Message", "message"]]);
+const positionTable = createTable("#positions", [["Symbol", "symbol"], ["Strategy", "strategy"], ["Side", "side"], ["Quantity", "qty"], ["Entry", "avg_entry_price"], ["Price", "current_price"], ["Market value", "market_value"], ["Unrealized P&L", "unrealized_pl"]]);
+const openOrderTable = createTable("#open-orders", [["Submitted", "submitted_at"], ["Symbol", "symbol"], ["Strategy", "strategy"], ["Side", "side"], ["Type", "type"], ["Quantity", "qty"], ["Filled", "filled_qty"], ["Status", "status"]]);
+const orderTable = createTable("#orders", [["Submitted", "submitted_at"], ["Symbol", "symbol"], ["Strategy", "strategy"], ["Side", "side"], ["Type", "type"], ["Quantity", "qty"], ["Filled", "filled_qty"], ["Status", "status"]]);
+const fillTable = createTable("#fills", [["Time", "transaction_time"], ["Symbol", "symbol"], ["Strategy", "strategy"], ["Side", "side"], ["Quantity", "qty"], ["Price", "price"], ["Order", "order_id"]]);
+const eventTable = createTable("#events", [["Time", "occurred_at"], ["Strategy", "strategy"], ["Level", "level"], ["Kind", "kind"], ["Message", "message"]]);
 const chart = LightweightCharts.createChart(document.getElementById("equity-chart"), { autoSize: true, layout: { attributionLogo: true, background: { color: "transparent" }, textColor: "#8fa69a" }, grid: { vertLines: { color: "#172a21" }, horzLines: { color: "#172a21" } } });
 const equitySeries = chart.addSeries(LightweightCharts.AreaSeries, { lineColor: "#6ee7a5", topColor: "#245f42aa", bottomColor: "#245f4200", title: "Equity" });
 const profitSeries = chart.addSeries(LightweightCharts.LineSeries, { color: "#f4c66d", priceScaleId: "pnl", title: "P&L" });
@@ -85,7 +86,7 @@ function refreshPage(name) {
   return refreshPanel(page.url, `${name}-panel`, rows => {
     state.rowCount = rows.length;
     state.rows = rows[0]?.id === page.cursor ? rows.slice(1) : rows;
-    target.replaceData(state.rows);
+    target.replaceData(withStrategy(state.rows));
     document.getElementById(`${name}-page`).textContent = `Page ${state.index + 1}`;
   }).finally(() => { previous.disabled = state.index === 0; next.disabled = state.rowCount < 100; });
 }
@@ -101,10 +102,10 @@ function changePage(name, direction) {
 }
 const jobs = [
   [5000, () => refreshPanel("/api/account", "account-panel", data => renderMetrics(document.getElementById("account"), data, [["Account ID", "id", formatText], ["Portfolio value", "portfolio_value", formatMoney], ["Cash", "cash", formatMoney], ["Buying power", "buying_power", formatMoney], ["Equity", "equity", formatMoney], ["Last equity", "last_equity", formatMoney], ["Day trades", "daytrade_count", formatNumber], ["Status", "status", formatText], ["Currency", "currency", formatText]]))],
-  [5000, () => refreshPanel("/api/positions", "positions-panel", rows => positionTable.replaceData(rows))],
-  [5000, () => refreshPanel("/api/orders/open", "open-orders-panel", rows => openOrderTable.replaceData(rows))],
+  [5000, () => refreshPanel("/api/positions", "positions-panel", rows => positionTable.replaceData(withStrategy(rows)))],
+  [5000, () => refreshPanel("/api/orders/open", "open-orders-panel", rows => openOrderTable.replaceData(withStrategy(rows)))],
   [5000, () => refreshPanel("/api/run", ["run-panel", "configuration-panel"], (data, payload) => { renderRun(data, payload); renderConfiguration(data); })],
-  [5000, () => refreshPanel("/api/events?limit=50", "events-panel", rows => eventTable.replaceData(rows))],
+  [5000, () => refreshPanel("/api/events?limit=50", "events-panel", rows => eventTable.replaceData(withStrategy(rows, "Portfolio")))],
   [15000, () => refreshPage("orders")], [15000, () => refreshPage("fills")],
   [60000, () => refreshPanel(`/api/equity?period=${document.querySelector("#periods [aria-pressed=true]").dataset.period}`, "equity-panel", renderEquity)],
 ].map(([delayMs, run]) => ({ delayMs, run, nextAt: 0 }));
