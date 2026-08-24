@@ -27,9 +27,9 @@ src/
         trade.py
     ui/
         assets/
-            dashboard.v3.html
-            dashboard.v3.css
-            dashboard.v3.js
+            dashboard.html
+            dashboard.css
+            dashboard.js
         alpaca.py
         dashboard.py
         config.py
