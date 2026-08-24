@@ -3,57 +3,91 @@ from pathlib import Path
 from sys import stdout
 from typing import Any, cast
 
+import numpy as np
 import pandas as pd
 from arch.bootstrap import StationaryBootstrap
+from numpy.typing import NDArray
+from pandas import DataFrame
 
 
 SCHEMA = {"usd_absolute_price_move": "float64", "usd_transaction_cost": "float64"}
+SESSION_AXIS = 0
+METRIC_AXIS = 1
+PRICE_MOVE_METRIC = 0
+TRANSACTION_COST_METRIC = 1
 BLOCK_SIZE = 5
 CONFIDENCE = 0.95
 REPLICATIONS = 10_000
 SEED = 20_260_816
+type FloatArray = NDArray[np.float64]
 
 
-def _estimate_accuracy(usd_absolute_price_moves: Any, usd_transaction_costs: Any) -> list[float]:
-    usd_absolute_price_move = float(usd_absolute_price_moves.sum())
-    usd_transaction_cost = float(usd_transaction_costs.sum())
+def _estimate_accuracy(
+    usd_absolute_price_moves: FloatArray,
+    usd_transaction_costs: FloatArray,
+) -> FloatArray:
+    usd_absolute_price_move = float(usd_absolute_price_moves.sum(dtype=np.float64))
+    usd_transaction_cost = float(usd_transaction_costs.sum(dtype=np.float64))
     if usd_absolute_price_move <= 0 or usd_transaction_cost > usd_absolute_price_move:
         raise ValueError("break-even accuracy is infeasible")
-    return [0.5 + usd_transaction_cost / (2 * usd_absolute_price_move)]
-
-
-def _read_sessions(path: Path) -> tuple[Any, Any]:
-    sessions = cast(Any, pd).read_csv(path, usecols=list(SCHEMA), dtype=SCHEMA)
-    usd_absolute_price_moves, usd_transaction_costs = (sessions[name] for name in SCHEMA)
-    has_unusable_values = any(
-        column.isna().any() or not ((column >= 0.0) & (column < float("inf"))).all()
-        for column in (usd_absolute_price_moves, usd_transaction_costs)
+    return np.array(
+        [0.5 + usd_transaction_cost / (2 * usd_absolute_price_move)],
+        dtype=np.float64,
     )
-    if has_unusable_values or (usd_transaction_costs > usd_absolute_price_moves).any():
-        raise ValueError("the input contains invalid session values")
-    return usd_absolute_price_moves, usd_transaction_costs
+
+
+def _read_sessions(path: Path) -> FloatArray:
+    columns = list(SCHEMA)
+    frame = cast(DataFrame, cast(Any, pd).read_csv(path, usecols=columns, dtype=SCHEMA))
+    metrics = [
+        np.asarray(cast(Any, frame[column]).to_numpy(dtype=np.float64), dtype=np.float64)
+        for column in columns
+    ]
+    sessions = np.ascontiguousarray(np.column_stack(metrics), dtype=np.float64)
+    session_count = sessions.shape[SESSION_AXIS]
+    assert sessions.shape == (session_count, len(columns))
+    assert sessions.shape[METRIC_AXIS] == 2
+    if session_count == 0:
+        raise ValueError("the input must contain at least one session")
+    if not np.isfinite(sessions).all():
+        raise ValueError("the input contains non-finite session values")
+    if (sessions < 0.0).any():
+        raise ValueError("the input contains negative session values")
+    usd_absolute_price_moves = sessions[:, PRICE_MOVE_METRIC]
+    usd_transaction_costs = sessions[:, TRANSACTION_COST_METRIC]
+    if (usd_transaction_costs > usd_absolute_price_moves).any():
+        raise ValueError("transaction cost exceeds absolute price movement")
+    if usd_absolute_price_moves.sum(dtype=np.float64) <= 0.0:
+        raise ValueError("aggregate absolute price movement must be positive")
+    return sessions
 
 
 def _main() -> None:
     parser = ArgumentParser()
     parser.add_argument("input", type=Path)
-    usd_absolute_price_moves, usd_transaction_costs = _read_sessions(parser.parse_args().input)
+    sessions = _read_sessions(parser.parse_args().input)
+    usd_absolute_price_moves = sessions[:, PRICE_MOVE_METRIC]
+    usd_transaction_costs = sessions[:, TRANSACTION_COST_METRIC]
     estimate = _estimate_accuracy(usd_absolute_price_moves, usd_transaction_costs)[0]
     samples = StationaryBootstrap(
-        BLOCK_SIZE, usd_absolute_price_moves.to_numpy(), usd_transaction_costs.to_numpy(), seed=SEED
-    ).apply(cast(Any, _estimate_accuracy), reps=REPLICATIONS)
-    upper_bound = cast(Any, pd).Series(samples[:, 0]).quantile(CONFIDENCE, interpolation="linear")
-    cast(Any, pd).DataFrame(
+        BLOCK_SIZE,
+        usd_absolute_price_moves,
+        usd_transaction_costs,
+        seed=SEED,
+    ).apply(_estimate_accuracy, reps=REPLICATIONS)
+    upper_bound = float(np.quantile(samples[:, 0], CONFIDENCE, method="linear"))
+    output = pd.DataFrame(
         {
             "estimate": [estimate],
             "confidence_bound_upper": [upper_bound],
             "confidence_probability": [CONFIDENCE],
-            "n_session": [len(usd_absolute_price_moves)],
+            "n_session": [sessions.shape[SESSION_AXIS]],
             "n_bootstrap_block": [BLOCK_SIZE],
             "n_bootstrap_replication": [REPLICATIONS],
             "bootstrap_seed": [SEED],
-        }
-    ).to_csv(stdout, index=False)
+        },
+    )
+    cast(Any, output).to_csv(stdout, index=False)
 
 
 if __name__ == "__main__":
