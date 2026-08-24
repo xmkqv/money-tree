@@ -1,9 +1,11 @@
 from datetime import datetime
 from pathlib import Path
 
+from bot.types import StrategyName
+
 
 def run(
-    strategy_name: str,
+    strategy_name: StrategyName,
     symbols: list[str],
     start: datetime,
     end: datetime,

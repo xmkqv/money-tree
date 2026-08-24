@@ -25,6 +25,13 @@ def _parse_strategies(value: str) -> list[StrategyName]:
     return cast(list[StrategyName], selected)
 
 
+def _parse_strategy(value: str) -> StrategyName:
+    selected = _parse_strategies(value)
+    if len(selected) != 1:
+        raise typer.BadParameter("strategy must select exactly one strategy")
+    return selected[0]
+
+
 @app.command("backtest")
 def run_backtest(
     strategy: Annotated[str, typer.Option()] = settings.strategy_names[0],
@@ -32,7 +39,7 @@ def run_backtest(
     end: Annotated[datetime, typer.Option()] = datetime(2024, 1, 1),
     symbols: Annotated[str, typer.Option()] = "",
 ) -> None:
-    backtest.run(strategy, start, end, _parse_symbols(symbols) or None)
+    backtest.run(_parse_strategy(strategy), start, end, _parse_symbols(symbols) or None)
 
 
 @app.command("report")
@@ -42,7 +49,7 @@ def run_report(
     start: Annotated[datetime, typer.Option()] = datetime(2023, 1, 1),
     end: Annotated[datetime, typer.Option()] = datetime(2024, 1, 1),
 ) -> None:
-    report.run(strategy, _parse_symbols(symbols), start, end)
+    report.run(_parse_strategy(strategy), _parse_symbols(symbols), start, end)
 
 
 @app.command("trade")

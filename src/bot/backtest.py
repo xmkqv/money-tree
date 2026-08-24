@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import cast
 
 from bot.config import settings
+from bot.types import StrategyName
 
 
 ARTIFACT_NAMES = {
@@ -25,7 +26,7 @@ def _artifact_paths(output_dir: Path) -> dict[str, str]:
 
 
 def run(
-    strategy_name: str,
+    strategy_name: StrategyName,
     start: datetime,
     end: datetime,
     symbols: list[str] | None = None,
