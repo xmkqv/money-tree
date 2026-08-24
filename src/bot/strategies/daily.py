@@ -127,9 +127,7 @@ class DailyStrategy(StrategyBase):
         last = float(cast(Any, frame["close"]).iloc[-1])
         highest = max(self._highest.get(symbol, last), last)
         self._highest[symbol] = highest
-        stop = max(
-            self._stops.get(symbol, 0.0), highest - self.stop_multiple * latest_atr(frame)
-        )
+        stop = max(self._stops.get(symbol, 0.0), highest - self.stop_multiple * latest_atr(frame))
         self._stops[symbol] = stop
         if last >= stop and not signal_exit(frame) and not earnings_exit_due(symbol, day):
             return

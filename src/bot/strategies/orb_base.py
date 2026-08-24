@@ -64,10 +64,7 @@ def relative_volume_ready(
         float(group[group.index.time <= clock]["volume"].sum())
         for _, group in history.groupby(history.index.date)
     ][-20:]
-    daily = [
-        float(group["volume"].sum())
-        for _, group in history.groupby(history.index.date)
-    ][-20:]
+    daily = [float(group["volume"].sum()) for _, group in history.groupby(history.index.date)][-20:]
     return (
         len(totals) == 20
         and len(daily) == 20
@@ -109,9 +106,7 @@ class OrbStrategy(StrategyBase):
             self._locked_on = None
         if self._locked_on == now.date():
             return
-        if equity <= self._baseline_equity * (
-            1.0 - float(self.parameters["risk_per_day_max"])
-        ):
+        if equity <= self._baseline_equity * (1.0 - float(self.parameters["risk_per_day_max"])):
             self._flatten(now.date())
             return
         self._manage(now)
@@ -154,9 +149,7 @@ class OrbStrategy(StrategyBase):
         else:
             self._protect(symbol)
 
-    def _filled_targets(
-        self, pending: OrbPending, entry: float
-    ) -> tuple[float, float, float]:
+    def _filled_targets(self, pending: OrbPending, entry: float) -> tuple[float, float, float]:
         if self.candle_minutes == 10:
             return pending.targets
         risk = abs(entry - pending.stop)
@@ -197,9 +190,9 @@ class OrbStrategy(StrategyBase):
             return
         values = cast(Any, frame)
         session = values[values.index.date == now.date()]
-        opening_end = datetime.combine(
-            now.date(), time(9, 30), TRADING_ZONE
-        ) + timedelta(minutes=self.candle_minutes)
+        opening_end = datetime.combine(now.date(), time(9, 30), TRADING_ZONE) + timedelta(
+            minutes=self.candle_minutes
+        )
         opening = session[
             (session.index >= opening_end - timedelta(minutes=self.candle_minutes))
             & (session.index < opening_end)
@@ -307,9 +300,7 @@ class OrbStrategy(StrategyBase):
     def _exit(self, symbol: str, quantity: float | None = None) -> None:
         holding = self._positions[symbol]
         amount = (
-            self._quantity(symbol)
-            if quantity is None
-            else min(quantity, self._quantity(symbol))
+            self._quantity(symbol) if quantity is None else min(quantity, self._quantity(symbol))
         )
         if amount <= 0:
             self._positions.pop(symbol, None)

@@ -505,12 +505,7 @@ class Strategy(StrategyBase):
         for symbol in self._liquid_symbols:
             key = (now.date(), engine, symbol)
             frame = cast(Any, frames.get(symbol))
-            if (
-                key in self._orb_scanned
-                or frame is None
-                or frame.empty
-                or self._claimed(symbol)
-            ):
+            if key in self._orb_scanned or frame is None or frame.empty or self._claimed(symbol):
                 continue
             opening = frame.between_time("09:30", "09:34" if minutes == 5 else "09:39")
             candle = frame.iloc[-1]
@@ -537,13 +532,17 @@ class Strategy(StrategyBase):
             targets = None
             if minutes == 10:
                 targets = (
-                    high + 0.5 * span,
-                    high + span,
-                    high + 2.0 * span,
-                ) if direction == 1 else (
-                    low - 0.5 * span,
-                    low - span,
-                    low - 2.0 * span,
+                    (
+                        high + 0.5 * span,
+                        high + span,
+                        high + 2.0 * span,
+                    )
+                    if direction == 1
+                    else (
+                        low - 0.5 * span,
+                        low - span,
+                        low - 2.0 * span,
+                    )
                 )
             self._enter(
                 engine,
@@ -557,9 +556,7 @@ class Strategy(StrategyBase):
                 risk_fraction_max=0.01 if engine == "orb" else None,
             )
 
-    def _intraday(
-        self, symbols: list[str], now: datetime, minutes: int
-    ) -> dict[str, Any]:
+    def _intraday(self, symbols: list[str], now: datetime, minutes: int) -> dict[str, Any]:
         start = datetime.combine(now.date(), time(9, 30), TRADING_ZONE)
         timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
         return {
@@ -660,9 +657,9 @@ class Strategy(StrategyBase):
             return
         minutes = 5 if holding.engine == "orb" else 10
         timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
-        recent = self._frames(
-            [holding.signal], now - timedelta(days=5), timeframe, now
-        ).get(holding.signal)
+        recent = self._frames([holding.signal], now - timedelta(days=5), timeframe, now).get(
+            holding.signal
+        )
         if recent is None:
             return
         frame = cast(DataFrame, self._completed(recent, now, minutes))
@@ -690,11 +687,7 @@ class Strategy(StrategyBase):
         targets: tuple[float, float, float] | None = None,
         risk_fraction_max: float | None = None,
     ) -> bool:
-        if (
-            engine not in self._enabled
-            or self._claimed(signal)
-            or direction * (price - stop) <= 0
-        ):
+        if engine not in self._enabled or self._claimed(signal) or direction * (price - stop) <= 0:
             return False
         if direction == -1:
             security = self.broker.api.get_asset(asset)
