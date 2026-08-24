@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import cast
@@ -15,6 +16,7 @@ ARTIFACT_NAMES = {
     "plot_file_html": "plot.html",
     "indicators_file": "indicators.html",
 }
+LUMIBOT_DISABLE_UI = "LUMIBOT_DISABLE_UI"
 
 
 def _artifact_paths(output_dir: Path) -> dict[str, str]:
@@ -38,6 +40,7 @@ def run(
         parameters["symbols"] = symbols
     datasource = YahooDataBacktesting
     datasource_configuration: dict[str, str | bool] | None = None
+    datasource_options: dict[str, object] = {}
     if strategy_name in {"orb", "orb_momentum"}:
         api_key = settings.alpaca_api_key
         api_secret = settings.alpaca_api_secret
@@ -49,20 +52,34 @@ def run(
             "API_SECRET": api_secret.get_secret_value(),
             "PAPER": True,
         }
-    results = load_strategy(strategy_name).backtest(
-        datasource,
-        start,
-        end,
-        config=datasource_configuration,
-        parameters=parameters,
-        benchmark_asset="SPY",
-        budget=100_000.0,
-        show_plot=False,
-        show_tearsheet=False,
-        show_indicators=False,
-        show_progress_bar=False,
-        save_tearsheet=True,
-        save_logfile=output_dir is not None,
-        **({} if output_dir is None else _artifact_paths(output_dir)),
-    )
+        datasource_options = {"timestep": "minute", "warm_up_trading_days": 60}
+    report_mode = output_dir is not None
+    previous_disable_ui = os.environ.get(LUMIBOT_DISABLE_UI)
+    if report_mode:
+        os.environ[LUMIBOT_DISABLE_UI] = "1"
+    try:
+        results = load_strategy(strategy_name).backtest(
+            datasource,
+            start,
+            end,
+            config=datasource_configuration,
+            parameters=parameters,
+            benchmark_asset="SPY",
+            budget=100_000.0,
+            show_plot=report_mode,
+            show_tearsheet=False,
+            show_indicators=report_mode,
+            show_progress_bar=False,
+            save_tearsheet=True,
+            save_logfile=report_mode,
+            quiet_logs=not report_mode,
+            **datasource_options,
+            **({} if output_dir is None else _artifact_paths(output_dir)),
+        )
+    finally:
+        if report_mode:
+            if previous_disable_ui is None:
+                os.environ.pop(LUMIBOT_DISABLE_UI, None)
+            else:
+                os.environ[LUMIBOT_DISABLE_UI] = previous_disable_ui
     return cast(dict[str, object], results or {})
