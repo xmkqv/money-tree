@@ -1,0 +1,11 @@
+{
+  "name": "money-tree-infrastructure",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "railway": "^3.11.0"
+  }
+}

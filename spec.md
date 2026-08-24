@@ -39,7 +39,7 @@ src/
 
 # deploy
 
-[bot](./railway.toml) → [web](./railway.web.toml)
+[bot → web](./.railway/railway.ts)
 
 ```sh
 mt trade --strategies "$STRATEGIES"

@@ -14,5 +14,6 @@ wheels/
 !.env.example
 data/
 logs/
+node_modules/
 runs/
 gen.*.*
