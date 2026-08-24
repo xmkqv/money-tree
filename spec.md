@@ -14,11 +14,14 @@ src/
         __main__.py
     bot/
         strategies/
-            shared.py # strategy base class and loader
-            noop.py # deployment-safe strategy that submits no orders
-            portfolio.py # selected live strategy engines and portfolio risk
+            base.py
+            noop.py
+            {name}.py
+            ...
+        portfolio.py # multi-strategy composer
         config.py
         backtest.py
+        report.py
         broker.py
         export.py
         trade.py
@@ -42,6 +45,13 @@ src/
 mt trade --strategies "$STRATEGIES"
 mt backtest --strategy "${STRATEGIES%%,*}" --start 2023-01-01 --end 2024-01-01
 uvicorn ui.app:create_app --factory --workers 1 --host "" --port "$PORT"
+```
+
+# report
+
+```sh
+mt report --strategy {name} --symbols {symbols} --start {date} --end {date}
+    → runs/{name}-{start}-{end}/{stats.csv,trades.csv,settings.json,backtest.log,plot.html,indicators.html,tearsheet.html,tearsheet_metrics.json}
 ```
 
 # dashboard
