@@ -33,6 +33,7 @@ build-backend = "hatchling.build"
 dev = [
     "arch>=8,<9",
     "numpy>=2,<3",
+    "pytest>=9,<10",
     "pyright>=1.1,<2",
     "ruff>=0.14,<1",
 ]
@@ -53,6 +54,10 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers"
+testpaths = ["tests"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/bot", "src/cli", "src/ui", "LICENSE", "README.md", "pyproject.toml"]
