@@ -6,12 +6,12 @@ from typing import Any, Literal, cast
 
 import exchange_calendars
 from pandas import DataFrame, Series
-from pandas_ta_classic import adx as ta_adx
-from pandas_ta_classic import atr as ta_atr
-from pandas_ta_classic import cross as ta_cross
-from pandas_ta_classic import macd as ta_macd
-from pandas_ta_classic import rsi as ta_rsi
-from pandas_ta_classic import sma as ta_sma
+from pandas_ta_classic.momentum.macd import macd as ta_macd
+from pandas_ta_classic.momentum.rsi import rsi as ta_rsi
+from pandas_ta_classic.overlap.sma import sma as ta_sma
+from pandas_ta_classic.trend.adx import adx as ta_adx
+from pandas_ta_classic.utils import cross as ta_cross
+from pandas_ta_classic.volatility.atr import atr as ta_atr
 
 
 type Direction = Literal[-1, 1]
@@ -19,6 +19,10 @@ type Direction = Literal[-1, 1]
 PERIOD = 14
 MIN_NOTIONAL_USD = 1.0
 XNYS = exchange_calendars.get_calendar("XNYS")
+
+
+def _series_float(values: Series, offset: int = -1) -> float:
+    return float(cast(float, values.iloc[offset]))
 
 
 def latest_atr(frame: DataFrame, period: int = PERIOD) -> float:
@@ -29,9 +33,12 @@ def latest_atr(frame: DataFrame, period: int = PERIOD) -> float:
         length=period,
         talib=False,
     )
-    if values is None or values.dropna().empty:
+    if values is None:
         raise ValueError(f"ATR requires at least {period} price bars")
-    return float(values.dropna().iloc[-1])
+    values = values.dropna()
+    if values.empty:
+        raise ValueError(f"ATR requires at least {period} price bars")
+    return _series_float(values)
 
 
 def entry_quantity(
@@ -63,7 +70,7 @@ def market_is_rising(frame: DataFrame) -> bool:
     average = ta_sma(close, length=20, talib=False)
     if average is None:
         return False
-    return float(close.iloc[-1]) > float(average.iloc[-1])
+    return _series_float(close) > _series_float(average)
 
 
 def momentum_entry(frame: DataFrame) -> bool:
@@ -90,13 +97,13 @@ def momentum_entry(frame: DataFrame) -> bool:
     crossed = ta_cross(close, average_20, above=True, asint=False)
     if crossed is None:
         return False
-    last = float(close.iloc[-1])
-    trend = last > float(average_50.iloc[-1]) > float(average_200.iloc[-1])
+    last = _series_float(close)
+    trend = last > _series_float(average_50) > _series_float(average_200)
     return (
-        bool(crossed.iloc[-1])
+        bool(_series_float(crossed))
         and trend
-        and 50.0 <= float(strength.iloc[-1]) <= 70.0
-        and float(directional["ADX_14"].iloc[-1]) >= 25.0
+        and 50.0 <= _series_float(strength) <= 70.0
+        and _series_float(cast(Series, directional["ADX_14"])) >= 25.0
     )
 
 
@@ -113,10 +120,10 @@ def tfb_entry(frame: DataFrame) -> bool:
     if average_50 is None or directional is None:
         return False
     return (
-        float(close.iloc[-1]) > float(average_50.iloc[-1])
-        and float(average_50.iloc[-1]) > float(average_50.iloc[-4])
-        and float(directional["ADX_14"].iloc[-1]) >= 20.0
-        and float(close.iloc[-1]) > float(cast(Any, frame["high"]).iloc[-2])
+        _series_float(close) > _series_float(average_50)
+        and _series_float(average_50) > _series_float(average_50, -4)
+        and _series_float(cast(Series, directional["ADX_14"])) >= 20.0
+        and _series_float(close) > _series_float(cast(Series, frame["high"]), -2)
     )
 
 
@@ -126,20 +133,15 @@ def signal_exit(frame: DataFrame) -> bool:
     strength = ta_rsi(close, length=PERIOD, talib=False)
     if average_20 is None or not isinstance(strength, Series):
         return False
-    return (
-        float(close.iloc[-1]) < float(average_20.iloc[-1])
-        and float(strength.iloc[-1]) < 50.0
-    )
+    return _series_float(close) < _series_float(average_20) and _series_float(strength) < 50.0
 
 
 def does_macd_confirm(close: Series, direction: Direction) -> bool:
     values = ta_macd(close, fast=12, slow=26, signal=9, talib=False)
     if values is None:
         return False
-    line = values["MACD_12_26_9"]
-    return len(line) >= 2 and (
-        float(line.iloc[-1]) > float(line.iloc[-2])
-    ) == (direction == 1)
+    line = cast(Series, values["MACD_12_26_9"]).dropna()
+    return len(line) >= 2 and (_series_float(line) > _series_float(line, -2)) == (direction == 1)
 
 
 def next_stop(direction: Direction, active: float, candidate: float) -> float:
