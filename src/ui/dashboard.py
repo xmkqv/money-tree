@@ -1,7 +1,7 @@
 import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -23,6 +23,9 @@ NO_STORE = {"Cache-Control": "no-store"}
 IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
 HEARTBEAT_TIMEOUT = timedelta(seconds=15)
 SIGNATURE_WINDOW_SECONDS = 30
+RUNTIME_BODY_BYTES_MAX = 65_536
+RUNTIME_SIGNATURE_ENVELOPE_BYTES = 51
+RUNTIME_REQUEST_BYTES_MAX = RUNTIME_BODY_BYTES_MAX + RUNTIME_SIGNATURE_ENVELOPE_BYTES
 PORTFOLIO_TIMEFRAMES = {"1D": "5Min", "1W": "15Min", "1M": "1D", "1A": "1D"}
 DASHBOARD_HEADERS = {
     "Cache-Control": "private, no-cache",
@@ -170,22 +173,21 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         size = 0
         async for chunk in request.stream():
             size += len(chunk)
-            if size > 65_536:
+            if size > RUNTIME_REQUEST_BYTES_MAX:
                 return error_response("Runtime snapshot is too large", 413)
             chunks.append(chunk)
         try:
-            body, signed_at = cast(
-                tuple[bytes, datetime],
-                signer.unsign(
-                    b"".join(chunks),
-                    max_age=SIGNATURE_WINDOW_SECONDS,
-                    return_timestamp=True,
-                ),
+            body, signed_at = signer.unsign(
+                b"".join(chunks),
+                max_age=SIGNATURE_WINDOW_SECONDS,
+                return_timestamp=True,
             )
         except SignatureExpired:
             return error_response("Runtime signature has expired", 401)
         except BadSignature:
             return error_response("Runtime signature is invalid", 401)
+        if len(body) > RUNTIME_BODY_BYTES_MAX:
+            return error_response("Runtime snapshot is too large", 413)
         try:
             snapshot = RuntimeSnapshot.model_validate_json(body)
         except ValidationError:
