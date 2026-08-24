@@ -10,6 +10,8 @@ from numpy.typing import NDArray
 from pandas import DataFrame
 
 
+type FloatArray = NDArray[np.float64]
+
 SCHEMA = {"usd_absolute_price_move": "float64", "usd_transaction_cost": "float64"}
 SESSION_AXIS = 0
 METRIC_AXIS = 1
@@ -19,13 +21,14 @@ BLOCK_SIZE = 5
 CONFIDENCE = 0.95
 REPLICATIONS = 10_000
 SEED = 20_260_816
-type FloatArray = NDArray[np.float64]
 
 
 def _estimate_accuracy(
     usd_absolute_price_moves: FloatArray,
     usd_transaction_costs: FloatArray,
 ) -> FloatArray:
+    assert usd_absolute_price_moves.ndim == usd_transaction_costs.ndim == 1
+    assert usd_absolute_price_moves.shape == usd_transaction_costs.shape
     usd_absolute_price_move = float(usd_absolute_price_moves.sum(dtype=np.float64))
     usd_transaction_cost = float(usd_transaction_costs.sum(dtype=np.float64))
     if usd_absolute_price_move <= 0 or usd_transaction_cost > usd_absolute_price_move:
@@ -45,8 +48,7 @@ def _read_sessions(path: Path) -> FloatArray:
     ]
     sessions = np.ascontiguousarray(np.column_stack(metrics), dtype=np.float64)
     session_count = sessions.shape[SESSION_AXIS]
-    assert sessions.shape == (session_count, len(columns))
-    assert sessions.shape[METRIC_AXIS] == 2
+    assert sessions.shape == (session_count, 2)
     if session_count == 0:
         raise ValueError("the input must contain at least one session")
     if not np.isfinite(sessions).all():
