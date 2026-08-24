@@ -5,7 +5,6 @@ from base64 import b64encode
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, time, timedelta
-from decimal import Decimal
 from unittest.mock import patch
 from uuid import UUID
 
@@ -19,8 +18,9 @@ from ui.app import create_app
 from ui.config import WebSettings
 
 
-SESSION_SECRET = "session-secret-0123456789abcdef"
-STATE_EXPORT_SECRET = "export-secret-0123456789abcdef"
+SESSION_SECRET = "session-secret-0123456789abcdef0123456789"
+STATE_EXPORT_SECRET = "export-secret-0123456789abcdef0123456789"
+RUN_ID = UUID("8f558d63-d47d-4a5f-8f77-95b0bf55a591")
 WEB_ENVIRONMENT = {
     "ALLOWED_RAILWAY_EMAILS": "operator@example.com",
     "ALPACA_API_KEY": "alpaca-key",
@@ -52,7 +52,7 @@ def web_settings(**overrides: str) -> WebSettings:
 def runtime_snapshot(
     *,
     sequence: int = 1,
-    run_id: UUID = UUID("8f558d63-d47d-4a5f-8f77-95b0bf55a591"),
+    run_id: UUID = RUN_ID,
     started_at: datetime | None = None,
     heartbeat_at: datetime | None = None,
 ) -> RuntimeSnapshot:
@@ -77,28 +77,36 @@ def runtime_snapshot(
 
 
 def sign_snapshot(snapshot: RuntimeSnapshot, *, expired: bool = False) -> bytes:
+    return sign_body(snapshot.model_dump_json().encode(), expired=expired)
+
+
+def sign_body(body: bytes, *, expired: bool = False) -> bytes:
     signer_class = _ExpiredSigner if expired else TimestampSigner
     signer = signer_class(
         STATE_EXPORT_SECRET,
         salt=STATE_SIGNATURE_SALT,
         digest_method=hashlib.sha256,
     )
-    return signer.sign(snapshot.model_dump_json().encode())
+    return signer.sign(body)
 
 
 def authenticate(client: TestClient, csrf_token: str = "csrf-token") -> None:
-    session = b64encode(
-        json.dumps({"user_sub": "operator", "csrf_token": csrf_token}).encode()
-    )
+    set_session(client, {"user_sub": "operator", "csrf_token": csrf_token})
+
+
+def set_session(client: TestClient, values: dict[str, str]) -> None:
+    session = b64encode(json.dumps(values).encode())
     cookie = TimestampSigner(SESSION_SECRET).sign(session).decode()
-    client.cookies.set("money_tree_session", cookie, secure=True)
+    client.cookies.set("money_tree_session", cookie)
 
 
 @contextmanager
 def web_client() -> Iterator[TestClient]:
-    with patch.dict(os.environ, WEB_ENVIRONMENT):
-        with TestClient(create_app(), base_url="https://testserver") as client:
-            yield client
+    with (
+        patch.dict(os.environ, WEB_ENVIRONMENT),
+        TestClient(create_app(), base_url="https://testserver") as client,
+    ):
+        yield client
 
 
 def market_frame(rows: int = 20) -> DataFrame:
@@ -138,10 +146,6 @@ def relative_volume_frame(day: date, history_sessions: int = 20) -> DataFrame:
     )
     rows.extend([{"volume": 700_000.0}, {"volume": 300_000.0}])
     return DataFrame(rows, index=DatetimeIndex(timestamps))
-
-
-def decimal(value: str) -> Decimal:
-    return Decimal(value)
 
 
 class _ExpiredSigner(TimestampSigner):

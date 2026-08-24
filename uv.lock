@@ -2854,6 +2854,7 @@ dev = [
     { name = "arch" },
     { name = "numpy" },
     { name = "pyright" },
+    { name = "pytest" },
     { name = "ruff" },
 ]
 
@@ -2881,6 +2882,7 @@ dev = [
     { name = "arch", specifier = ">=8,<9" },
     { name = "numpy", specifier = ">=2,<3" },
     { name = "pyright", specifier = ">=1.1,<2" },
+    { name = "pytest", specifier = ">=9,<10" },
     { name = "ruff", specifier = ">=0.14,<1" },
 ]
 
