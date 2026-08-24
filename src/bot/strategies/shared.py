@@ -163,6 +163,7 @@ def momentum_entry(frame: DataFrame) -> bool:
     if not isinstance(crossed, Series):
         return False
     latest = _finite_value(close)
+    latest_20 = _finite_value(average_20)
     latest_50 = _finite_value(average_50)
     latest_200 = _finite_value(average_200)
     latest_cross = _finite_value(crossed)
@@ -170,6 +171,7 @@ def momentum_entry(frame: DataFrame) -> bool:
     latest_directional = _finite_value(directional_values)
     if None in {
         latest,
+        latest_20,
         latest_50,
         latest_200,
         latest_cross,
@@ -178,6 +180,7 @@ def momentum_entry(frame: DataFrame) -> bool:
     }:
         return False
     assert latest is not None
+    assert latest_20 is not None
     assert latest_50 is not None
     assert latest_200 is not None
     assert latest_cross is not None

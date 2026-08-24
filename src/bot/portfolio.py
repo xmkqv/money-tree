@@ -420,9 +420,11 @@ class Strategy(StrategyBase):
             if value.get("quoteType") == "EQUITY"
         ]
         return sorted(
-            symbol
-            for symbol, cap, volume in rows
-            if symbol in assets and cap >= 5e8 and volume >= 1e6
+            {
+                symbol
+                for symbol, cap, volume in rows
+                if symbol in assets and cap >= 5e8 and volume >= 1e6
+            }
         )
 
     def _load_universe_cache(self) -> list[str]:
@@ -740,6 +742,7 @@ class Strategy(StrategyBase):
         if recent is None:
             return
         frame = self._completed(recent, now, minutes)
+        frame = cast(DataFrame, cast(Any, frame).between_time("09:30", "15:59"))
         if len(frame) < 15:
             return
         trail = 1.5 * latest_atr(frame)
