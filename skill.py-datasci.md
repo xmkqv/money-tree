@@ -68,10 +68,7 @@ features = (
         close_return=pl.col("close").pct_change().over("symbol"),
         sma_20=pl.col("close").rolling_mean(20).over("symbol"),
         volume_z=(
-            (
-                pl.col("volume")
-                - pl.col("volume").rolling_mean(20)
-            )
+            (pl.col("volume") - pl.col("volume").rolling_mean(20))
             / pl.col("volume").rolling_std(20)
         ).over("symbol"),
     )
@@ -105,8 +102,12 @@ scanner = dataset.scanner(
     batch_size=65_536,
     use_threads=True,
 )
-notional_by_symbol = scanner.to_table().group_by("symbol").aggregate(
-    [("notional", "sum")],
+notional_by_symbol = (
+    scanner.to_table()
+    .group_by("symbol")
+    .aggregate(
+        [("notional", "sum")],
+    )
 )
 ```
 
