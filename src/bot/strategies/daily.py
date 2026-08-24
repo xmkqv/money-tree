@@ -1,15 +1,17 @@
 from datetime import date
 from typing import Any, ClassVar, cast
 
-from pandas import DataFrame
+from pandas import DataFrame, DatetimeIndex
 
 from bot.strategies.base import StrategyBase
 from bot.strategies.shared import (
+    TRADING_ZONE,
     earnings_blocked,
     earnings_exit_due,
     entry_quantity,
     latest_atr,
     market_is_rising,
+    normalize_ohlcv,
     signal_exit,
 )
 
@@ -90,7 +92,12 @@ class DailyStrategy(StrategyBase):
 
     def _frame(self, symbol: str, length: int = LOOKBACK) -> DataFrame | None:
         bars: Any = self.get_historical_prices(symbol, length, "day")
-        return None if bars is None else bars.df
+        if bars is None:
+            return None
+        frame = normalize_ohlcv(cast(DataFrame, bars.df), {"high", "low", "close"})
+        day = self.get_datetime().astimezone(TRADING_ZONE).date()
+        index = cast(Any, cast(DatetimeIndex, frame.index))
+        return cast(DataFrame, frame[index.date < day])
 
     def _trade(self, symbol: str, day: date, equity: float) -> None:
         frame = self._frame(symbol)

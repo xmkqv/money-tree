@@ -1,24 +1,22 @@
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
+from math import isfinite
 from typing import Any, ClassVar, cast
-from zoneinfo import ZoneInfo
 
-from lumibot.constants import LUMIBOT_DEFAULT_TIMEZONE
-from pandas import DataFrame
+from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
 from bot.strategies.base import StrategyBase
 from bot.strategies.shared import (
+    TRADING_ZONE,
     Direction,
     does_macd_confirm,
     entry_quantity,
     latest_atr,
     next_stop,
+    normalize_ohlcv,
     quantity_value,
     security_is_eligible,
 )
-
-
-TRADING_ZONE = ZoneInfo(LUMIBOT_DEFAULT_TIMEZONE)
 
 
 @dataclass(slots=True)
@@ -40,36 +38,60 @@ class OrbPending:
     targets: tuple[float, float, float]
 
 
-def trading_frame(frame: DataFrame) -> DataFrame:
-    values = frame.copy()
-    if values.empty:
-        return values
-    index = cast(Any, values.index)
-    if index.tz is None:
-        index = index.tz_localize(UTC)
-    values.index = index.tz_convert(TRADING_ZONE)
-    return values.sort_index()
-
-
 def relative_volume_ready(
     frame: DataFrame,
     day: date,
     clock: time,
     multiple: float,
 ) -> bool:
-    regular = cast(Any, trading_frame(frame)).between_time("09:30", "15:59")
-    current = regular[regular.index.date == day]
-    history = regular[regular.index.date < day]
-    totals = [
-        float(group[group.index.time <= clock]["volume"].sum())
-        for _, group in history.groupby(history.index.date)
-    ][-20:]
-    daily = [float(group["volume"].sum()) for _, group in history.groupby(history.index.date)][-20:]
+    regular = cast(DataFrame, cast(Any, frame).between_time("09:30", "15:59"))
+    index = cast(DatetimeIndex, regular.index)
+    pandas_index = cast(Any, index)
+    session_dates = cast(DatetimeIndex, pandas_index.normalize())
+    current_session = Timestamp(day, tz=TRADING_ZONE)
+    is_current = cast(Any, session_dates) == current_session
+    is_earlier = cast(Any, session_dates) < current_session
+    is_relevant = is_current | is_earlier
+    volume = cast(Series, regular["volume"])
+    cumulative_volume = cast(
+        Series,
+        cast(Any, volume).where(pandas_index.time <= clock, 0.0),
+    )
+    aggregates = DataFrame(
+        {
+            "session_date": session_dates,
+            "daily_volume": volume,
+            "cumulative_volume": cumulative_volume,
+        },
+        index=index,
+    )
+    grouped = cast(
+        DataFrame,
+        cast(Any, aggregates)
+        .loc[is_relevant]
+        .groupby("session_date", sort=True)[["daily_volume", "cumulative_volume"]]
+        .sum(),
+    )
+    if current_session not in grouped.index:
+        return False
+    grouped_index = cast(Any, cast(DatetimeIndex, grouped.index))
+    history = cast(DataFrame, cast(Any, grouped).loc[grouped_index < current_session].tail(20))
+    if len(history) != 20:
+        return False
+    historical_daily_average = float(cast(Any, history["daily_volume"]).mean())
+    historical_clock_average = float(cast(Any, history["cumulative_volume"]).mean())
+    current_clock_volume = float(cast(Any, grouped).loc[current_session, "cumulative_volume"])
     return (
-        len(totals) == 20
-        and len(daily) == 20
-        and sum(daily) / len(daily) >= 1_000_000
-        and float(current["volume"].sum()) >= multiple * sum(totals) / len(totals)
+        all(
+            isfinite(value)
+            for value in (
+                historical_daily_average,
+                historical_clock_average,
+                current_clock_volume,
+            )
+        )
+        and historical_daily_average >= 1_000_000
+        and current_clock_volume >= multiple * historical_clock_average
     )
 
 
@@ -173,7 +195,17 @@ class OrbStrategy(StrategyBase):
             f"{self.candle_minutes}min",
             include_after_hours=False,
         )
-        return None if bars is None else trading_frame(bars.df)
+        if bars is None:
+            return None
+        return normalize_ohlcv(
+            cast(DataFrame, bars.df),
+            {"high", "low", "close", "volume"},
+        )
+
+    def _completed(self, frame: DataFrame, now: datetime) -> DataFrame:
+        index = cast(DatetimeIndex, frame.index)
+        mask = cast(Any, index) + timedelta(minutes=self.candle_minutes) <= now
+        return cast(DataFrame, frame[mask])
 
     def _scan(self, symbol: str, now: datetime, equity: float) -> None:
         key = (now.date(), symbol)
@@ -188,33 +220,42 @@ class OrbStrategy(StrategyBase):
         frame = self._frame(symbol)
         if frame is None:
             return
-        values = cast(Any, frame)
-        session = values[values.index.date == now.date()]
+        index = cast(DatetimeIndex, frame.index)
+        session = cast(DataFrame, frame[cast(Any, index).date == now.date()])
+        session_index = cast(Any, cast(DatetimeIndex, session.index))
         opening_end = datetime.combine(now.date(), time(9, 30), TRADING_ZONE) + timedelta(
             minutes=self.candle_minutes
         )
-        opening = session[
-            (session.index >= opening_end - timedelta(minutes=self.candle_minutes))
-            & (session.index < opening_end)
-        ]
-        completed = session[session.index + timedelta(minutes=self.candle_minutes) <= now]
-        if opening.empty or completed.empty or completed.index[-1] < opening_end:
+        opening = cast(
+            DataFrame,
+            session[
+                (session_index >= opening_end - timedelta(minutes=self.candle_minutes))
+                & (session_index < opening_end)
+            ],
+        )
+        completed = self._completed(session, now)
+        if opening.empty or completed.empty:
             return
-        last = completed.iloc[-1]
-        high = float(opening["high"].max())
-        low = float(opening["low"].min())
-        close = float(last["close"])
+        completed_at = cast(Timestamp, completed.index[-1])
+        if completed_at < opening_end:
+            return
+        last = cast(Series, cast(Any, completed).iloc[-1])
+        high = float(cast(Any, opening["high"]).max())
+        low = float(cast(Any, opening["low"]).min())
+        close = float(cast(Any, last)["close"])
+        if not all(isfinite(value) for value in (high, low, close)):
+            return
         direction: Direction | None = 1 if close > high else -1 if close < low else None
         if direction is None:
             return
         self._signaled.add(key)
-        clock = completed.index[-1].time()
+        clock = completed_at.time()
         if not relative_volume_ready(frame, now.date(), clock, self.volume_multiple):
             return
         if self.uses_macd:
-            regular = cast(Any, trading_frame(frame)).between_time("09:30", "15:59")
-            history = regular[regular.index <= completed.index[-1]]
-            if not does_macd_confirm(history["close"], direction):
+            regular = cast(DataFrame, cast(Any, frame).between_time("09:30", "15:59"))
+            history = cast(DataFrame, regular[cast(Any, regular.index) <= completed_at])
+            if not does_macd_confirm(cast(Series, history["close"]), direction):
                 return
         span = high - low
         stop = low + span * (0.75 if direction == 1 else 0.25)
@@ -269,7 +310,10 @@ class OrbStrategy(StrategyBase):
             if holding.stage == 0:
                 continue
             frame = self._frame(symbol, 40)
-            if frame is None or len(frame) < 15:
+            if frame is None:
+                continue
+            frame = self._completed(frame, now)
+            if len(frame) < 15:
                 continue
             trail = 1.5 * latest_atr(frame)
             candidate = (

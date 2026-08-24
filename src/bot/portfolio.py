@@ -2,10 +2,10 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from importlib import import_module
+from math import isfinite
 from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
-from zoneinfo import ZoneInfo
 
 from alpaca.common.enums import Sort
 from alpaca.data.enums import Adjustment, DataFeed
@@ -14,13 +14,13 @@ from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.requests import GetOrdersRequest
-from lumibot.constants import LUMIBOT_DEFAULT_TIMEZONE
-from pandas import DataFrame
+from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
 from bot.config import settings
 from bot.strategies.base import StrategyBase
 from bot.strategies.orb_base import relative_volume_ready
 from bot.strategies.shared import (
+    TRADING_ZONE,
     Direction,
     does_macd_confirm,
     earnings_blocked,
@@ -30,17 +30,18 @@ from bot.strategies.shared import (
     market_is_rising,
     momentum_entry,
     next_stop,
+    normalize_ohlcv,
     quantity_value,
     signal_exit,
     tfb_entry,
 )
-from bot.types import StrategyName
+from bot.types import EventLevel, StrategyName
 
 
-TRADING_ZONE = ZoneInfo(LUMIBOT_DEFAULT_TIMEZONE)
 FIVE_MINUTES = TimeFrame(5, cast(TimeFrameUnit, TimeFrameUnit.Minute))
 TEN_MINUTES = TimeFrame(10, cast(TimeFrameUnit, TimeFrameUnit.Minute))
 UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
+PREPARATION_ATTEMPTS_MAX = 2
 ENGINE_CODES: dict[StrategyName, str] = {
     "noop": "n",
     "orb": "o",
@@ -75,15 +76,17 @@ class Pending:
     notional: float
 
 
-def _clock(frame: Any) -> Any:
-    values = frame.copy()
-    if values.empty:
-        return values
-    index = values.index
-    if index.tz is None:
-        index = index.tz_localize(UTC)
-    values.index = index.tz_convert(TRADING_ZONE)
-    return values.sort_index()
+@dataclass(frozen=True, slots=True)
+class OrbCandidate:
+    symbol: str
+    direction: Direction
+    high: float
+    low: float
+    close: float
+
+
+class LoadUniverseError(Exception):
+    pass
 
 
 class Strategy(StrategyBase):
@@ -106,9 +109,10 @@ class Strategy(StrategyBase):
         self._baseline_equity = 0.0
         self._locked_on: date | None = None
         self._daily_frames: dict[str, DataFrame] = {}
-        self._large_symbols: list[str] = []
-        self._liquid_symbols: list[str] = []
+        self._eligible_symbols: list[str] = []
         self._prepared_on: date | None = None
+        self._preparation_attempts = 0
+        self._preparation_attempts_on: date | None = None
         self._daily_run_on: date | None = None
         self._intraday_bucket: datetime | None = None
         self._restored = False
@@ -179,12 +183,12 @@ class Strategy(StrategyBase):
         elif asset in self._holdings:
             self._protect(self._holdings[asset], remaining)
 
-    def _event(self, key: str, level: str, message: str) -> None:
+    def _event(self, key: str, level: EventLevel, message: str) -> None:
         if key in self._events:
             return
         self._events.add(key)
         if self.exporter is not None:
-            self.exporter.publish("running", key, cast(Any, level), message)
+            self.exporter.publish("running", key, level, message)
 
     def _begin_day(self, day: date) -> None:
         if day == self._day:
@@ -314,23 +318,30 @@ class Strategy(StrategyBase):
     def _prepare(self, day: date) -> None:
         if self._prepared_on == day:
             return
+        if self._preparation_attempts_on != day:
+            self._preparation_attempts_on = day
+            self._preparation_attempts = 0
+        if self._preparation_attempts >= PREPARATION_ATTEMPTS_MAX:
+            return
+        self._preparation_attempts += 1
         try:
-            large, liquid = self._universe()
-            symbols = sorted(set(large).union({"SPY", "QQQ"}))
-            self._daily_frames = self._frames(
+            eligible = self._universe()
+            symbols = sorted(set(eligible).union({"SPY", "QQQ"}))
+            daily_frames = self._frames(
                 symbols,
                 datetime.combine(day - timedelta(days=390), time(), TRADING_ZONE),
                 cast(TimeFrame, TimeFrame.Day),
             )
             spx = self._spx(day)
             if spx is not None:
-                self._daily_frames["^GSPC"] = spx
+                daily_frames["^GSPC"] = spx
         except Exception as error:
             self._daily_frames = {}
-            self._event("universe", "error", f"Stock universe unavailable: {type(error).__name__}")
-            large, liquid = [], []
-        self._large_symbols = large
-        self._liquid_symbols = liquid
+            self._eligible_symbols = []
+            self._event("universe", "error", f"Stock universe unavailable: {error}")
+            return
+        self._daily_frames = daily_frames
+        self._eligible_symbols = eligible
         self._prepared_on = day
 
     def _spx(self, day: date) -> DataFrame | None:
@@ -343,72 +354,106 @@ class Strategy(StrategyBase):
             )
             if frame.empty:
                 return None
-            frame.columns = [str(column).lower() for column in frame.columns]
-            return cast(DataFrame, _clock(frame))
+            frame = cast(DataFrame, frame).rename(
+                columns={column: str(column).lower() for column in frame.columns}
+            )
+            return normalize_ohlcv(frame, {"close"})
         except Exception as error:
             self._event("spx", "error", f"SPX market state unavailable: {type(error).__name__}")
             return None
 
-    def _universe(self) -> tuple[list[str], list[str]]:
+    def _universe(self) -> list[str]:
         try:
-            finance = cast(Any, import_module("yfinance"))
-            Query = finance.EquityQuery
-            query = Query(
-                "and",
-                [
-                    Query("eq", ["region", "us"]),
-                    Query("gte", ["intradaymarketcap", 500_000_000]),
-                ],
-            )
-            quotes: list[dict[str, Any]] = []
-            offset = 0
-            while True:
-                page = finance.screen(
-                    query,
-                    offset=offset,
-                    size=250,
-                    sortField="intradaymarketcap",
-                    sortAsc=False,
+            eligible = self._discover_eligible_symbols()
+            self._write_universe_cache(eligible)
+            return eligible
+        except Exception as discovery_error:
+            try:
+                return self._load_universe_cache()
+            except Exception as cache_error:
+                message = (
+                    f"live discovery failed with {type(discovery_error).__name__}; "
+                    f"cache {UNIVERSE_CACHE} failed with {type(cache_error).__name__}"
                 )
-                values = cast(list[dict[str, Any]], page.get("quotes", []))
-                quotes.extend(values)
-                offset += len(values)
-                if not values or offset >= int(page.get("total", offset)):
-                    break
-            assets = {
-                str(asset.symbol)
-                for asset in self.broker.api.get_all_assets()
-                if bool(asset.tradable) and bool(asset.fractionable)
-            }
-            rows = [
-                (
-                    str(value.get("symbol", "")).replace("-", "."),
-                    float(value.get("marketCap") or 0),
-                    float(value.get("averageDailyVolume3Month") or 0),
+                raise LoadUniverseError(message) from ExceptionGroup(
+                    "universe loading failed",
+                    [discovery_error, cache_error],
                 )
-                for value in quotes
-                if value.get("quoteType") == "EQUITY"
-            ]
-            large = sorted(
-                symbol
-                for symbol, cap, volume in rows
-                if symbol in assets and cap >= 5e8 and volume >= 1e6
+
+    def _discover_eligible_symbols(self) -> list[str]:
+        finance = cast(Any, import_module("yfinance"))
+        Query = finance.EquityQuery
+        query = Query(
+            "and",
+            [
+                Query("eq", ["region", "us"]),
+                Query("gte", ["intradaymarketcap", 500_000_000]),
+            ],
+        )
+        quotes: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            page = finance.screen(
+                query,
+                offset=offset,
+                size=250,
+                sortField="intradaymarketcap",
+                sortAsc=False,
             )
-            liquid = sorted(
-                symbol
-                for symbol, cap, volume in rows
-                if symbol in assets and cap >= 5e8 and volume >= 1e6
+            values = cast(list[dict[str, Any]], page.get("quotes", []))
+            quotes.extend(values)
+            offset += len(values)
+            if not values or offset >= int(page.get("total", offset)):
+                break
+        assets = {
+            str(asset.symbol)
+            for asset in self.broker.api.get_all_assets()
+            if bool(asset.tradable) and bool(asset.fractionable)
+        }
+        rows = [
+            (
+                str(value.get("symbol", "")).replace("-", "."),
+                float(value.get("marketCap") or 0),
+                float(value.get("averageDailyVolume3Month") or 0),
             )
-            UNIVERSE_CACHE.write_text(json.dumps({"large": large, "liquid": liquid}))
-            return large, liquid
-        except Exception:
-            cached = json.loads(UNIVERSE_CACHE.read_text())
-            return list(cached["large"]), list(cached["liquid"])
+            for value in quotes
+            if value.get("quoteType") == "EQUITY"
+        ]
+        return sorted(
+            symbol
+            for symbol, cap, volume in rows
+            if symbol in assets and cap >= 5e8 and volume >= 1e6
+        )
+
+    def _load_universe_cache(self) -> list[str]:
+        cached: object = json.loads(UNIVERSE_CACHE.read_text())
+        if not isinstance(cached, dict):
+            raise ValueError("universe cache must be an eligible-symbol object")
+        payload = cast(dict[str, object], cached)
+        if set(payload) != {"eligible"}:
+            raise ValueError("universe cache must be an eligible-symbol object")
+        symbols = payload["eligible"]
+        if not isinstance(symbols, list):
+            raise ValueError("universe cache eligible symbols must be non-empty strings")
+        loaded: set[str] = set()
+        for symbol in cast(list[object], symbols):
+            if not isinstance(symbol, str) or not symbol.strip():
+                raise ValueError("universe cache eligible symbols must be non-empty strings")
+            loaded.add(symbol.strip())
+        return sorted(loaded)
+
+    def _write_universe_cache(self, symbols: list[str]) -> None:
+        temporary = UNIVERSE_CACHE.with_name(f".{UNIVERSE_CACHE.name}.{uuid4().hex}.tmp")
+        try:
+            temporary.write_text(json.dumps({"eligible": symbols}))
+            temporary.replace(UNIVERSE_CACHE)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _frames(
         self, symbols: list[str], start: datetime, timeframe: TimeFrame, end: datetime | None = None
-    ) -> dict[str, Any]:
-        frames: dict[str, Any] = {}
+    ) -> dict[str, DataFrame]:
+        frames: dict[str, DataFrame] = {}
         for offset in range(0, len(symbols), 50):
             request = StockBarsRequest(
                 symbol_or_symbols=symbols[offset : offset + 50],
@@ -418,24 +463,34 @@ class Strategy(StrategyBase):
                 adjustment=Adjustment.ALL,
                 feed=DataFeed.IEX,
             )
-            values = cast(Any, self._data.get_stock_bars(request)).df
+            values = cast(DataFrame, cast(Any, self._data.get_stock_bars(request)).df)
             if values.empty:
                 continue
-            for symbol in values.index.get_level_values("symbol").unique():
-                frames[str(symbol)] = _clock(values.xs(symbol, level="symbol"))
+            symbols_index = cast(
+                list[object],
+                cast(Any, values.index).get_level_values("symbol").unique().tolist(),
+            )
+            for symbol_value in symbols_index:
+                symbol = str(symbol_value)
+                frame = values.xs(symbol_value, level="symbol")
+                frames[symbol] = normalize_ohlcv(
+                    frame,
+                    {"high", "low", "close", "volume"},
+                )
         return frames
 
-    def _completed(self, frame: Any, now: datetime, minutes: int = 0) -> Any:
-        values = _clock(frame)
+    def _completed(self, frame: DataFrame, now: datetime, minutes: int = 0) -> DataFrame:
+        index = cast(DatetimeIndex, frame.index)
         if minutes:
-            return values[values.index + timedelta(minutes=minutes) <= now]
-        return values[values.index.date < now.date()]
+            mask = cast(Any, index) + timedelta(minutes=minutes) <= now
+            return cast(DataFrame, frame[mask])
+        return cast(DataFrame, frame[cast(Any, index).date < now.date()])
 
     def _run_daily(self, now: datetime) -> None:
-        market = cast(
-            DataFrame,
-            self._completed(self._daily_frames.get("^GSPC", DataFrame()), now),
-        )
+        market_frame = self._daily_frames.get("^GSPC")
+        if market_frame is None:
+            return
+        market = self._completed(market_frame, now)
         if not market_is_rising(market):
             self._event("market-state", "warning", "SPX is not above its 20-day average")
             self._daily_run_on = now.date()
@@ -448,11 +503,11 @@ class Strategy(StrategyBase):
         self._daily_run_on = now.date()
 
     def _run_sma(self, now: datetime) -> None:
-        for symbol in self._large_symbols:
-            frame = cast(
-                DataFrame,
-                self._completed(self._daily_frames.get(symbol, DataFrame()), now),
-            )
+        for symbol in self._eligible_symbols:
+            daily_frame = self._daily_frames.get(symbol)
+            if daily_frame is None:
+                continue
+            frame = self._completed(daily_frame, now)
             if self._claimed(symbol) or not momentum_entry(frame):
                 continue
             try:
@@ -470,11 +525,11 @@ class Strategy(StrategyBase):
             self._enter("sma", symbol, symbol, last, last - 1.5 * latest_atr(frame), now)
 
     def _run_tfb(self, now: datetime) -> None:
-        for symbol in self._large_symbols:
-            frame = cast(
-                DataFrame,
-                self._completed(self._daily_frames.get(symbol, DataFrame()), now),
-            )
+        for symbol in self._eligible_symbols:
+            daily_frame = self._daily_frames.get(symbol)
+            if daily_frame is None:
+                continue
+            frame = self._completed(daily_frame, now)
             if self._claimed(symbol) or not tfb_entry(frame):
                 continue
             last = float(cast(Any, frame["close"]).iloc[-1])
@@ -497,66 +552,88 @@ class Strategy(StrategyBase):
         opening_end = time(9, 35) if minutes == 5 else time(9, 40)
         if (
             engine not in self._enabled
+            or now.minute % minutes
             or not opening_end <= now.time() <= time(10, 30)
-            or not self._liquid_symbols
+            or not self._eligible_symbols
         ):
             return
-        frames = self._intraday(self._liquid_symbols, now, minutes)
-        for symbol in self._liquid_symbols:
+        frames = self._intraday(self._eligible_symbols, now, minutes)
+        candidates: list[OrbCandidate] = []
+        for symbol in self._eligible_symbols:
             key = (now.date(), engine, symbol)
-            frame = cast(Any, frames.get(symbol))
+            frame = frames.get(symbol)
             if key in self._orb_scanned or frame is None or frame.empty or self._claimed(symbol):
                 continue
-            opening = frame.between_time("09:30", "09:34" if minutes == 5 else "09:39")
-            candle = frame.iloc[-1]
-            if opening.empty or frame.index[-1].time() < opening_end:
+            opening = cast(
+                DataFrame,
+                cast(Any, frame).between_time("09:30", "09:34" if minutes == 5 else "09:39"),
+            )
+            candle = cast(Series, cast(Any, frame).iloc[-1])
+            frame_at = cast(Timestamp, frame.index[-1])
+            if opening.empty or frame_at.time() < opening_end:
                 continue
-            high = float(opening["high"].max())
-            low = float(opening["low"].min())
-            close = float(candle["close"])
+            high = float(cast(Any, opening["high"]).max())
+            low = float(cast(Any, opening["low"]).min())
+            close = float(cast(Any, candle)["close"])
+            if not all(isfinite(value) for value in (high, low, close)):
+                continue
             direction: Direction | None = 1 if close > high else -1 if close < low else None
             if direction is None:
                 continue
             self._orb_scanned.add(key)
+            candidates.append(OrbCandidate(symbol, direction, high, low, close))
+        if not candidates:
+            return
+        timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
+        histories = self._frames(
+            [candidate.symbol for candidate in candidates],
+            now - timedelta(days=45),
+            timeframe,
+            now,
+        )
+        for candidate in candidates:
+            frame = histories.get(candidate.symbol)
+            if frame is None:
+                continue
+            completed = self._completed(frame, now, minutes)
             if not self._orb_confirm(
-                symbol,
+                completed,
                 now,
-                minutes,
                 volume_multiple,
-                direction,
+                candidate.direction,
                 uses_macd,
             ):
                 continue
-            span = high - low
-            stop = low + span * (0.75 if direction == 1 else 0.25)
+            span = candidate.high - candidate.low
+            stop = candidate.low + span * (0.75 if candidate.direction == 1 else 0.25)
             targets = None
             if minutes == 10:
                 targets = (
                     (
-                        high + 0.5 * span,
-                        high + span,
-                        high + 2.0 * span,
+                        candidate.high + 0.5 * span,
+                        candidate.high + span,
+                        candidate.high + 2.0 * span,
                     )
-                    if direction == 1
+                    if candidate.direction == 1
                     else (
-                        low - 0.5 * span,
-                        low - span,
-                        low - 2.0 * span,
+                        candidate.low - 0.5 * span,
+                        candidate.low - span,
+                        candidate.low - 2.0 * span,
                     )
                 )
             self._enter(
                 engine,
-                symbol,
-                symbol,
-                close,
+                candidate.symbol,
+                candidate.symbol,
+                candidate.close,
                 stop,
                 now,
-                direction=direction,
+                direction=candidate.direction,
                 targets=targets,
                 risk_fraction_max=0.01 if engine == "orb" else None,
             )
 
-    def _intraday(self, symbols: list[str], now: datetime, minutes: int) -> dict[str, Any]:
+    def _intraday(self, symbols: list[str], now: datetime, minutes: int) -> dict[str, DataFrame]:
         start = datetime.combine(now.date(), time(9, 30), TRADING_ZONE)
         timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
         return {
@@ -566,30 +643,25 @@ class Strategy(StrategyBase):
 
     def _orb_confirm(
         self,
-        symbol: str,
+        frame: DataFrame,
         now: datetime,
-        minutes: int,
         volume_multiple: float,
         direction: Direction,
         uses_macd: bool,
     ) -> bool:
-        timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
-        frame = self._frames([symbol], now - timedelta(days=45), timeframe, now).get(symbol)
-        if frame is None:
-            return False
-        completed = self._completed(frame, now, minutes)
-        if completed.empty:
+        if frame.empty:
             return False
         if not relative_volume_ready(
-            cast(DataFrame, completed),
+            frame,
             now.date(),
-            completed.index[-1].time(),
+            cast(Timestamp, frame.index[-1]).time(),
             volume_multiple,
         ):
             return False
         if not uses_macd:
             return True
-        return does_macd_confirm(completed["close"], direction)
+        regular = cast(DataFrame, cast(Any, frame).between_time("09:30", "15:59"))
+        return does_macd_confirm(cast(Series, regular["close"]), direction)
 
     def _manage(self, now: datetime) -> None:
         for holding in list(self._holdings.values()):
@@ -614,17 +686,22 @@ class Strategy(StrategyBase):
         if exit_for_earnings and now.time() >= time(15, 50):
             self._exit(holding)
             return
-        frame = cast(
-            DataFrame,
-            self._completed(self._daily_frames.get(holding.signal, DataFrame()), now),
-        )
+        daily_frame = self._daily_frames.get(holding.signal)
+        if daily_frame is None:
+            return
+        frame = self._completed(daily_frame, now)
         if len(frame) < 20:
             return
-        values = cast(Any, frame)
-        since = values[values.index >= holding.entered_at.astimezone(TRADING_ZONE)]
-        observed = since if len(since) else values
-        last = float(values["close"].iloc[-1])
-        holding.highest = max(holding.highest, float(observed["close"].max()))
+        since = cast(
+            DataFrame,
+            frame[cast(Any, frame.index) >= holding.entered_at.astimezone(TRADING_ZONE)],
+        )
+        observed = since if len(since) else frame
+        last = float(cast(Any, frame["close"]).iloc[-1])
+        holding.highest = max(
+            holding.highest,
+            float(cast(Any, observed["close"]).max()),
+        )
         multiple = 1.5 if holding.engine == "sma" else 2.0
         holding.stop = max(holding.stop, holding.highest - multiple * latest_atr(frame))
         if last < holding.stop or signal_exit(frame):
@@ -662,7 +739,7 @@ class Strategy(StrategyBase):
         )
         if recent is None:
             return
-        frame = cast(DataFrame, self._completed(recent, now, minutes))
+        frame = self._completed(recent, now, minutes)
         if len(frame) < 15:
             return
         trail = 1.5 * latest_atr(frame)
