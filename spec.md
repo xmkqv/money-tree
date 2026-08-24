@@ -67,4 +67,4 @@ mt report --strategy {name} --symbols {symbols} --start {date} --end {date}
 
 - the bot runs multiple strategies
 - the ui renders a modern dashboard that includes an overview, strategy details, analysis, and logs
-- the bot mode (paper/live) can be toggled by updating server vendor secrets
+- the deployed app bot mode (paper/live) can be toggled by updating app vendor secrets
