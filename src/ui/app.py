@@ -91,7 +91,7 @@ def create_app() -> FastAPI:
 
     @app.get("/login")
     async def login(request: Request) -> RedirectResponse:
-        authorization = oauth_client.authorization_request()
+        authorization = await oauth_client.authorization_request()
         request.session.clear()
         request.session["oauth_state"] = authorization.state
         request.session["oauth_verifier"] = authorization.verifier

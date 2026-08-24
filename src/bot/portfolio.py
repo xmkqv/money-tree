@@ -1,7 +1,6 @@
 import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from decimal import ROUND_DOWN, Decimal
 from importlib import import_module
 from pathlib import Path
 from typing import Any, cast
@@ -15,16 +14,32 @@ from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.requests import GetOrdersRequest
-from pandas import DataFrame, Series
+from lumibot.constants import LUMIBOT_DEFAULT_TIMEZONE
+from pandas import DataFrame
 
 from bot.config import settings
-from bot.strategies.shared import StrategyBase
-from bot.strategies.sma import adx, entry_quantity, rsi, true_range, wilder
+from bot.strategies.base import StrategyBase
+from bot.strategies.orb_base import relative_volume_ready
+from bot.strategies.shared import (
+    Direction,
+    does_macd_confirm,
+    earnings_blocked,
+    earnings_exit_due,
+    entry_quantity,
+    latest_atr,
+    market_is_rising,
+    momentum_entry,
+    next_stop,
+    quantity_value,
+    signal_exit,
+    tfb_entry,
+)
 from bot.types import StrategyName
 
 
-TRADING_ZONE = ZoneInfo("America/New_York")
+TRADING_ZONE = ZoneInfo(LUMIBOT_DEFAULT_TIMEZONE)
 FIVE_MINUTES = TimeFrame(5, cast(TimeFrameUnit, TimeFrameUnit.Minute))
+TEN_MINUTES = TimeFrame(10, cast(TimeFrameUnit, TimeFrameUnit.Minute))
 UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
 ENGINE_CODES: dict[StrategyName, str] = {
     "noop": "n",
@@ -47,6 +62,10 @@ class Holding:
     highest: float
     entered_at: datetime
     stage: int = 0
+    direction: Direction = 1
+    original_quantity: float = 0.0
+    targets: tuple[float, float, float] | None = None
+    lowest: float = float("inf")
 
 
 @dataclass(slots=True)
@@ -67,35 +86,6 @@ def _clock(frame: Any) -> Any:
     return values.sort_index()
 
 
-def _swing_low(low: Any) -> float | None:
-    values = [float(value) for value in low]
-    return next(
-        (
-            values[index]
-            for index in range(len(values) - 3, 1, -1)
-            if values[index] < min(values[index - 2 : index])
-            and values[index] < min(values[index + 1 : index + 3])
-        ),
-        None,
-    )
-
-
-def _atr(frame: Any) -> float:
-    return float(
-        cast(
-            Any,
-            wilder(
-                true_range(
-                    cast(Series, frame["high"]),
-                    cast(Series, frame["low"]),
-                    cast(Series, frame["close"]),
-                ),
-                14,
-            ),
-        ).iloc[-1]
-    )
-
-
 class Strategy(StrategyBase):
     def initialize(self) -> None:
         self.sleeptime = "1M"
@@ -111,7 +101,7 @@ class Strategy(StrategyBase):
         self._closing: set[str] = set()
         self._events: set[str] = set()
         self._orb_traded: set[tuple[date, str]] = set()
-        self._orb_scanned: set[tuple[date, str]] = set()
+        self._orb_scanned: set[tuple[date, StrategyName, str]] = set()
         self._day: date | None = None
         self._baseline_equity = 0.0
         self._locked_on: date | None = None
@@ -160,20 +150,34 @@ class Strategy(StrategyBase):
     ) -> None:
         asset = str(order.asset.symbol)
         side = str(order.side).lower()
-        if "buy" in side and (pending := self._pending.pop(asset, None)) is not None:
+        pending = self._pending.get(asset)
+        entry_side = "buy" if pending is None or pending.holding.direction == 1 else "sell"
+        if pending is not None and entry_side in side:
+            self._pending.pop(asset)
             holding = pending.holding
-            fraction = holding.risk / holding.entry
             holding.entry = float(price)
-            holding.risk = holding.entry * fraction
-            holding.stop = holding.entry - holding.risk
+            holding.risk = abs(holding.entry - holding.stop)
             holding.highest = holding.entry
+            holding.lowest = holding.entry
+            holding.original_quantity = abs(float(quantity))
+            if holding.engine == "orb":
+                holding.targets = cast(
+                    tuple[float, float, float],
+                    tuple(
+                        holding.entry + holding.direction * holding.risk * multiple
+                        for multiple in (1.5, 2.5, 4.0)
+                    ),
+                )
             self._holdings[asset] = holding
-            self._protect(holding, float(quantity))
-        if "sell" in side:
-            self._closing.discard(asset)
-            remaining = abs(float(getattr(position, "quantity", 0.0)))
-            if remaining <= 0:
-                self._release(asset)
+            if holding.engine in {"orb", "orb_momentum"}:
+                self._protect(holding, float(quantity))
+            return
+        self._closing.discard(asset)
+        remaining = abs(float(getattr(position, "quantity", 0.0)))
+        if remaining <= 0:
+            self._release(asset)
+        elif asset in self._holdings:
+            self._protect(self._holdings[asset], remaining)
 
     def _event(self, key: str, level: str, message: str) -> None:
         if key in self._events:
@@ -225,7 +229,8 @@ class Strategy(StrategyBase):
                 ),
                 None,
             )
-            if match is None or float(position.qty) <= 0:
+            quantity = float(position.qty)
+            if match is None or quantity == 0:
                 self._claims[asset] = None
                 continue
             engine = self._order_engine(str(match.client_order_id))
@@ -246,10 +251,35 @@ class Strategy(StrategyBase):
             entry = float(position.avg_entry_price)
             risk = entry * (self._order_risk(client_order_id) or 0.01)
             entered_at = entry_order.filled_at or datetime.now(UTC)
-            holding = Holding(engine, signal, asset, entry, entry - risk, risk, entry, entered_at)
-            initial_quantity = float(entry_order.filled_qty or entry_order.qty or position.qty)
-            remaining_fraction = float(position.qty) / initial_quantity
-            if engine == "orb" and remaining_fraction <= 0.5:
+            direction: Direction = 1 if quantity > 0 else -1
+            original = abs(float(entry_order.filled_qty or entry_order.qty or position.qty))
+            targets: tuple[float, float, float] | None = None
+            if engine == "orb":
+                targets = cast(
+                    tuple[float, float, float],
+                    tuple(entry + direction * risk * value for value in (1.5, 2.5, 4.0)),
+                )
+            if engine == "orb_momentum":
+                targets = cast(
+                    tuple[float, float, float],
+                    tuple(entry + direction * risk * value for value in (2.0, 4.0, 8.0)),
+                )
+            holding = Holding(
+                engine,
+                signal,
+                asset,
+                entry,
+                entry - direction * risk,
+                risk,
+                entry,
+                entered_at,
+                direction=direction,
+                original_quantity=original,
+                targets=targets,
+                lowest=entry,
+            )
+            remaining_fraction = abs(quantity) / original
+            if engine in {"orb", "orb_momentum"} and remaining_fraction <= 0.5:
                 holding.stage = 1 if remaining_fraction > 0.25 else 2
             self._holdings[asset] = holding
             self._claims[asset] = engine
@@ -292,6 +322,9 @@ class Strategy(StrategyBase):
                 datetime.combine(day - timedelta(days=390), time(), TRADING_ZONE),
                 cast(TimeFrame, TimeFrame.Day),
             )
+            spx = self._spx(day)
+            if spx is not None:
+                self._daily_frames["^GSPC"] = spx
         except Exception as error:
             self._daily_frames = {}
             self._event("universe", "error", f"Stock universe unavailable: {type(error).__name__}")
@@ -299,6 +332,22 @@ class Strategy(StrategyBase):
         self._large_symbols = large
         self._liquid_symbols = liquid
         self._prepared_on = day
+
+    def _spx(self, day: date) -> DataFrame | None:
+        try:
+            finance = cast(Any, import_module("yfinance"))
+            frame = finance.Ticker("^GSPC").history(
+                start=day - timedelta(days=390),
+                end=day + timedelta(days=1),
+                auto_adjust=True,
+            )
+            if frame.empty:
+                return None
+            frame.columns = [str(column).lower() for column in frame.columns]
+            return cast(DataFrame, _clock(frame))
+        except Exception as error:
+            self._event("spx", "error", f"SPX market state unavailable: {type(error).__name__}")
+            return None
 
     def _universe(self) -> tuple[list[str], list[str]]:
         try:
@@ -340,7 +389,11 @@ class Strategy(StrategyBase):
                 for value in quotes
                 if value.get("quoteType") == "EQUITY"
             ]
-            large = sorted(symbol for symbol, cap, _ in rows if symbol in assets and cap >= 2e9)
+            large = sorted(
+                symbol
+                for symbol, cap, volume in rows
+                if symbol in assets and cap >= 5e8 and volume >= 1e6
+            )
             liquid = sorted(
                 symbol
                 for symbol, cap, volume in rows
@@ -379,6 +432,14 @@ class Strategy(StrategyBase):
         return values[values.index.date < now.date()]
 
     def _run_daily(self, now: datetime) -> None:
+        market = cast(
+            DataFrame,
+            self._completed(self._daily_frames.get("^GSPC", DataFrame()), now),
+        )
+        if not market_is_rising(market):
+            self._event("market-state", "warning", "SPX is not above its 20-day average")
+            self._daily_run_on = now.date()
+            return
         for engine in self._selected:
             if engine == "sma":
                 self._run_sma(now)
@@ -388,159 +449,150 @@ class Strategy(StrategyBase):
 
     def _run_sma(self, now: datetime) -> None:
         for symbol in self._large_symbols:
-            frame = self._completed(self._daily_frames.get(symbol, DataFrame()), now)
-            if len(frame) < 205 or self._claimed(symbol):
-                continue
-            close = frame["close"]
-            high = frame["high"]
-            low = frame["low"]
-            sma20 = close.rolling(20).mean()
-            last = float(close.iloc[-1])
-            crossed = float(close.iloc[-2]) < float(sma20.iloc[-2]) and last > float(sma20.iloc[-1])
-            strength = float(cast(Any, rsi(close, 14)).iloc[-1])
-            trend = (
-                last
-                > float(close.rolling(50).mean().iloc[-1])
-                > float(close.rolling(200).mean().iloc[-1])
+            frame = cast(
+                DataFrame,
+                self._completed(self._daily_frames.get(symbol, DataFrame()), now),
             )
-            stop = _swing_low(low)
-            if (
-                crossed
-                and trend
-                and 50 <= strength <= 70
-                and float(cast(Any, adx(high, low, close, 14)).iloc[-1]) > 25
-                and stop is not None
-            ):
-                self._enter("sma", symbol, symbol, last, stop, now)
+            if self._claimed(symbol) or not momentum_entry(frame):
+                continue
+            try:
+                blocked = earnings_blocked(symbol, now.date())
+            except Exception as error:
+                self._event(
+                    f"earnings-{symbol}",
+                    "error",
+                    f"Earnings calendar unavailable for {symbol}: {type(error).__name__}",
+                )
+                continue
+            if blocked:
+                continue
+            last = float(cast(Any, frame["close"]).iloc[-1])
+            self._enter("sma", symbol, symbol, last, last - 1.5 * latest_atr(frame), now)
 
     def _run_tfb(self, now: datetime) -> None:
-        for symbol in sorted(set(self._large_symbols).union({"SPY", "QQQ"})):
-            frame = self._completed(self._daily_frames.get(symbol, DataFrame()), now)
-            if len(frame) < 55 or self._claimed(symbol):
-                continue
-            close = frame["close"]
-            sma50 = close.rolling(50).mean()
-            stop = _swing_low(frame["low"])
-            rising = all(
-                float(sma50.iloc[index]) > float(sma50.iloc[index - 1]) for index in (-1, -2, -3)
+        for symbol in self._large_symbols:
+            frame = cast(
+                DataFrame,
+                self._completed(self._daily_frames.get(symbol, DataFrame()), now),
             )
-            if (
-                float(close.iloc[-1]) > float(sma50.iloc[-1])
-                and rising
-                and float(
-                    cast(
-                        Any,
-                        adx(
-                            cast(Series, frame["high"]),
-                            cast(Series, frame["low"]),
-                            close,
-                            14,
-                        ),
-                    ).iloc[-1]
-                )
-                < 20
-                and float(close.iloc[-1]) > float(frame["high"].iloc[-2])
-                and stop is not None
-            ):
-                self._enter("tfb_50", symbol, symbol, float(close.iloc[-1]), stop, now)
+            if self._claimed(symbol) or not tfb_entry(frame):
+                continue
+            last = float(cast(Any, frame["close"]).iloc[-1])
+            self._enter("tfb_50", symbol, symbol, last, last - 2.0 * latest_atr(frame), now)
 
     def _run_orb(self, now: datetime) -> None:
-        if "orb" not in self._enabled or not time(9, 40) <= now.time() < time(15, 55):
-            return
-        key = (now.date(), "orb")
-        if key in self._orb_traded:
-            return
-        frame = self._intraday(["SPY"], now).get("SPY")
-        if frame is None or len(frame) < 3:
-            return
-        opening = frame.between_time("09:30", "09:39")
-        candle = frame.iloc[-1]
-        if len(opening) != 2 or frame.index[-1].time() < time(9, 40):
-            return
-        high = float(opening["high"].max())
-        low = float(opening["low"].min())
-        span = float(candle["high"] - candle["low"])
-        close = float(candle["close"])
-        if close > high and span > 0 and close >= float(candle["high"]) - span * 0.25:
-            accepted = self._enter("orb", "SPY", "SPY", close, low, now, loss_max=0.80)
-        elif close < low and span > 0 and close <= float(candle["low"]) + span * 0.25:
-            proxy = float(self.get_last_price("SH"))
-            risk_fraction = (high - close) / close
-            accepted = self._enter(
-                "orb", "SPY", "SH", proxy, proxy * (1 - risk_fraction), now, loss_max=0.80
-            )
-        else:
-            accepted = False
-        if accepted:
-            self._orb_traded.add(key)
+        self._run_orb_variant("orb", now, 5, 1.3, False)
 
     def _run_orb_momentum(self, now: datetime) -> None:
+        self._run_orb_variant("orb_momentum", now, 10, 1.5, True)
+
+    def _run_orb_variant(
+        self,
+        engine: StrategyName,
+        now: datetime,
+        minutes: int,
+        volume_multiple: float,
+        uses_macd: bool,
+    ) -> None:
+        opening_end = time(9, 35) if minutes == 5 else time(9, 40)
         if (
-            "orb_momentum" not in self._enabled
-            or not time(9, 40) <= now.time() <= time(10, 30)
+            engine not in self._enabled
+            or not opening_end <= now.time() <= time(10, 30)
             or not self._liquid_symbols
         ):
             return
-        frames = self._intraday(self._liquid_symbols, now)
+        frames = self._intraday(self._liquid_symbols, now, minutes)
         for symbol in self._liquid_symbols:
-            key = (now.date(), symbol)
-            frame = frames.get(symbol)
-            if key in self._orb_scanned or frame is None or len(frame) < 3 or self._claimed(symbol):
+            key = (now.date(), engine, symbol)
+            frame = cast(Any, frames.get(symbol))
+            if (
+                key in self._orb_scanned
+                or frame is None
+                or frame.empty
+                or self._claimed(symbol)
+            ):
                 continue
-            opening = frame.between_time("09:30", "09:39")
-            if len(opening) != 2:
+            opening = frame.between_time("09:30", "09:34" if minutes == 5 else "09:39")
+            candle = frame.iloc[-1]
+            if opening.empty or frame.index[-1].time() < opening_end:
                 continue
-            close = frame["close"]
-            last = float(close.iloc[-1])
             high = float(opening["high"].max())
             low = float(opening["low"].min())
-            long = last > high
-            short = last < low
-            if not long and not short:
+            close = float(candle["close"])
+            direction: Direction | None = 1 if close > high else -1 if close < low else None
+            if direction is None:
                 continue
             self._orb_scanned.add(key)
-            if not self._momentum_confirm(symbol, now, float(frame["volume"].sum()), long):
+            if not self._orb_confirm(
+                symbol,
+                now,
+                minutes,
+                volume_multiple,
+                direction,
+                uses_macd,
+            ):
                 continue
-            if short:
-                self._event(
-                    f"short-{symbol}-{now.date()}",
-                    "warning",
-                    f"ORB Momentum short skipped for {symbol}: account cannot short",
+            span = high - low
+            stop = low + span * (0.75 if direction == 1 else 0.25)
+            targets = None
+            if minutes == 10:
+                targets = (
+                    high + 0.5 * span,
+                    high + span,
+                    high + 2.0 * span,
+                ) if direction == 1 else (
+                    low - 0.5 * span,
+                    low - span,
+                    low - 2.0 * span,
                 )
-                continue
-            self._enter("orb_momentum", symbol, symbol, last, low, now)
+            self._enter(
+                engine,
+                symbol,
+                symbol,
+                close,
+                stop,
+                now,
+                direction=direction,
+                targets=targets,
+                risk_fraction_max=0.01 if engine == "orb" else None,
+            )
 
-    def _intraday(self, symbols: list[str], now: datetime) -> dict[str, Any]:
+    def _intraday(
+        self, symbols: list[str], now: datetime, minutes: int
+    ) -> dict[str, Any]:
         start = datetime.combine(now.date(), time(9, 30), TRADING_ZONE)
+        timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
         return {
-            symbol: self._completed(frame, now, 5)
-            for symbol, frame in self._frames(symbols, start, FIVE_MINUTES, now).items()
+            symbol: self._completed(frame, now, minutes)
+            for symbol, frame in self._frames(symbols, start, timeframe, now).items()
         }
 
-    def _momentum_confirm(self, symbol: str, now: datetime, current: float, long: bool) -> bool:
-        frame = self._frames([symbol], now - timedelta(days=45), FIVE_MINUTES, now).get(symbol)
-        daily = self._daily_frames.get(symbol)
-        if frame is None or daily is None:
+    def _orb_confirm(
+        self,
+        symbol: str,
+        now: datetime,
+        minutes: int,
+        volume_multiple: float,
+        direction: Direction,
+        uses_macd: bool,
+    ) -> bool:
+        timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
+        frame = self._frames([symbol], now - timedelta(days=45), timeframe, now).get(symbol)
+        if frame is None:
             return False
-        history = _clock(frame).between_time("09:30", "15:59")
-        macd = (
-            history["close"].ewm(span=12, adjust=False).mean()
-            - history["close"].ewm(span=26, adjust=False).mean()
-        )
-        if (float(macd.iloc[-1]) > float(macd.iloc[-2])) != long:
+        completed = self._completed(frame, now, minutes)
+        if completed.empty:
             return False
-        clock = (now - timedelta(minutes=5)).time()
-        totals = [
-            float(group[group.index.time <= clock]["volume"].sum())
-            for day, group in history.groupby(history.index.date)
-            if day < now.date()
-        ][-20:]
-        volumes = self._completed(daily, now)["volume"].tail(20)
-        return (
-            len(totals) == 20
-            and float(volumes.mean()) >= 1_000_000
-            and current >= 1.5 * sum(totals) / len(totals)
-        )
+        if not relative_volume_ready(
+            cast(DataFrame, completed),
+            now.date(),
+            completed.index[-1].time(),
+            volume_multiple,
+        ):
+            return False
+        if not uses_macd:
+            return True
+        return does_macd_confirm(completed["close"], direction)
 
     def _manage(self, now: datetime) -> None:
         for holding in list(self._holdings.values()):
@@ -549,71 +601,80 @@ class Strategy(StrategyBase):
                 continue
             if holding.engine in {"sma", "tfb_50"}:
                 self._manage_daily(holding, now)
-            elif holding.engine == "orb":
-                self._manage_orb(holding)
-            elif holding.engine == "orb_momentum":
-                self._manage_orb_momentum(holding, now)
+            else:
+                self._manage_orb(holding, now)
 
     def _manage_daily(self, holding: Holding, now: datetime) -> None:
-        frame = self._completed(self._daily_frames.get(holding.signal, DataFrame()), now)
-        if len(frame) < 22:
-            return
-        close = frame["close"]
-        last = float(close.iloc[-1])
-        sma20 = float(close.rolling(20).mean().iloc[-1])
-        strength = float(cast(Any, rsi(close, 14)).iloc[-1])
-        if holding.engine == "sma":
-            since = frame[frame.index >= holding.entered_at.astimezone(TRADING_ZONE)]
-            observed = since if len(since) else frame
-            holding.highest = max(holding.highest, float(observed["high"].max()))
-            holding.stop = max(holding.stop, holding.highest - 1.5 * _atr(frame))
-            if last >= holding.entry + 2 * holding.risk or (last < sma20 and strength < 50):
-                self._exit(holding)
-                return
-        else:
-            swing = _swing_low(frame["low"])
-            if swing is not None:
-                holding.stop = max(holding.stop, swing)
-            if last < float(frame["low"].iloc[-2]) or (last < sma20 and strength < 50):
-                self._exit(holding)
-                return
-        self._protect(holding)
-
-    def _manage_orb(self, holding: Holding) -> None:
-        price = float(self.get_last_price(holding.asset))
-        holding.highest = max(holding.highest, price)
-        quantity = self._quantity(holding.asset)
-        if holding.stage == 0 and price >= holding.entry + 2 * holding.risk:
-            holding.stage = 1
-            self._exit(holding, quantity * 0.5)
-        elif holding.stage == 1 and price >= holding.entry + 3 * holding.risk:
-            holding.stage = 2
-            self._exit(holding, quantity * 0.5)
-        elif holding.stage == 2 and price >= holding.entry + 4 * holding.risk:
+        try:
+            exit_for_earnings = earnings_exit_due(holding.signal, now.date())
+        except Exception as error:
+            self._event(
+                f"earnings-{holding.signal}",
+                "error",
+                f"Earnings calendar unavailable for {holding.signal}: {type(error).__name__}",
+            )
+            exit_for_earnings = False
+        if exit_for_earnings and now.time() >= time(15, 50):
             self._exit(holding)
-        elif holding.stage >= 1:
-            holding.stop = max(holding.stop, holding.highest - holding.risk)
-            self._protect(holding)
-
-    def _manage_orb_momentum(self, holding: Holding, now: datetime) -> None:
-        recent = self._frames([holding.signal], now - timedelta(days=5), FIVE_MINUTES, now).get(
-            holding.signal
+            return
+        frame = cast(
+            DataFrame,
+            self._completed(self._daily_frames.get(holding.signal, DataFrame()), now),
         )
-        if recent is None or len(recent) < 15:
+        if len(frame) < 20:
             return
-        frame = self._completed(recent, now, 5)
-        session = frame[frame.index.date == now.date()]
-        if len(session) < 3:
-            return
+        values = cast(Any, frame)
+        since = values[values.index >= holding.entered_at.astimezone(TRADING_ZONE)]
+        observed = since if len(since) else values
+        last = float(values["close"].iloc[-1])
+        holding.highest = max(holding.highest, float(observed["close"].max()))
+        multiple = 1.5 if holding.engine == "sma" else 2.0
+        holding.stop = max(holding.stop, holding.highest - multiple * latest_atr(frame))
+        if last < holding.stop or signal_exit(frame):
+            self._exit(holding)
+
+    def _manage_orb(self, holding: Holding, now: datetime) -> None:
         price = float(self.get_last_price(holding.asset))
         holding.highest = max(holding.highest, price)
-        opening_high = float(session.between_time("09:30", "09:39")["high"].max())
-        if float(session["close"].iloc[-1]) < opening_high:
-            self._exit(holding)
+        holding.lowest = min(holding.lowest, price)
+        targets = holding.targets
+        if targets is None:
             return
-        if price >= holding.entry + holding.risk:
-            holding.stage = 1
-            holding.stop = max(holding.stop, holding.entry, holding.highest - 1.5 * _atr(frame))
+        reached = (
+            price >= targets[holding.stage]
+            if holding.direction == 1
+            else price <= targets[holding.stage]
+        )
+        if reached:
+            if holding.stage == 0:
+                quantity = holding.original_quantity * 0.5
+            elif holding.stage == 1:
+                quantity = holding.original_quantity * 0.25
+            else:
+                self._exit(holding)
+                return
+            holding.stage += 1
+            self._exit(holding, quantity)
+            return
+        if holding.stage == 0:
+            return
+        minutes = 5 if holding.engine == "orb" else 10
+        timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
+        recent = self._frames(
+            [holding.signal], now - timedelta(days=5), timeframe, now
+        ).get(holding.signal)
+        if recent is None:
+            return
+        frame = cast(DataFrame, self._completed(recent, now, minutes))
+        if len(frame) < 15:
+            return
+        trail = 1.5 * latest_atr(frame)
+        candidate = (
+            max(holding.entry, holding.highest - trail)
+            if holding.direction == 1
+            else min(holding.entry, holding.lowest + trail)
+        )
+        holding.stop = next_stop(holding.direction, holding.stop, candidate)
         self._protect(holding)
 
     def _enter(
@@ -624,10 +685,26 @@ class Strategy(StrategyBase):
         price: float,
         stop: float,
         now: datetime,
-        loss_max: float | None = None,
+        *,
+        direction: Direction = 1,
+        targets: tuple[float, float, float] | None = None,
+        risk_fraction_max: float | None = None,
     ) -> bool:
-        if engine not in self._enabled or self._claimed(signal) or stop >= price:
+        if (
+            engine not in self._enabled
+            or self._claimed(signal)
+            or direction * (price - stop) <= 0
+        ):
             return False
+        if direction == -1:
+            security = self.broker.api.get_asset(asset)
+            if not bool(security.shortable):
+                self._event(
+                    f"short-{asset}-{now.date()}",
+                    "warning",
+                    f"Short entry skipped for {asset}: security is not shortable",
+                )
+                return False
         account = self.broker.api.get_account()
         equity = float(account.portfolio_value)
         positions = cast(list[Any], self.broker.api.get_all_positions())
@@ -640,12 +717,12 @@ class Strategy(StrategyBase):
         risk_fraction = float(self.parameters["risk_per_trade_max"])
         if equity <= 0:
             return False
-        if loss_max is not None:
-            risk_fraction = min(risk_fraction, loss_max / equity)
+        if risk_fraction_max is not None:
+            risk_fraction = min(risk_fraction, risk_fraction_max)
         quantity = entry_quantity(
             equity,
             price,
-            price - stop,
+            abs(price - stop),
             min(0.10, float(self.parameters["position_fraction_max"])),
             risk_fraction,
             bool(self.parameters["fractional_orders"]),
@@ -654,7 +731,17 @@ class Strategy(StrategyBase):
         if quantity <= 0 or gross + notional > equity:
             return False
         holding = Holding(
-            engine, signal, asset, price, stop, price - stop, price, now.astimezone(UTC)
+            engine,
+            signal,
+            asset,
+            price,
+            stop,
+            abs(price - stop),
+            price,
+            now.astimezone(UTC),
+            direction=direction,
+            targets=targets,
+            lowest=price,
         )
         self._pending[asset] = Pending(holding, now, notional)
         self._claims[signal] = engine
@@ -662,7 +749,7 @@ class Strategy(StrategyBase):
         order = self.create_order(
             asset,
             quantity,
-            "buy",
+            "buy" if direction == 1 else "sell",
             time_in_force="day",
             custom_params={
                 "client_order_id": self._order_id(engine, "e", signal, holding.risk / price)
@@ -679,7 +766,9 @@ class Strategy(StrategyBase):
         stop = round(holding.stop, 2)
         if amount <= 0 or stop <= 0:
             return
-        if stop >= price:
+        if (holding.direction == 1 and stop >= price) or (
+            holding.direction == -1 and stop <= price
+        ):
             self._exit(holding)
             return
         if self._stops.get(holding.asset) == stop:
@@ -687,8 +776,8 @@ class Strategy(StrategyBase):
         self._cancel(holding.asset)
         order = self.create_order(
             holding.asset,
-            self._quantity_value(amount),
-            "sell",
+            quantity_value(amount, bool(self.parameters["fractional_orders"])),
+            "sell" if holding.direction == 1 else "buy",
             stop_price=stop,
             time_in_force="day",
             custom_params={
@@ -703,15 +792,16 @@ class Strategy(StrategyBase):
     def _exit(self, holding: Holding, quantity: float | None = None) -> None:
         if holding.asset in self._closing:
             return
-        amount = self._quantity(holding.asset) if quantity is None else quantity
+        current = self._quantity(holding.asset)
+        amount = current if quantity is None else min(quantity, current)
         if amount <= 0:
             self._release(holding.asset)
             return
         self._cancel(holding.asset)
         order = self.create_order(
             holding.asset,
-            self._quantity_value(amount),
-            "sell",
+            quantity_value(amount, bool(self.parameters["fractional_orders"])),
+            "sell" if holding.direction == 1 else "buy",
             time_in_force="day",
             custom_params={
                 "client_order_id": self._order_id(
@@ -723,22 +813,19 @@ class Strategy(StrategyBase):
         self._closing.add(holding.asset)
 
     def _cancel(self, asset: str) -> None:
-        canceled = False
-        for order in cast(list[Any], self.get_orders()):
-            if order.is_active() and str(order.asset.symbol) == asset:
-                self.cancel_order(order)
-                canceled = True
-        if canceled:
+        orders = [
+            order
+            for order in cast(list[Any], self.get_orders())
+            if order.is_active() and str(order.asset.symbol) == asset
+        ]
+        self.cancel_open_orders(orders)
+        if orders:
             self.sleep(1)
         self._stops.pop(asset, None)
 
     def _quantity(self, asset: str) -> float:
         position = self.get_position(asset)
         return 0.0 if position is None else abs(float(position.quantity))
-
-    def _quantity_value(self, quantity: float) -> Decimal:
-        increment = Decimal("0.000000001" if self.parameters["fractional_orders"] else "1")
-        return Decimal(str(quantity)).quantize(increment, rounding=ROUND_DOWN)
 
     def _claimed(self, symbol: str) -> bool:
         return symbol in self._claims or symbol in self._pending or symbol in self._holdings

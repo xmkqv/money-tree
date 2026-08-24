@@ -9,7 +9,7 @@ from bot.types import STRATEGY_LABELS, StrategyName
 def run(strategy_names: list[StrategyName]) -> None:
     from lumibot.traders import Trader
 
-    from bot.strategies.portfolio import Strategy
+    from bot.portfolio import Strategy
 
     configuration = settings.trading_configuration
     labels = [STRATEGY_LABELS[name] for name in strategy_names]

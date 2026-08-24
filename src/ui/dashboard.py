@@ -1,22 +1,24 @@
-import hmac
+import hashlib
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from itsdangerous import BadSignature, SignatureExpired, TimestampSigner
 from pydantic import AwareDatetime, ValidationError
+from starlette.responses import FileResponse
 
-from bot.types import RuntimeSnapshot
+from bot.types import STATE_SIGNATURE_SALT, RuntimeSnapshot
 from ui.alpaca import AlpacaReadClient
 from ui.config import WebSettings
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
 DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.v3.html").read_bytes()
-DASHBOARD_CSS = (ASSET_DIRECTORY / "dashboard.v3.css").read_bytes()
-DASHBOARD_JAVASCRIPT = (ASSET_DIRECTORY / "dashboard.v3.js").read_bytes()
+DASHBOARD_CSS = ASSET_DIRECTORY / "dashboard.v3.css"
+DASHBOARD_JAVASCRIPT = ASSET_DIRECTORY / "dashboard.v3.js"
 NO_STORE = {"Cache-Control": "no-store"}
 IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
 HEARTBEAT_TIMEOUT = timedelta(seconds=15)
@@ -70,6 +72,11 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
     router = APIRouter()
     mode = b"PAPER" if configuration.alpaca_is_paper else b"LIVE"
     dashboard_html = DASHBOARD_HTML.replace(b"{{ ALPACA_MODE }}", mode)
+    signer = TimestampSigner(
+        configuration.state_export_secret.get_secret_value(),
+        salt=STATE_SIGNATURE_SALT,
+        digest_method=hashlib.sha256,
+    )
 
     def alpaca(request: Request) -> AlpacaReadClient:
         return request.state.alpaca
@@ -84,12 +91,16 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         return Response(dashboard_html, media_type="text/html", headers=DASHBOARD_HEADERS)
 
     @router.get("/assets/dashboard.v3.css")
-    async def dashboard_css() -> Response:
-        return Response(DASHBOARD_CSS, media_type="text/css", headers=IMMUTABLE)
+    async def dashboard_css() -> FileResponse:
+        return FileResponse(DASHBOARD_CSS, media_type="text/css", headers=IMMUTABLE)
 
     @router.get("/assets/dashboard.v3.js")
-    async def dashboard_javascript() -> Response:
-        return Response(DASHBOARD_JAVASCRIPT, media_type="text/javascript", headers=IMMUTABLE)
+    async def dashboard_javascript() -> FileResponse:
+        return FileResponse(
+            DASHBOARD_JAVASCRIPT,
+            media_type="text/javascript",
+            headers=IMMUTABLE,
+        )
 
     @router.get("/api/session")
     async def session(request: Request) -> JSONResponse:
@@ -162,22 +173,18 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
             if size > 65_536:
                 return error_response("Runtime snapshot is too large", 413)
             chunks.append(chunk)
-        body = b"".join(chunks)
-        timestamp_text = request.headers.get("X-State-Timestamp", "")
-        signature = request.headers.get("X-State-Signature", "")
-        if not (
-            len(timestamp_text) <= 10 and timestamp_text.isascii() and timestamp_text.isdecimal()
-        ):
-            return error_response("Runtime signature is invalid", 401)
-        signed_at = datetime.fromtimestamp(int(timestamp_text), UTC)
-        if abs((datetime.now(UTC) - signed_at).total_seconds()) > SIGNATURE_WINDOW_SECONDS:
+        try:
+            body, signed_at = cast(
+                tuple[bytes, datetime],
+                signer.unsign(
+                    b"".join(chunks),
+                    max_age=SIGNATURE_WINDOW_SECONDS,
+                    return_timestamp=True,
+                ),
+            )
+        except SignatureExpired:
             return error_response("Runtime signature has expired", 401)
-        expected = hmac.digest(
-            configuration.state_export_secret.get_secret_value().encode(),
-            timestamp_text.encode() + b"." + body,
-            "sha256",
-        ).hex()
-        if not hmac.compare_digest(expected.encode(), signature.encode()):
+        except BadSignature:
             return error_response("Runtime signature is invalid", 401)
         try:
             snapshot = RuntimeSnapshot.model_validate_json(body)

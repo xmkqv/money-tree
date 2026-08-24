@@ -41,9 +41,8 @@ def run_report(
     symbols: Annotated[str, typer.Option()] = "SPY",
     start: Annotated[datetime, typer.Option()] = datetime(2023, 1, 1),
     end: Annotated[datetime, typer.Option()] = datetime(2024, 1, 1),
-    label: Annotated[str | None, typer.Option()] = None,
 ) -> None:
-    report.run(strategy, _parse_symbols(symbols), start, end, label)
+    report.run(strategy, _parse_symbols(symbols), start, end)
 
 
 @app.command("trade")

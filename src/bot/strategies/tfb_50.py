@@ -1,12 +1,12 @@
 from pandas import DataFrame
 
 from bot.strategies.daily import DailyStrategy
-from bot.strategies.shared import momentum_entry
+from bot.strategies.shared import tfb_entry
 
 
 class Strategy(DailyStrategy):
-    stop_multiple = 1.5
-    blocks_entries_before_earnings = True
+    stop_multiple = 2.0
+    blocks_entries_before_earnings = False
 
     def _entry_ready(self, frame: DataFrame) -> bool:
-        return momentum_entry(frame)
+        return tfb_entry(frame)

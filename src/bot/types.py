@@ -1,9 +1,5 @@
-from collections.abc import Mapping
-from dataclasses import dataclass
-from datetime import datetime, timedelta
 from typing import Annotated, Literal, Self, cast
 
-from pandas import Series
 from pydantic import (
     UUID4,
     AnyHttpUrl,
@@ -21,16 +17,15 @@ type RiskLimit = Annotated[float, Field(gt=0, le=1)]
 type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
 type EventLevel = Literal["info", "warning", "error"]
-type ChartName = Literal["equity", "drawdown", "monthly", "trades"]
-type ReportRow = list[str]
 type StrategyName = Literal["noop", "orb", "sma", "tfb_50", "orb_momentum"]
 
+STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
 STRATEGY_LABELS: dict[StrategyName, str] = {
     "noop": "No-op",
-    "orb": "Orb",
+    "orb": "ORB (5-minute)",
     "sma": "Momentum (SMA)",
     "tfb_50": "TFB-50",
-    "orb_momentum": "ORB Momentum",
+    "orb_momentum": "ORB (10-minute)",
 }
 
 
@@ -108,94 +103,3 @@ class RuntimeSnapshot(_StrictModel):
     heartbeat_at: AwareDatetime
     configuration: TradingConfiguration
     events: list[RuntimeEvent] = Field(max_length=50)
-
-
-class RunSettings(BaseModel):
-    model_config = ConfigDict(extra="ignore", frozen=True)
-
-    budget: float | None = None
-    benchmark_asset: str | dict[str, object] | None = None
-    lumibot_version: str | None = None
-    parameters: dict[str, object] = Field(default_factory=dict)
-
-
-@dataclass(frozen=True, slots=True)
-class Fill:
-    symbol: str
-    sign: int
-    quantity: float
-    price: float
-    filled_at: datetime
-
-
-@dataclass(frozen=True, slots=True)
-class RoundTrip:
-    symbol: str
-    sign: int
-    quantity: float
-    entry_at: datetime
-    exit_at: datetime
-    entry_price: float
-    exit_price: float
-
-    @property
-    def pnl_usd(self) -> float:
-        return self.sign * (self.exit_price - self.entry_price) * self.quantity
-
-    @property
-    def return_fraction(self) -> float:
-        return self.sign * (self.exit_price / self.entry_price - 1.0)
-
-    @property
-    def holding_days(self) -> float:
-        return (self.exit_at - self.entry_at) / timedelta(days=1)
-
-
-@dataclass(frozen=True, slots=True)
-class TradeStats:
-    count: int
-    win_rate: float | None
-    profit_factor: float | None
-    average_win: float | None
-    average_loss: float | None
-    best: float | None
-    worst: float | None
-    average_days: float | None
-
-
-@dataclass(frozen=True, slots=True)
-class ReportData:
-    equity: Series
-    returns: Series
-    trips: list[RoundTrip]
-    settings: RunSettings
-    analytics: Mapping[str, object]
-    trades: TradeStats
-    scalars: dict[str, object]
-
-
-class SectionModel(_StrictModel):
-    heading: str
-
-
-class TableSection(SectionModel):
-    table: list[ReportRow]
-
-
-class ImageSection(SectionModel):
-    image: str
-    caption: str
-
-
-class BulletSection(SectionModel):
-    bullets: list[str]
-
-
-type Section = TableSection | ImageSection | BulletSection
-
-
-class Report(_StrictModel):
-    title: str
-    summary: str
-    sections: list[Section]
-    footer: str

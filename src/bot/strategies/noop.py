@@ -1,4 +1,4 @@
-from bot.strategies.shared import StrategyBase
+from bot.strategies.base import StrategyBase
 
 
 class Strategy(StrategyBase):

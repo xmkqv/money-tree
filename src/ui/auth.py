@@ -1,10 +1,7 @@
-import base64
-import hashlib
-import secrets
 from typing import NamedTuple
-from urllib.parse import urlencode
 
-import httpx
+from authlib.common.security import generate_token
+from authlib.integrations.httpx_client import AsyncOAuth2Client
 
 from ui.config import WebSettings
 
@@ -29,44 +26,29 @@ class RailwayOAuthClient:
     def __init__(self, configuration: WebSettings) -> None:
         self._configuration = configuration
 
-    def authorization_request(self) -> AuthorizationRequest:
-        state = secrets.token_urlsafe(32)
-        verifier = secrets.token_urlsafe(64)
-        digest = hashlib.sha256(verifier.encode()).digest()
-        challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
-        query = urlencode(
-            {
-                "response_type": "code",
-                "client_id": self._configuration.railway_oauth_client_id,
-                "redirect_uri": str(self._configuration.railway_oauth_redirect_uri),
-                "scope": "openid email",
-                "state": state,
-                "code_challenge": challenge,
-                "code_challenge_method": "S256",
-            }
+    def _client(self) -> AsyncOAuth2Client:
+        configuration = self._configuration
+        return AsyncOAuth2Client(
+            configuration.railway_oauth_client_id,
+            configuration.railway_oauth_client_secret.get_secret_value(),
+            scope="openid email",
+            redirect_uri=str(configuration.railway_oauth_redirect_uri),
+            code_challenge_method="S256",
+            timeout=10,
         )
-        return AuthorizationRequest(f"{AUTHORIZATION_URL}?{query}", state, verifier)
+
+    async def authorization_request(self) -> AuthorizationRequest:
+        verifier = generate_token(64)
+        async with self._client() as client:
+            url, state = client.create_authorization_url(
+                AUTHORIZATION_URL, code_verifier=verifier
+            )
+        return AuthorizationRequest(url, state, verifier)
 
     async def identify(self, code: str, verifier: str) -> RailwayIdentity:
-        configuration = self._configuration
-        async with httpx.AsyncClient(timeout=10) as client:
-            token = await client.post(
-                TOKEN_URL,
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "code_verifier": verifier,
-                    "redirect_uri": str(configuration.railway_oauth_redirect_uri),
-                },
-                auth=(
-                    configuration.railway_oauth_client_id,
-                    configuration.railway_oauth_client_secret.get_secret_value(),
-                ),
-            )
-            token.raise_for_status()
-            identity = await client.get(
-                IDENTITY_URL, headers={"Authorization": f"Bearer {token.json()['access_token']}"}
-            )
+        async with self._client() as client:
+            await client.fetch_token(TOKEN_URL, code=code, code_verifier=verifier)
+            identity = await client.get(IDENTITY_URL)
             identity.raise_for_status()
             claims = identity.json()
             subject, email = claims["sub"], claims["email"]

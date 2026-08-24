@@ -1,14 +1,12 @@
 from typing import Any
 
 import httpx
-
-
-LIVE_API_URL = "https://api.alpaca.markets"
-PAPER_API_URL = "https://paper-api.alpaca.markets"
+from alpaca.common.enums import BaseURL
 
 
 def alpaca_api_url(is_paper: bool) -> str:
-    return PAPER_API_URL if is_paper else LIVE_API_URL
+    target = BaseURL.TRADING_PAPER if is_paper else BaseURL.TRADING_LIVE
+    return target.value
 
 
 class AlpacaReadClient:
