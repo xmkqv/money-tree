@@ -51,15 +51,13 @@ def test_market_data_is_normalized_when_frame_is_valid() -> None:
         ),
     ],
 )
-def test_market_data_is_rejected_when_frame_breaks_contract(
-    frame: DataFrame, message: str
-) -> None:
+def test_market_data_is_rejected_when_frame_breaks_contract(frame: DataFrame, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         normalize_ohlcv(frame, {"close"})
 
 
 def test_market_data_is_rejected_when_required_column_is_missing() -> None:
-    with pytest.raises(ValueError, match="missing required columns: volume"):
+    with pytest.raises(ValueError, match="missing required columns: adjusted"):
         normalize_ohlcv(market_frame(3), {"close", "volume", "adjusted"})
 
 
@@ -150,7 +148,9 @@ def test_momentum_entry_fails_when_history_is_insufficient() -> None:
 def test_relative_volume_passes_when_current_session_exceeds_threshold() -> None:
     day = date(2026, 8, 24)
 
-    assert relative_volume_ready(relative_volume_frame(day), day, datetime(1, 1, 1, 9, 35).time(), 1.3)
+    assert relative_volume_ready(
+        relative_volume_frame(day), day, datetime(1, 1, 1, 9, 35).time(), 1.3
+    )
 
 
 def test_relative_volume_fails_when_twenty_session_history_is_unavailable() -> None:
