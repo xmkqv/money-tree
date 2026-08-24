@@ -62,3 +62,9 @@ mt report --strategy {name} --symbols {symbols} --start {date} --end {date}
 | newest closed orders and fills               |       15 seconds |
 | historical order and fill pages              |        5 minutes |
 | equity and P&L history                       |         1 minute |
+
+# claims
+
+- the bot runs multiple strategies
+- the ui renders a modern dashboard that includes an overview, strategy details, analysis, and logs
+- the bot mode (paper/live) can be toggled by updating server vendor secrets
