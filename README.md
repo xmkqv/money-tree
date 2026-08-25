@@ -1,18 +1,56 @@
-# Money Tree
+# money-tree
 
-## Commands
+Four US-equity trading strategies, written down first and then run: backtesting,
+multi-strategy portfolio composition, and Alpaca execution.
+
+The register below is the specification. `src/bot/strategies/` implements it, and
+`STRATEGY_LABELS` in `src/bot/types.py` lists what actually runs.
+
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![python: 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](pyproject.toml)
+
+> This is a personal project. It carries no performance record, no returns, and no
+> track record of any kind. Nothing here is financial advice. Trading loses money.
+
+## quickstart
 
 ```sh
-# analyze
-uv run python src/analysis/break-even-accuracy.py data/sessions.csv
-
-# backtest report
-uv run mt report --strategy <name> --symbols A,B,C --start 2022-01-01 --end 2025-12-31
+uv sync
+uv run pytest
 ```
 
-## Strategy register
+Backtest a daily strategy and write a run directory. Daily strategies read from
+Yahoo, so this needs no credentials.
 
-### Common terms
+```sh
+uv run mt report --strategy sma --symbols SPY --start 2023-01-01 --end 2024-01-01
+# runs/sma-20230101-20240101
+```
+
+The run directory holds `trades.csv`, `stats.csv`, `indicators.csv`, their parquet
+equivalents, `tearsheet.html`, and `backtest.log`.
+
+Intraday strategies (`orb`, `orb_momentum`) resolve minute bars through Alpaca and
+fail without credentials. Copy `.env.example` to `.env` and fill in
+`ALPACA_API_KEY` and `ALPACA_API_SECRET` first.
+
+```sh
+uv run mt backtest --strategy orb --symbols SPY --start 2023-01-01 --end 2024-01-01
+```
+
+Run live or paper against the broker. `ALPACA_IS_PAPER` decides which.
+
+```sh
+uv run mt trade --strategies orb,sma
+```
+
+The dashboard is a FastAPI app under `src/ui/`, deployed to Railway from
+`.railway/railway.ts`. `spec.md` maps the layout, and `.railway/README.md` covers
+the infrastructure commands.
+
+## strategy register
+
+### common terms
 
 ```text:types
 ET = US Eastern Time
@@ -30,7 +68,7 @@ none = the strategy does not use this rule
 not set = no rule was provided
 ```
 
-### Enabled strategies
+### enabled strategies
 
 #### ORB (5-minute)
 
@@ -225,180 +263,7 @@ exit
     shared rules = Stop Loss and Emergency Exit
 ```
 
-### Disabled strategies
 
-#### ORB (15-minute)
+## license
 
-```text:surface
-status
-    state = disabled
-
-market
-    asset = not set
-    market cap = not set
-    average daily volume = not set
-    market state = not set
-    direction = not set
-
-setup
-    timeframe = 15-minute candles
-    opening range = not set
-    marks = not set
-    volume = not set
-    other filters = not set
-
-entry
-    window = not set
-    long signal = not set
-    short signal = not set
-    order = not set
-    earnings block = not set
-
-risk
-    position size = not set
-    risk per trade = not set
-    risk-to-reward ratio = not set
-    R = not set
-    initial stop = not set
-    stop update = not set
-    stop exit = not set
-
-exit
-    profit targets = not set
-    signal exit = not set
-    earnings exit = not set
-    deadline = not set
-    shared rules = not set
-```
-
-#### ORB (20-minute)
-
-```text:surface
-status
-    state = disabled
-
-market
-    asset = not set
-    market cap = not set
-    average daily volume = not set
-    market state = not set
-    direction = not set
-
-setup
-    timeframe = 20-minute candles
-    opening range = not set
-    marks = not set
-    volume = not set
-    other filters = not set
-
-entry
-    window = not set
-    long signal = not set
-    short signal = not set
-    order = not set
-    earnings block = not set
-
-risk
-    position size = not set
-    risk per trade = not set
-    risk-to-reward ratio = not set
-    R = not set
-    initial stop = not set
-    stop update = not set
-    stop exit = not set
-
-exit
-    profit targets = not set
-    signal exit = not set
-    earnings exit = not set
-    deadline = not set
-    shared rules = not set
-```
-
-#### ORB (60-minute)
-
-```text:surface
-status
-    state = disabled
-
-market
-    asset = not set
-    market cap = not set
-    average daily volume = not set
-    market state = not set
-    direction = not set
-
-setup
-    timeframe = 60-minute candles
-    opening range = not set
-    marks = not set
-    volume = not set
-    other filters = not set
-
-entry
-    window = not set
-    long signal = not set
-    short signal = not set
-    order = not set
-    earnings block = not set
-
-risk
-    position size = not set
-    risk per trade = not set
-    risk-to-reward ratio = not set
-    R = not set
-    initial stop = not set
-    stop update = not set
-    stop exit = not set
-
-exit
-    profit targets = not set
-    signal exit = not set
-    earnings exit = not set
-    deadline = not set
-    shared rules = not set
-```
-
-#### 20 SMA (4-hour)
-
-```text:surface
-status
-    state = disabled
-
-market
-    asset = US stocks
-    market cap >= $1 billion
-    average daily volume >= 10 million shares
-    market state = stock price is rising
-    direction = long
-
-setup
-    timeframe = 4-hour candles only
-    opening range = none
-    marks = none
-    price = candle close > SMA(20)
-    other filters = none
-
-entry
-    window = next 4-hour candle open
-    long signal = 4-hour candle close > SMA(20)
-    short signal = none
-    order = next 4-hour candle open if price remains above SMA(20)
-    earnings block = none
-
-risk
-    position size = 10% of account
-    risk per trade = not set
-    risk-to-reward ratio = not set
-    R = not set
-    initial stop = not set
-    stop update = not set
-    stop exit = not set
-
-exit
-    profit targets = none
-    signal exit = 4-hour candle falls below SMA(20)
-    earnings exit = none
-    deadline = none
-    shared rules = none
-```
+MIT. See [LICENSE](LICENSE).
