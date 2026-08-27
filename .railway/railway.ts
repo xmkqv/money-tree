@@ -68,7 +68,7 @@ export default defineRailway(() => {
       RISK_PER_TRADE_MAX: preserve(),
       STATE_EXPORT_SECRET: preserve(),
       STATE_EXPORT_URL: preserve(),
-      STRATEGIES: preserve(),
+      STRATEGIES: "orb",
     },
   });
 

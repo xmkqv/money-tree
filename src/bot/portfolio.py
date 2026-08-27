@@ -36,7 +36,7 @@ from bot.strategies.shared import (
     signal_exit,
     tfb_entry,
 )
-from bot.types import STRATEGY_LABELS, EventLevel, StrategyName
+from bot.types import STRATEGY_LABELS, EventLevel, StrategyName, active_strategies
 
 
 FIVE_MINUTES = TimeFrame(5, cast(TimeFrameUnit, TimeFrameUnit.Minute))
@@ -88,8 +88,8 @@ class Strategy(StrategyBase):
         self.minutes_before_opening = 30
         selected = cast(list[StrategyName], self.parameters["strategies"])
         self._selected = selected
-        self._enabled = set(selected)
-        self._exit_only: set[StrategyName] = set()
+        self._enabled = set(active_strategies(selected))
+        self._exit_only: set[StrategyName] = set(selected).difference(self._enabled)
         self._holdings: dict[str, Holding] = {}
         self._pending: dict[str, Pending] = {}
         self._claims: dict[str, StrategyName | None] = {}
@@ -118,6 +118,7 @@ class Strategy(StrategyBase):
         )
 
     def before_market_opens(self) -> None:
+        self._restore()
         self._prepare(self.get_datetime().astimezone(TRADING_ZONE).date())
 
     def on_trading_iteration(self) -> None:
@@ -218,6 +219,13 @@ class Strategy(StrategyBase):
     def _restore(self) -> None:
         if self._restored:
             return
+        for engine in sorted(self._exit_only):
+            self._event(
+                f"paused-{engine}",
+                "warning",
+                f"{engine} is paused: existing positions only, no new entries",
+                engine,
+            )
         request = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=500, direction=Sort.DESC)
         orders = cast(list[Any], self.broker.api.get_orders(filter=request))
         positions = cast(list[Any], self.broker.api.get_all_positions())
@@ -327,7 +335,8 @@ class Strategy(StrategyBase):
         self._preparation_attempts += 1
         try:
             eligible = self._universe()
-            symbols = sorted(set(eligible).union({"SPY", "QQQ"}))
+            held = {holding.signal for holding in self._holdings.values()}
+            symbols = sorted(set(eligible).union({"SPY", "QQQ"}, held))
             daily_frames = self._frames(
                 symbols,
                 datetime.combine(day - timedelta(days=390), time(), TRADING_ZONE),
@@ -499,6 +508,8 @@ class Strategy(StrategyBase):
             self._daily_run_on = now.date()
             return
         for engine in self._selected:
+            if engine not in self._enabled:
+                continue
             if engine == "sma":
                 self._run_sma(now)
             if engine == "tfb_50":
