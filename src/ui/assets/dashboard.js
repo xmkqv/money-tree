@@ -403,7 +403,9 @@ function buildTable(table, headers, rows, rightFrom) {
     }
     tbody.append(tr);
   }
-  table.append(thead, tbody);
+  /* Rebuilt in place on every poll, so clear first: appending would stack a
+     fresh header and body under the previous ones on each refresh. */
+  table.replaceChildren(thead, tbody);
 }
 
 function selectDay(y, m, day) {
