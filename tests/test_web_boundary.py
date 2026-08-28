@@ -1,3 +1,5 @@
+import hashlib
+import re
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -13,7 +15,7 @@ from tests.world.index import (
 )
 from ui.alpaca import AlpacaReadClient
 from ui.auth import RailwayIdentity, RailwayOAuthClient
-from ui.dashboard import RUNTIME_BODY_BYTES_MAX
+from ui.dashboard import ASSET_DIRECTORY, ASSET_REWRITES, RUNTIME_BODY_BYTES_MAX
 
 
 def test_health_is_public_when_session_is_absent() -> None:
@@ -46,16 +48,43 @@ def test_dashboard_and_assets_render_when_session_is_authenticated() -> None:
     with web_client() as client:
         authenticate(client)
         dashboard = client.get("/")
-        stylesheet = client.get("/assets/dashboard.css")
-        javascript = client.get("/assets/dashboard.js")
+        served = re.findall(r'/assets/[^"]+', dashboard.text)
+        assets = {url: client.get(url) for url in served}
 
     assert dashboard.status_code == 200
     assert "PAPER" in dashboard.text
     assert "frame-ancestors 'none'" in dashboard.headers["content-security-policy"]
-    assert stylesheet.status_code == 200
-    assert javascript.status_code == 200
-    assert stylesheet.headers["cache-control"] == "public, max-age=31536000, immutable"
-    assert javascript.headers["cache-control"] == "public, max-age=31536000, immutable"
+    expected = sorted(url.decode() for url in ASSET_REWRITES.values())
+    assert sorted(assets) == expected
+    for url, response in assets.items():
+        assert response.status_code == 200, url
+        assert response.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
+def test_asset_urls_carry_a_digest_so_a_changed_file_is_never_served_from_cache() -> None:
+    """Immutable caching is only safe while the URL tracks the contents."""
+    served = {name: url for name, url in ASSET_REWRITES.items()}
+    assert served, "expected at least one fingerprinted asset"
+    for plain, fingerprinted in served.items():
+        name = plain.decode().rsplit("/", 1)[-1]
+        stem, _, suffix = name.rpartition(".")
+        digest = fingerprinted.decode().rsplit("/", 1)[-1]
+        assert digest.startswith(f"{stem}.") and digest.endswith(f".{suffix}")
+        assert re.fullmatch(rf"{re.escape(stem)}\.[0-9a-f]{{12}}\.{re.escape(suffix)}", digest)
+
+    contents = (ASSET_DIRECTORY / "dashboard.css").read_bytes()
+    changed = hashlib.sha256(contents + b"/* edit */").hexdigest()[:12]
+    assert changed not in ASSET_REWRITES[b"/assets/dashboard.css"].decode()
+
+
+def test_unknown_asset_is_not_served() -> None:
+    with web_client() as client:
+        authenticate(client)
+        missing = client.get("/assets/dashboard.css")
+        traversal = client.get("/assets/..%2f..%2fpyproject.toml")
+
+    assert missing.status_code == 404
+    assert traversal.status_code == 404
 
 
 def test_session_returns_csrf_token_when_session_is_authenticated() -> None:
