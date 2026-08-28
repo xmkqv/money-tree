@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 
-from bot.types import RunStatus, RuntimeSnapshot, TradingConfiguration
+from bot.types import STRATEGY_LABELS, RunStatus, RuntimeSnapshot, TradingConfiguration
 from ui.dashboard import bot_state
 from ui.ledger import match_cycles, order_engine, sessions, summarise
 
@@ -210,3 +210,25 @@ def test_bot_state_reports_nothing_running_when_no_snapshot_arrived() -> None:
     assert state["running"] is False
     assert state["strategies"] == []
     assert state["status"] == "unknown"
+
+
+def test_bot_state_resolves_the_labels_the_exporter_actually_publishes() -> None:
+    """bot/trade.py maps names through STRATEGY_LABELS before publishing them.
+
+    Comparing those labels against engine ids silently matches nothing, which
+    reads as every strategy being paused however many are really running.
+    """
+    published = [STRATEGY_LABELS[name] for name in ("orb", "sma")]
+    state = bot_state(_snapshot(strategies=published), stale=False)
+
+    assert state["strategies"] == ["orb", "sma"]
+
+
+def test_bot_state_still_accepts_a_roster_published_as_ids() -> None:
+    state = bot_state(_snapshot(strategies=["orb", "tfb_50"]), stale=False)
+
+    assert state["strategies"] == ["orb", "tfb_50"]
+
+
+def test_bot_state_keeps_an_unrecognised_roster_entry_visible() -> None:
+    assert bot_state(_snapshot(strategies=["mystery"]), stale=False)["strategies"] == ["mystery"]
