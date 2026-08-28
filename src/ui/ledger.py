@@ -37,6 +37,23 @@ def order_engine(client_order_id: str) -> StrategyName | None:
     return find_order_strategy(client_order_id)
 
 
+STRATEGY_IDS_BY_LABEL = {label: name for name, label in STRATEGY_LABELS.items()}
+
+
+def strategy_id(published: str) -> str:
+    """Resolve a published roster entry to the engine id the view keys on.
+
+    The bot publishes display labels — bot/trade.py maps its strategy names
+    through STRATEGY_LABELS before handing them to the exporter — while every
+    other part of this view keys on the id. Ids are accepted too, so the panel
+    keeps working if the exporter is ever changed to publish them, and an entry
+    matching neither is passed through so it stays visible rather than vanishing.
+    """
+    if published in STRATEGY_LABELS:
+        return published
+    return STRATEGY_IDS_BY_LABEL.get(published, published)
+
+
 def _local(timestamp: str) -> datetime:
     return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone(TRADING_ZONE)
 

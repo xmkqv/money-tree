@@ -16,7 +16,14 @@ from starlette.responses import FileResponse
 from bot.types import STATE_SIGNATURE_SALT, RuntimeSnapshot
 from ui.alpaca import AlpacaMarketDataClient, AlpacaReadClient
 from ui.config import WebSettings
-from ui.ledger import TRADING_ZONE, match_cycles, sessions, strategy_labels, summarise
+from ui.ledger import (
+    TRADING_ZONE,
+    match_cycles,
+    sessions,
+    strategy_id,
+    strategy_labels,
+    summarise,
+)
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
@@ -276,7 +283,7 @@ def bot_state(snapshot: RuntimeSnapshot | None, stale: bool) -> dict[str, Any]:
         "status": snapshot.status if snapshot else "unknown",
         "stale": stale,
         "running": running,
-        "strategies": list(snapshot.strategies) if snapshot else [],
+        "strategies": [strategy_id(name) for name in snapshot.strategies] if snapshot else [],
     }
 
 
