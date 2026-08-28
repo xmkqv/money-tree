@@ -9,6 +9,11 @@ from bot.attribution import find_order_strategy_label
 type JsonRow = dict[str, Any]
 
 
+DATA_API_URL = "https://data.alpaca.markets"
+PAGE_LIMIT = 100
+PAGES_MAX = 40
+
+
 def alpaca_api_url(is_paper: bool) -> str:
     target = BaseURL.TRADING_PAPER if is_paper else BaseURL.TRADING_LIVE
     return target.value
@@ -74,6 +79,69 @@ class AlpacaReadClient:
         }
         return [{**fill, "strategy": strategies.get(str(fill.get("order_id")))} for fill in fills]
 
+    async def clock(self) -> Any:
+        return await self._get("/v2/clock")
+
+    async def raw_fills(self, after: str | None = None) -> list[JsonRow]:
+        """Fills as the broker reports them, paged, without per-page enrichment.
+
+        `fills` attaches a strategy label by re-reading orders for every page,
+        which doubles the request count. The ledger tags fills itself from a
+        single order read, so it walks the raw endpoint instead.
+        """
+        collected: list[JsonRow] = []
+        token: str | None = None
+        for _ in range(PAGES_MAX):
+            page = cast(
+                list[JsonRow],
+                await self._get(
+                    "/v2/account/activities",
+                    {
+                        "activity_types": "FILL",
+                        "direction": "desc",
+                        "page_size": PAGE_LIMIT,
+                        "page_token": token,
+                        "after": after,
+                    },
+                ),
+            )
+            if not page:
+                break
+            collected.extend(page)
+            token = str(page[-1]["id"])
+            if len(page) < PAGE_LIMIT:
+                break
+        return collected
+
+    async def raw_closed_orders(self, after: str | None = None) -> list[JsonRow]:
+        """Closed orders, paged back by submission time, so fills can be tagged."""
+        collected: list[JsonRow] = []
+        seen: set[str] = set()
+        until: str | None = None
+        for _ in range(PAGES_MAX):
+            page = cast(
+                list[JsonRow],
+                await self._get(
+                    "/v2/orders",
+                    {
+                        "status": "closed",
+                        "limit": PAGE_LIMIT,
+                        "direction": "desc",
+                        "until": until,
+                        "after": after,
+                    },
+                ),
+            )
+            fresh = [order for order in page if str(order["id"]) not in seen]
+            if not fresh:
+                break
+            collected.extend(fresh)
+            seen.update(str(order["id"]) for order in fresh)
+            until = str(page[-1]["submitted_at"])
+            if len(page) < PAGE_LIMIT:
+                break
+        return collected
+
     async def equity(self, period: str, timeframe: str) -> dict[str, Any]:
         params: dict[str, object] = {"period": period, "timeframe": timeframe}
         if timeframe != "1D":
@@ -95,3 +163,19 @@ class AlpacaReadClient:
 
     def _order_strategy(self, value: object) -> str | None:
         return find_order_strategy_label(value) if isinstance(value, str) else None
+
+
+class AlpacaMarketDataClient:
+    """Reads the market-data host, which is separate from the trading host."""
+
+    def __init__(self, client: httpx.AsyncClient) -> None:
+        self._client = client
+
+    async def daily_bars(self, symbol: str, start: str) -> list[JsonRow]:
+        response = await self._client.get(
+            f"/v2/stocks/{symbol}/bars",
+            params={"timeframe": "1Day", "start": start, "limit": "1000", "feed": "iex"},
+        )
+        response.raise_for_status()
+        payload: Any = response.json()
+        return list(payload.get("bars") or [])

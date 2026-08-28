@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ui.alpaca import AlpacaReadClient, alpaca_api_url
+from ui.alpaca import DATA_API_URL, AlpacaMarketDataClient, AlpacaReadClient, alpaca_api_url
 from ui.auth import RailwayOAuthClient
 from ui.config import WebSettings
 from ui.dashboard import NO_STORE, RuntimeStore, create_dashboard_router, error_response
@@ -53,17 +53,29 @@ def create_app() -> FastAPI:
     configuration = WebSettings()  # pyright: ignore[reportCallIssue]
     oauth_client = RailwayOAuthClient(configuration)
 
+    credentials = {
+        "APCA-API-KEY-ID": configuration.alpaca_api_key.get_secret_value(),
+        "APCA-API-SECRET-KEY": configuration.alpaca_api_secret.get_secret_value(),
+    }
+
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, AlpacaReadClient]]:
-        async with httpx.AsyncClient(
-            base_url=alpaca_api_url(configuration.alpaca_is_paper),
-            headers={
-                "APCA-API-KEY-ID": configuration.alpaca_api_key.get_secret_value(),
-                "APCA-API-SECRET-KEY": configuration.alpaca_api_secret.get_secret_value(),
-            },
-            timeout=httpx.Timeout(connect=1, read=3, write=3, pool=3),
-        ) as client:
-            yield {"alpaca": AlpacaReadClient(client)}
+    async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, object]]:
+        async with (
+            httpx.AsyncClient(
+                base_url=alpaca_api_url(configuration.alpaca_is_paper),
+                headers=credentials,
+                timeout=httpx.Timeout(connect=2, read=10, write=5, pool=5),
+            ) as trading,
+            httpx.AsyncClient(
+                base_url=DATA_API_URL,
+                headers=credentials,
+                timeout=httpx.Timeout(connect=2, read=8, write=5, pool=5),
+            ) as data,
+        ):
+            yield {
+                "alpaca": AlpacaReadClient(trading),
+                "market": AlpacaMarketDataClient(data),
+            }
 
     app = FastAPI(
         title="Money Tree", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
