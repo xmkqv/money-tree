@@ -1,5 +1,11 @@
-from typing import Any
+from datetime import UTC, datetime, timedelta
+from typing import Any, cast
+from uuid import UUID
 
+import pytest
+
+from bot.types import RunStatus, RuntimeSnapshot, TradingConfiguration
+from ui.dashboard import bot_state
 from ui.ledger import match_cycles, order_engine, sessions, summarise
 
 
@@ -157,3 +163,50 @@ def test_sessions_key_each_day_to_the_prior_close() -> None:
         ("2026-08-24", 5.0, 1000.0, 1),
         ("2026-08-25", -2.0, 1005.0, 0),
     ]
+
+
+def _snapshot(status: str = "running", strategies: list[str] | None = None) -> RuntimeSnapshot:
+    now = datetime.now(UTC)
+    return RuntimeSnapshot(
+        run_id=UUID("8f558d63-d47d-4a5f-8f77-95b0bf55a591"),
+        sequence=1,
+        status=cast(RunStatus, status),
+        strategies=strategies if strategies is not None else ["orb", "sma"],
+        started_at=now - timedelta(minutes=5),
+        heartbeat_at=now,
+        configuration=TradingConfiguration(
+            fractional_orders=True,
+            position_fraction_max=0.1,
+            risk_per_day_max=0.02,
+            risk_per_trade_max=0.005,
+        ),
+        events=[],
+    )
+
+
+def test_bot_state_marks_the_running_roster_active() -> None:
+    state = bot_state(_snapshot(strategies=["orb", "sma"]), stale=False)
+
+    assert state["running"] is True
+    assert state["strategies"] == ["orb", "sma"]
+
+
+def test_bot_state_is_not_running_when_the_heartbeat_went_stale() -> None:
+    """A roster from a bot that stopped reporting says what was running, not what is."""
+    state = bot_state(_snapshot(), stale=True)
+
+    assert state["running"] is False
+    assert state["strategies"] == ["orb", "sma"]
+
+
+@pytest.mark.parametrize("status", ["starting", "stopped", "failed"])
+def test_bot_state_is_not_running_unless_the_status_says_so(status: str) -> None:
+    assert bot_state(_snapshot(status=status), stale=False)["running"] is False
+
+
+def test_bot_state_reports_nothing_running_when_no_snapshot_arrived() -> None:
+    state = bot_state(None, stale=True)
+
+    assert state["running"] is False
+    assert state["strategies"] == []
+    assert state["status"] == "unknown"

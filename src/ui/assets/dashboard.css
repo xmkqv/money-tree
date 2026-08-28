@@ -606,6 +606,35 @@ table.data .r { text-align: right; padding-left: 12px; }
 .chip { width: 8px; height: 8px; border-radius: 999px; flex: none; }
 .strat .name { font-weight: 500; letter-spacing: -0.01em; }
 
+/* Run state. The word carries the meaning; colour only reinforces it, so the
+   three states stay distinguishable without colour vision. */
+.run-state {
+  flex: none;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.run-state.is-active {
+  color: var(--gain-ink);
+  background: color-mix(in oklab, var(--gain-mark) 14%, var(--surface));
+  border-color: color-mix(in oklab, var(--gain-mark) 30%, transparent);
+}
+.run-state.is-paused {
+  color: var(--ink-2);
+  background: var(--surface-2);
+  border-color: var(--hairline-strong);
+}
+.run-state.is-offline {
+  color: var(--loss-ink);
+  background: color-mix(in oklab, var(--loss-mark) 14%, var(--surface));
+  border-color: color-mix(in oklab, var(--loss-mark) 30%, transparent);
+}
+
 .pnl-cell { white-space: nowrap; }
 .pnl-cell .sub {
   font-family: var(--font-data);

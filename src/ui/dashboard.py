@@ -249,11 +249,7 @@ async def build_ledger(
         "dailyLossLimitPct": round(
             100 * (configuration.risk_per_day_max if configuration else DAILY_LOSS_FALLBACK), 2
         ),
-        "bot": {
-            "status": snapshot.status if snapshot else "unknown",
-            "stale": stale,
-            "strategies": snapshot.strategies if snapshot else [],
-        },
+        "bot": bot_state(snapshot, stale),
         "strategies": strategy_labels(),
         "positions": rows,
         "trades": cycles,
@@ -263,6 +259,24 @@ async def build_ledger(
         "intraday": intraday_points,
         "intradayDate": intraday_date,
         "spy": [{"date": str(bar["t"])[:10], "close": float(bar["c"])} for bar in bars],
+    }
+
+
+def bot_state(snapshot: RuntimeSnapshot | None, stale: bool) -> dict[str, Any]:
+    """Which engines are running right now, as opposed to merely configured.
+
+    A strategy counts as running only while the bot is reporting a live
+    heartbeat: a roster read from a snapshot that stopped arriving describes
+    what *was* running. Callers overlay this on the cached payload rather than
+    letting it age with it, because the snapshot is held in local memory and so
+    costs nothing to re-read, while the rest of the view is paged Alpaca calls.
+    """
+    running = snapshot is not None and snapshot.status == "running" and not stale
+    return {
+        "status": snapshot.status if snapshot else "unknown",
+        "stale": stale,
+        "running": running,
+        "strategies": list(snapshot.strategies) if snapshot else [],
     }
 
 
@@ -350,16 +364,15 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
 
     @router.get("/api/ledger")
     async def ledger(request: Request) -> JSONResponse:
+        snapshot, stale = runtime_state()
         cached = ledger_cache.fresh()
-        if cached is not None:
-            return read_response(cached, 10)
-        async with ledger_cache.lock:
-            cached = ledger_cache.fresh()
-            if cached is None:
-                snapshot, stale = runtime_state()
-                cached = await build_ledger(alpaca(request), market(request), snapshot, stale)
-                ledger_cache.store(cached)
-        return read_response(cached, 10)
+        if cached is None:
+            async with ledger_cache.lock:
+                cached = ledger_cache.fresh()
+                if cached is None:
+                    cached = await build_ledger(alpaca(request), market(request), snapshot, stale)
+                    ledger_cache.store(cached)
+        return read_response({**cached, "bot": bot_state(snapshot, stale)}, 10)
 
     @router.get("/api/equity")
     async def equity(
