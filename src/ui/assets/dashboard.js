@@ -500,6 +500,21 @@ function periodCell(label, pnl, pct, spx) {
 
 
 
+/* Active means the bot is reporting a live heartbeat and this engine is on its
+   roster. A roster from a bot that has stopped reporting describes what was
+   running, not what is, so every row reads Offline instead. */
+const RUN_STATE = {
+  active:  { label: "Active",  hint: "Running now" },
+  paused:  { label: "Paused",  hint: "Not enabled on the running bot" },
+  offline: { label: "Offline", hint: "The bot is not reporting, so nothing is running" },
+};
+
+function runState(id) {
+  const bot = LIVE.bot || {};
+  if (!bot.running) return "offline";
+  return (bot.strategies || []).includes(id) ? "active" : "paused";
+}
+
 function renderStrategies(period) {
   const body = document.getElementById("strat-body");
   const p = STRATEGY_PERIODS[period];
@@ -522,6 +537,15 @@ function renderStrategies(period) {
     nm.className = "name";
     nm.textContent = s.label;
     strat.append(chip, nm);
+    /* the catch-all bucket is a place trades land, not an engine that runs */
+    if (s.id !== "unattributed") {
+      const state = runState(s.id);
+      const pill = document.createElement("span");
+      pill.className = "run-state is-" + state;
+      pill.textContent = RUN_STATE[state].label;
+      pill.title = RUN_STATE[state].hint;
+      strat.append(pill);
+    }
     nameCell.append(strat);
 
     const tradeCell = document.createElement("td");

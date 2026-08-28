@@ -21,15 +21,42 @@ from ui.ledger import TRADING_ZONE, match_cycles, sessions, strategy_labels, sum
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
 DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.html").read_bytes()
-DASHBOARD_CSS = ASSET_DIRECTORY / "dashboard.css"
-DASHBOARD_JAVASCRIPT = ASSET_DIRECTORY / "dashboard.js"
-DASHBOARD_THEME = ASSET_DIRECTORY / "theme.js"
+ASSET_MEDIA_TYPES = {
+    "dashboard.css": "text/css",
+    "dashboard.js": "text/javascript",
+    "theme.js": "text/javascript",
+}
 LEDGER_TTL_SECONDS = 60
 BENCHMARK_SYMBOL = "SPY"
 POSITION_CAP_FALLBACK = 0.10
 DAILY_LOSS_FALLBACK = 0.02
 NO_STORE = {"Cache-Control": "no-store"}
 IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
+
+
+def _fingerprint_assets() -> tuple[dict[str, tuple[Path, str]], dict[bytes, bytes]]:
+    """Give every asset a URL that changes whenever its bytes change.
+
+    Assets are served as immutable, so a browser holding one cached will not
+    revalidate it for a year. At a fixed path that silently breaks upgrades: a
+    returning visitor keeps the old stylesheet and the old script while the
+    markup, which does revalidate, arrives new. The page then renders unstyled
+    and no figures ever appear, because the stale script is looking for
+    elements that no longer exist. Putting a digest of the contents in the path
+    means new bytes are always a new URL, and so always a fresh fetch.
+    """
+    routes: dict[str, tuple[Path, str]] = {}
+    rewrites: dict[bytes, bytes] = {}
+    for name, media_type in ASSET_MEDIA_TYPES.items():
+        path = ASSET_DIRECTORY / name
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+        served = f"{path.stem}.{digest}{path.suffix}"
+        routes[served] = (path, media_type)
+        rewrites[f"/assets/{name}".encode()] = f"/assets/{served}".encode()
+    return routes, rewrites
+
+
+ASSET_ROUTES, ASSET_REWRITES = _fingerprint_assets()
 HEARTBEAT_TIMEOUT = timedelta(seconds=15)
 SIGNATURE_WINDOW_SECONDS = 30
 RUNTIME_BODY_BYTES_MAX = 65_536
@@ -222,11 +249,7 @@ async def build_ledger(
         "dailyLossLimitPct": round(
             100 * (configuration.risk_per_day_max if configuration else DAILY_LOSS_FALLBACK), 2
         ),
-        "bot": {
-            "status": snapshot.status if snapshot else "unknown",
-            "stale": stale,
-            "strategies": snapshot.strategies if snapshot else [],
-        },
+        "bot": bot_state(snapshot, stale),
         "strategies": strategy_labels(),
         "positions": rows,
         "trades": cycles,
@@ -239,10 +262,30 @@ async def build_ledger(
     }
 
 
+def bot_state(snapshot: RuntimeSnapshot | None, stale: bool) -> dict[str, Any]:
+    """Which engines are running right now, as opposed to merely configured.
+
+    A strategy counts as running only while the bot is reporting a live
+    heartbeat: a roster read from a snapshot that stopped arriving describes
+    what *was* running. Callers overlay this on the cached payload rather than
+    letting it age with it, because the snapshot is held in local memory and so
+    costs nothing to re-read, while the rest of the view is paged Alpaca calls.
+    """
+    running = snapshot is not None and snapshot.status == "running" and not stale
+    return {
+        "status": snapshot.status if snapshot else "unknown",
+        "stale": stale,
+        "running": running,
+        "strategies": list(snapshot.strategies) if snapshot else [],
+    }
+
+
 def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeStore) -> APIRouter:
     router = APIRouter()
     mode = b"PAPER" if configuration.alpaca_is_paper else b"LIVE"
     dashboard_html = DASHBOARD_HTML.replace(b"{{ ALPACA_MODE }}", mode)
+    for plain, fingerprinted in ASSET_REWRITES.items():
+        dashboard_html = dashboard_html.replace(plain, fingerprinted)
     signer = TimestampSigner(
         configuration.state_export_secret.get_secret_value(),
         salt=STATE_SIGNATURE_SALT,
@@ -266,21 +309,13 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
     async def dashboard() -> Response:
         return Response(dashboard_html, media_type="text/html", headers=DASHBOARD_HEADERS)
 
-    @router.get("/assets/dashboard.css")
-    async def dashboard_css() -> FileResponse:
-        return FileResponse(DASHBOARD_CSS, media_type="text/css", headers=IMMUTABLE)
-
-    @router.get("/assets/dashboard.js")
-    async def dashboard_javascript() -> FileResponse:
-        return FileResponse(
-            DASHBOARD_JAVASCRIPT,
-            media_type="text/javascript",
-            headers=IMMUTABLE,
-        )
-
-    @router.get("/assets/theme.js")
-    async def dashboard_theme() -> FileResponse:
-        return FileResponse(DASHBOARD_THEME, media_type="text/javascript", headers=IMMUTABLE)
+    @router.get("/assets/{filename}")
+    async def asset(filename: str) -> Response:
+        served = ASSET_ROUTES.get(filename)
+        if served is None:
+            return error_response("Asset was not found", 404)
+        path, media_type = served
+        return FileResponse(path, media_type=media_type, headers=IMMUTABLE)
 
     @router.get("/api/session")
     async def session(request: Request) -> JSONResponse:
@@ -329,16 +364,15 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
 
     @router.get("/api/ledger")
     async def ledger(request: Request) -> JSONResponse:
+        snapshot, stale = runtime_state()
         cached = ledger_cache.fresh()
-        if cached is not None:
-            return read_response(cached, 10)
-        async with ledger_cache.lock:
-            cached = ledger_cache.fresh()
-            if cached is None:
-                snapshot, stale = runtime_state()
-                cached = await build_ledger(alpaca(request), market(request), snapshot, stale)
-                ledger_cache.store(cached)
-        return read_response(cached, 10)
+        if cached is None:
+            async with ledger_cache.lock:
+                cached = ledger_cache.fresh()
+                if cached is None:
+                    cached = await build_ledger(alpaca(request), market(request), snapshot, stale)
+                    ledger_cache.store(cached)
+        return read_response({**cached, "bot": bot_state(snapshot, stale)}, 10)
 
     @router.get("/api/equity")
     async def equity(
