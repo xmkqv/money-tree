@@ -11,6 +11,7 @@ tests/test_strategy_spec.py. A threshold changed in the bot without this table
 following it fails those tests rather than quietly leaving the page wrong.
 """
 
+from datetime import time
 from typing import Any, TypedDict
 
 from bot.types import STRATEGY_LABELS, TradingConfiguration
@@ -40,6 +41,26 @@ POSITION_FRACTION_DEFAULT = 0.20
 POSITION_FRACTION_CEILING = 0.10
 POSITIONS_MAX = 10
 ORB_RISK_CEILING = 0.01
+
+# When each engine can open a trade, from portfolio.py. The daily pair is
+# checked once a session before 09:40; the two breakout engines scan on their
+# own candle boundary until 10:30. Positions already open keep being managed
+# after these windows close — this is when a NEW trade can start.
+ENTRY_WINDOWS: dict[str, tuple[time, time]] = {
+    "orb": (time(9, 35), time(10, 30)),
+    "orb_momentum": (time(9, 40), time(10, 30)),
+    "sma": (time(9, 30), time(9, 40)),
+    "tfb_50": (time(9, 30), time(9, 40)),
+}
+
+
+def entry_windows() -> dict[str, dict[str, str]]:
+    """The windows as plain HH:MM, for the page to compare against the clock."""
+    return {
+        engine: {"from": f"{opens:%H:%M}", "to": f"{closes:%H:%M}"}
+        for engine, (opens, closes) in ENTRY_WINDOWS.items()
+    }
+
 
 UNIVERSE = (
     "US equities screened daily: market cap $500M or more, 3-month average "
