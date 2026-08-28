@@ -580,6 +580,29 @@ body {
 
 .panel.strategies .panel-body { flex: 1; min-height: 0; display: flex; overflow: auto; }
 
+/* Two badges push this table's natural width past its grid track, which spilled
+   the Trades and P&L columns off the panel. Fixed layout lets the name column
+   give way instead, wrapping the badges under the name when space is short. */
+.panel.strategies table.data { table-layout: fixed; }
+.panel.strategies table.data th:nth-child(2),
+.panel.strategies table.data td:nth-child(2) { width: 56px; }
+.panel.strategies table.data th:nth-child(3),
+.panel.strategies table.data td:nth-child(3) { width: 122px; }
+.panel.strategies .strat { flex-wrap: wrap; row-gap: 3px; }
+
+/* Below this the badges wrap and push the fourth strategy out of the panel, so
+   the row tightens instead: smaller badges, narrower figures, one line. */
+@media (max-width: 1560px) {
+  .panel.strategies .strat { flex-wrap: nowrap; gap: 5px; min-width: 0; }
+  .panel.strategies .strat .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .panel.strategies .states { gap: 4px; }
+  .panel.strategies .run-state { font-size: 9.5px; padding: 1px 3px; letter-spacing: 0.02em; }
+  .panel.strategies table.data th:nth-child(2),
+  .panel.strategies table.data td:nth-child(2) { width: 28px; }
+  .panel.strategies table.data th:nth-child(3),
+  .panel.strategies table.data td:nth-child(3) { width: 120px; }
+}
+
 table.data { width: 100%; height: 100%; border-collapse: collapse; font-size: 13px; }
 
 table.data th {
@@ -619,20 +642,45 @@ table.data .r { text-align: right; padding-left: 12px; }
   border: 1px solid transparent;
   white-space: nowrap;
 }
-.run-state.is-active {
+.states { display: inline-flex; align-items: center; gap: 5px; flex: none; }
+
+/* The switch reads solid, the session outlined, so the pair is separable at a
+   glance without either colour being the only cue — each carries its word. */
+.run-state.switch.is-online {
   color: var(--gain-ink);
-  background: color-mix(in oklab, var(--gain-mark) 14%, var(--surface));
-  border-color: color-mix(in oklab, var(--gain-mark) 30%, transparent);
+  background: color-mix(in oklab, var(--gain-mark) 15%, var(--surface));
+  border-color: color-mix(in oklab, var(--gain-mark) 32%, transparent);
 }
-.run-state.is-paused {
+.run-state.switch.is-offline {
+  color: var(--loss-ink);
+  background: color-mix(in oklab, var(--loss-mark) 13%, var(--surface));
+  border-color: color-mix(in oklab, var(--loss-mark) 30%, transparent);
+}
+.run-state.switch.is-unknown {
   color: var(--ink-2);
   background: var(--surface-2);
   border-color: var(--hairline-strong);
 }
-.run-state.is-offline {
+.run-state.session {
+  background: transparent;
+  border-style: dashed;
+}
+.run-state.session.is-open {
+  color: var(--gain-ink);
+  border-color: color-mix(in oklab, var(--gain-mark) 45%, transparent);
+}
+.run-state.session.is-closed {
+  color: var(--ink-2);
+  border-color: var(--hairline-strong);
+}
+
+.rules-warning {
+  margin: 0 0 12px;
+  padding: 8px 11px;
+  border-radius: 7px;
   color: var(--loss-ink);
-  background: color-mix(in oklab, var(--loss-mark) 14%, var(--surface));
-  border-color: color-mix(in oklab, var(--loss-mark) 30%, transparent);
+  background: color-mix(in oklab, var(--loss-mark) 10%, var(--surface));
+  border: 1px solid color-mix(in oklab, var(--loss-mark) 26%, transparent);
 }
 
 .pnl-cell { white-space: nowrap; }

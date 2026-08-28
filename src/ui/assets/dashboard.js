@@ -502,19 +502,73 @@ function periodCell(label, pnl, pct, spx) {
 
 
 
-/* Active means the bot is reporting a live heartbeat and this engine is on its
-   roster. A roster from a bot that has stopped reporting describes what was
-   running, not what is, so every row reads Offline instead. */
-const RUN_STATE = {
-  active:  { label: "Active",  hint: "Running now" },
-  paused:  { label: "Paused",  hint: "Not enabled on the running bot" },
-  offline: { label: "Offline", hint: "The bot is not reporting, so nothing is running" },
+/* Two separate questions, deliberately kept apart.
+
+   Switch  — have we left this engine enabled, or paused it? That is the
+             roster the bot publishes, and it does not change with the clock.
+   Session — can it start a trade right now? The market must be open and the
+             clock inside this engine's own entry window. Positions already
+             open are still managed outside it; this is about new trades. */
+
+const SWITCH_STATE = {
+  online:  { label: "Online",  hint: "Enabled — this engine is allowed to trade" },
+  offline: { label: "Offline", hint: "Paused by us — this engine will not open a trade" },
+  unknown: { label: "Unknown", hint: "The bot has not reported, so its roster is unknown" },
 };
 
-function runState(id) {
+const SESSION_STATE = {
+  open:   { label: "Open",   hint: "Inside its entry window — it can open a trade now" },
+  closed: { label: "Closed", hint: "Outside its entry window — no new trade will start" },
+};
+
+function switchState(id) {
   const bot = LIVE.bot || {};
-  if (!bot.running) return "offline";
-  return (bot.strategies || []).includes(id) ? "active" : "paused";
+  if (!bot.reported) return "unknown";
+  return (bot.strategies || []).includes(id) ? "online" : "offline";
+}
+
+/* The viewer's own clock may be set to any zone, so read the exchange's. */
+function tradingMinutes() {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(new Date());
+  const at = type => Number(parts.find(p => p.type === type).value);
+  return at("hour") * 60 + at("minute");
+}
+
+function toMinutes(clock) {
+  const [h, m] = String(clock).split(":");
+  return Number(h) * 60 + Number(m);
+}
+
+function sessionState(id) {
+  const window = (LIVE.windows || {})[id];
+  if (!LIVE.marketOpen || !window) return "closed";
+  const now = tradingMinutes();
+  return now >= toMinutes(window.from) && now <= toMinutes(window.to) ? "open" : "closed";
+}
+
+function windowLabel(id) {
+  const window = (LIVE.windows || {})[id];
+  return window ? window.from + "–" + window.to + " ET" : "";
+}
+
+function stateBadge(kind, key, table, extra) {
+  const pill = document.createElement("span");
+  pill.className = "run-state " + kind + " is-" + key;
+  pill.textContent = table[key].label;
+  pill.title = extra ? table[key].hint + " (" + extra + ")" : table[key].hint;
+  return pill;
+}
+
+function stateBadges(id) {
+  const wrap = document.createElement("span");
+  wrap.className = "states";
+  wrap.append(
+    stateBadge("switch", switchState(id), SWITCH_STATE),
+    stateBadge("session", sessionState(id), SESSION_STATE, windowLabel(id)),
+  );
+  return wrap;
 }
 
 function renderStrategies(period) {
@@ -540,14 +594,7 @@ function renderStrategies(period) {
     nm.textContent = s.label;
     strat.append(chip, nm);
     /* the catch-all bucket is a place trades land, not an engine that runs */
-    if (s.id !== "unattributed") {
-      const state = runState(s.id);
-      const pill = document.createElement("span");
-      pill.className = "run-state is-" + state;
-      pill.textContent = RUN_STATE[state].label;
-      pill.title = RUN_STATE[state].hint;
-      strat.append(pill);
-    }
+    if (s.id !== "unattributed") strat.append(stateBadges(s.id));
     nameCell.append(strat);
 
     const tradeCell = document.createElement("td");
@@ -1362,14 +1409,23 @@ function ruleRow(row) {
 }
 
 function renderRuleStates() {
+  const bot = LIVE.bot || {};
+  const warning = document.getElementById("rules-bot");
+  if (warning) {
+    const down = bot.reported && !bot.running;
+    warning.textContent = !bot.reported
+      ? "The bot has not reported, so which engines are enabled is unknown."
+      : down
+        ? "The bot has stopped reporting — the switches below are from its last report."
+        : "";
+    warning.hidden = !warning.textContent;
+  }
   for (const card of document.querySelectorAll("#rules-cards .rule-card")) {
-    const pill = card.querySelector(".run-state");
-    if (!pill) continue;
-    const state = runState(card.dataset.strategy);
-    pill.className = "run-state is-" + state;
-    pill.textContent = RUN_STATE[state].label;
-    pill.title = RUN_STATE[state].hint;
-    card.classList.toggle("is-idle", state !== "active");
+    const id = card.dataset.strategy;
+    const host = card.querySelector(".states");
+    if (!host) continue;
+    host.replaceWith(stateBadges(id));
+    card.classList.toggle("is-idle", switchState(id) !== "online");
   }
 }
 
@@ -1404,9 +1460,7 @@ function paintRules() {
     const name = document.createElement("span");
     name.textContent = strategy.short;
     title.append(chip, name);
-    const pill = document.createElement("span");
-    pill.className = "run-state";
-    head.append(title, pill);
+    head.append(title, stateBadges(strategy.id));
 
     const sub = document.createElement("div");
     sub.className = "rule-sub";

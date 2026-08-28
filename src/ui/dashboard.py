@@ -24,7 +24,7 @@ from ui.ledger import (
     strategy_labels,
     summarise,
 )
-from ui.strategies import strategy_spec
+from ui.strategies import entry_windows, strategy_spec
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
@@ -259,6 +259,7 @@ async def build_ledger(
         ),
         "bot": bot_state(snapshot, stale),
         "strategies": strategy_labels(),
+        "windows": entry_windows(),
         "positions": rows,
         "trades": cycles,
         "days": sessions(cycles, closes, invested),
@@ -284,6 +285,9 @@ def bot_state(snapshot: RuntimeSnapshot | None, stale: bool) -> dict[str, Any]:
         "status": snapshot.status if snapshot else "unknown",
         "stale": stale,
         "running": running,
+        # Without a snapshot the roster is unknown, which is not the same as
+        # every engine being switched off.
+        "reported": snapshot is not None,
         "strategies": [strategy_id(name) for name in snapshot.strategies] if snapshot else [],
     }
 

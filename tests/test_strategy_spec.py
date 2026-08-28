@@ -16,11 +16,14 @@ import pytest
 from bot.portfolio import Strategy as PortfolioStrategy
 from bot.strategies import orb, orb_momentum, sma, tfb_50
 from bot.types import TradingConfiguration
+from tests.test_ledger import _snapshot
+from ui.dashboard import bot_state
 from ui.strategies import (
     FIELDS,
     ORB_RISK_CEILING,
     POSITION_FRACTION_CEILING,
     POSITIONS_MAX,
+    entry_windows,
     strategy_spec,
 )
 
@@ -195,3 +198,35 @@ def test_the_page_describes_the_module_the_bot_actually_runs() -> None:
     assert "from bot.portfolio import Strategy" in trade
     for card in strategy_spec(configuration())["strategies"]:
         assert any("portfolio.py" in row["source"] for row in card["rows"]), card["id"]
+
+
+def test_entry_windows_match_the_composer() -> None:
+    """The badge says whether a trade can start now, so the hours must be the bot's."""
+    variant = inspect.getsource(PortfolioStrategy._run_orb_variant)
+    assert "opening_end = time(9, 35) if minutes == 5 else time(9, 40)" in variant
+    assert "opening_end <= now.time() <= time(10, 30)" in variant
+
+    loop = inspect.getsource(PortfolioStrategy.on_trading_iteration)
+    assert "now.time() < time(9, 40)" in loop
+    assert "self._run_daily(now)" in loop
+
+    assert entry_windows() == {
+        "orb": {"from": "09:35", "to": "10:30"},
+        "orb_momentum": {"from": "09:40", "to": "10:30"},
+        "sma": {"from": "09:30", "to": "09:40"},
+        "tfb_50": {"from": "09:30", "to": "09:40"},
+    }
+
+
+def test_every_engine_on_the_page_has_an_entry_window() -> None:
+    windows = entry_windows()
+
+    for card in strategy_spec(configuration())["strategies"]:
+        assert card["id"] in windows, card["id"]
+
+
+def test_bot_state_says_whether_a_roster_was_reported_at_all() -> None:
+    """An unreported roster is unknown, not every engine switched off."""
+    assert bot_state(None, stale=True)["reported"] is False
+    assert bot_state(_snapshot(), stale=False)["reported"] is True
+    assert bot_state(_snapshot(), stale=True)["reported"] is True
