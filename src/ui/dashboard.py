@@ -24,6 +24,7 @@ from ui.ledger import (
     strategy_labels,
     summarise,
 )
+from ui.strategies import strategy_spec
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
@@ -368,6 +369,13 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
     ) -> JSONResponse:
         max_age = 300 if page_token is not None else 15
         return read_response(await alpaca(request).fills(limit, page_token), max_age)
+
+    @router.get("/api/strategies")
+    async def strategies() -> JSONResponse:
+        """The rule sheet, quoting whatever risk limits the bot is reporting."""
+        snapshot, _ = runtime_state()
+        configuration = snapshot.configuration if snapshot else None
+        return read_response(strategy_spec(configuration), 60)
 
     @router.get("/api/ledger")
     async def ledger(request: Request) -> JSONResponse:

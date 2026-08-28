@@ -983,12 +983,15 @@ table.trades .sym { font-family: var(--font-ui); font-weight: 600; color: var(--
 /* a view is the app's second grid row, so it must pass that height
    constraint down to the layout inside it */
 .view { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
-body[data-view="history"] .view { display: block; }
+body[data-view="history"] .view,
+body[data-view="strategies"] .view { display: block; }
 
 /* Dashboard and Portfolio hold one screen; History is a long log,
    so that page — and only that page — hands scrolling back. */
-body[data-view="history"] { overflow: auto; }
-body[data-view="history"] .app { height: auto; min-height: 100%; }
+body[data-view="history"],
+body[data-view="strategies"] { overflow: auto; }
+body[data-view="history"] .app,
+body[data-view="strategies"] .app { height: auto; min-height: 100%; }
 
 .history { display: grid; gap: var(--gap); align-content: start; }
 .hist-two { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: var(--gap); align-items: start; }
@@ -1221,4 +1224,77 @@ table.trades.log td { font-size: 12.5px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
   .cell.has:hover { transform: none; }
+}
+
+
+/* ══ rule sheet ══════════════════════════════════════════ */
+
+.rules { display: flex; flex-direction: column; gap: 14px; }
+.rules-note { color: var(--ink-2); max-width: 78ch; line-height: 1.5; margin: 0 0 12px; }
+.rules-note code {
+  font-family: var(--mono, ui-monospace, monospace);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.rules-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(520px, 1fr));
+  align-items: start;
+}
+.rule-card .panel-head h2 { display: flex; align-items: center; gap: 9px; }
+.rule-sub {
+  padding: 0 var(--pad, 16px) 10px;
+  color: var(--ink-3);
+  font-size: 12px;
+  letter-spacing: 0.01em;
+  margin-top: -6px;
+}
+/* A paused engine still has to be readable — it is dimmed, not hidden. */
+.rule-card.is-idle .rules-table td { color: var(--ink-2); }
+
+.rules-table { width: 100%; table-layout: fixed; }
+.rules-table caption {
+  caption-side: top;
+  text-align: left;
+  color: var(--ink-3);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding-bottom: 8px;
+}
+.rules-table th[scope="row"] {
+  width: 124px;
+  text-align: left;
+  vertical-align: top;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--ink-2);
+  padding: 9px 14px 9px 0;
+  /* the table is fixed-layout, so a label that will not wrap runs over its value */
+  overflow-wrap: anywhere;
+}
+#rules-portfolio th[scope="row"] { width: 168px; }
+.rules-table td {
+  vertical-align: top;
+  padding: 9px 0;
+  line-height: 1.5;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+.rules-table tr + tr th, .rules-table tr + tr td { border-top: 1px solid var(--hairline); }
+.rule-source {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink-3);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  letter-spacing: 0.01em;
+}
+
+@media (max-width: 900px) {
+  .rules-grid { grid-template-columns: 1fr; }
+  .rules-table th[scope="row"] { width: 96px; }
 }

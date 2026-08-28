@@ -48,6 +48,7 @@
       <button type="button" data-view="dashboard" aria-current="page">Dashboard</button>
       <button type="button" data-view="portfolio">Portfolio</button>
       <button type="button" data-view="history">History</button>
+      <button type="button" data-view="strategies">Strategies</button>
       <button type="button" id="logout" class="ghost" title="Sign out">Sign out</button>
     </nav>
   </header>
@@ -367,6 +368,26 @@
         <div class="log-wrap"><table class="trades log" id="hs-log"></table></div>
       </section>
 
+    </div>
+  </div>
+
+  <div class="view hidden" id="view-strategies">
+    <div class="rules">
+      <section class="panel rules-intro">
+        <div class="panel-head">
+          <h2>Rule sheet</h2>
+          <span class="eyebrow" id="rules-config">—</span>
+        </div>
+        <div class="panel-body">
+          <p class="rules-note">
+            Every rule below is read from <code>bot/portfolio.py</code>, the module the bot
+            actually runs. Tests fail if a threshold changes there without this page following
+            it, so what you read here is what the bot does.
+          </p>
+          <table class="data rules-table" id="rules-portfolio"></table>
+        </div>
+      </section>
+      <div class="rules-grid" id="rules-cards"></div>
     </div>
   </div>
 
