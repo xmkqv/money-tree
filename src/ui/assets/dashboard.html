@@ -1,60 +1,375 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Money Tree</title>
-  <link rel="stylesheet" href="https://unpkg.com/tabulator-tables@6.5.2/dist/css/tabulator_midnight.min.css" integrity="sha384-IjPQxP4KslfqCUeR2++fWi5zeLwAG8boDCsM0yhyn08PoINK8bdzXatWy+KPm9UQ" crossorigin="anonymous">
-  <link rel="stylesheet" href="/assets/dashboard.css">
-  <script defer src="https://unpkg.com/tabulator-tables@6.5.2/dist/js/tabulator.min.js" integrity="sha384-ZlfxHB5fIn8MOAuKJe8YBMi7snQXYvhy+0b3K4rGBBY2UvrJwho2jciJ5NKt0WtC" crossorigin="anonymous"></script>
-  <script defer src="https://unpkg.com/lightweight-charts@5.2.0/dist/lightweight-charts.standalone.production.js" integrity="sha384-q1KYLSKHgBnW5tWYGGR8+6YV4/iPy31dILoF2I1OD7XiVUvHEp/TaxIQVmB0j3R2" crossorigin="anonymous"></script>
-  <script defer src="/assets/dashboard.js"></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Money Tree</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=Roboto+Mono:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/assets/dashboard.css">
+<script src="/assets/theme.js"></script>
+<script defer src="/assets/dashboard.js"></script>
 </head>
 <body>
-  <header>
-    <div><p class="eyebrow">ALPACA {{ ALPACA_MODE }}</p><h1>Money Tree</h1></div>
-    <button id="logout" type="button">Log out</button>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <h1>Money Tree</h1>
+      <div class="theme-toggle" id="theme-toggle" role="group" aria-label="Colour theme">
+        <button type="button" data-set-theme="light" aria-pressed="false" aria-label="Light theme" title="Light theme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.2"/>
+            <path d="M12 2.6v2.2M12 19.2v2.2M4.2 4.2l1.6 1.6M18.2 18.2l1.6 1.6M2.6 12h2.2M19.2 12h2.2M4.2 19.8l1.6-1.6M18.2 5.8l1.6-1.6"/>
+          </svg>
+        </button>
+        <button type="button" data-set-theme="dark" aria-pressed="false" aria-label="Dark theme" title="Dark theme">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20.5 14.6A8.6 8.6 0 0 1 9.4 3.5a8.6 8.6 0 1 0 11.1 11.1Z"/>
+          </svg>
+        </button>
+      </div>
+      <span class="mode">ALPACA {{ ALPACA_MODE }}</span>
+    </div>
+
+    <div class="status" id="status" role="status">
+      <span class="dot" id="st-dot"></span>
+      <span class="word" id="st-word">—</span>
+      <span class="sep"></span>
+      <span id="st-session">—</span>
+      <span class="sep"></span>
+      <span id="st-strats">—</span>
+      <span class="sep"></span>
+      <span id="st-asof">—</span>
+    </div>
+
+    <nav class="tabs" aria-label="Views">
+      <button type="button" data-view="dashboard" aria-current="page">Dashboard</button>
+      <button type="button" data-view="portfolio">Portfolio</button>
+      <button type="button" data-view="history">History</button>
+      <button type="button" id="logout" class="ghost" title="Sign out">Sign out</button>
+    </nav>
   </header>
-  <main>
-    <section id="account-panel" class="panel wide">
-      <div class="panel-heading"><h2>Account</h2><span class="freshness"></span></div>
-      <div id="account" class="metrics"></div>
-    </section>
-    <section id="run-panel" class="panel">
-      <div class="panel-heading"><h2>Trading run</h2><span class="freshness"></span></div>
-      <div id="run" class="run-state">No runtime snapshot</div>
-    </section>
-    <section id="configuration-panel" class="panel">
-      <div class="panel-heading"><h2>Bot configuration</h2><span class="freshness"></span></div>
-      <div id="configuration" class="metrics controls">No runtime snapshot</div>
-    </section>
-    <section id="equity-panel" class="panel wide">
-      <div class="panel-heading"><h2>Equity and P&amp;L</h2><span class="freshness"></span></div>
-      <div id="periods" role="group" aria-label="Chart period"><button type="button" data-period="1D" aria-pressed="true">1D</button><button type="button" data-period="1W" aria-pressed="false">1W</button><button type="button" data-period="1M" aria-pressed="false">1M</button><button type="button" data-period="1A" aria-pressed="false">1A</button></div>
-      <div id="equity-chart" role="region" aria-label="Equity and profit and loss chart"></div>
-    </section>
-    <section id="positions-panel" class="panel wide">
-      <div class="panel-heading"><h2>Positions</h2><span class="freshness"></span></div>
-      <div id="positions" role="region" aria-label="Positions"></div>
-    </section>
-    <section id="open-orders-panel" class="panel wide">
-      <div class="panel-heading"><h2>Open orders</h2><span class="freshness"></span></div>
-      <div id="open-orders" role="region" aria-label="Open orders"></div>
-    </section>
-    <section id="orders-panel" class="panel wide">
-      <div class="panel-heading"><h2>Order history</h2><span class="freshness"></span></div>
-      <div id="orders" role="region" aria-label="Order history"></div>
-      <div class="pager"><button type="button" data-page="orders-prev" disabled>Previous</button><span id="orders-page" aria-live="polite">Page 1</span><button type="button" data-page="orders-next" disabled>Next</button></div>
-    </section>
-    <section id="fills-panel" class="panel wide">
-      <div class="panel-heading"><h2>Fill history</h2><span class="freshness"></span></div>
-      <div id="fills" role="region" aria-label="Fill history"></div>
-      <div class="pager"><button type="button" data-page="fills-prev" disabled>Previous</button><span id="fills-page" aria-live="polite">Page 1</span><button type="button" data-page="fills-next" disabled>Next</button></div>
-    </section>
-    <section id="events-panel" class="panel wide">
-      <div class="panel-heading"><h2>Strategy events</h2><span class="freshness"></span></div>
-      <div id="events" role="region" aria-label="Strategy events"></div>
-    </section>
-  </main>
+
+  <div class="view" id="view-dashboard">
+  <div class="grid">
+
+    <div class="rail">
+
+      <section class="panel">
+        <div class="panel-head"><h2>Account value</h2><span class="eyebrow">USD</span></div>
+        <div class="panel-body">
+          <div class="value-row">
+            <span class="label">Portfolio</span>
+            <span class="figure" id="v-portfolio">—</span>
+          </div>
+          <div class="value-row secondary">
+            <span class="label">Cash</span>
+            <span class="figure" id="v-cash">—</span>
+          </div>
+
+          <div class="stat-grid">
+            <div class="stat">
+              <span class="k">Total return</span>
+              <span class="v" id="v-tr">—</span>
+            </div>
+            <div class="stat">
+              <span class="k">Last session</span>
+              <span class="v" id="v-d24">—</span>
+            </div>
+
+            <div class="stat">
+              <span class="k">Open positions</span>
+              <span class="v" id="v-open">—</span>
+            </div>
+            <div class="stat">
+              <span class="k">Exposure</span>
+              <span class="v" id="v-exposure">—</span>
+            </div>
+
+            <div class="stat">
+              <span class="k">Daily loss limit</span>
+              <span class="lim" id="v-dll">—</span>
+              <div class="meter"><i id="m-dll"></i></div>
+            </div>
+            <div class="stat">
+              <span class="k">Position cap</span>
+              <span class="lim" id="v-cap">—</span>
+              <div class="meter"><i id="m-cap"></i></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Performance</h2><span class="eyebrow">All time</span></div>
+        <div class="panel-body">
+          <div class="winrate-top">
+            <span class="k">Win rate</span>
+            <span class="v" id="v-winrate">—</span>
+          </div>
+          <div class="winrate-bar" id="winrate-bar" role="img">
+            <span class="w" id="bar-w"></span>
+            <span class="l" id="bar-l"></span>
+          </div>
+          <div class="winrate-legend">
+            <span id="lg-w">—</span>
+            <span id="lg-l">—</span>
+          </div>
+
+          <div class="period-returns">
+            <div class="period-head">
+              <span class="t">Period returns <span class="eyebrow bench-note">vs SPX</span></span>
+              <div class="segmented" id="unit-toggle" role="group" aria-label="Show returns as">
+                <button type="button" data-unit="pct" aria-pressed="true">%</button>
+                <button type="button" data-unit="usd" aria-pressed="false">$</button>
+              </div>
+            </div>
+            <div class="period-cells" id="period-cells"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel strategies">
+        <div class="panel-head">
+          <h2>Strategies</h2>
+          <div class="segmented" id="strat-range" role="group" aria-label="Strategy period">
+            <button type="button" data-range="D" aria-pressed="true">D</button>
+            <button type="button" data-range="W" aria-pressed="false">W</button>
+            <button type="button" data-range="M" aria-pressed="false">M</button>
+            <button type="button" data-range="ALL" aria-pressed="false">ALL</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <table class="data">
+            <thead>
+              <tr>
+                <th scope="col">Strategy</th>
+                <th scope="col" class="r">Trades</th>
+                <th scope="col" class="r">P&amp;L</th>
+              </tr>
+            </thead>
+            <tbody id="strat-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+    </div>
+
+    <div class="stage">
+
+      <section class="panel">
+        <div class="panel-head">
+          <div class="chart-meta">
+            <h2>Equity</h2>
+            <span class="invested" id="chart-funded">—</span>
+          </div>
+          <div class="segmented" id="chart-range" role="group" aria-label="Chart period">
+            <button type="button" data-range="D" aria-pressed="false">D</button>
+            <button type="button" data-range="W" aria-pressed="false">W</button>
+            <button type="button" data-range="M" aria-pressed="false">M</button>
+            <button type="button" data-range="ALL" aria-pressed="true">ALL</button>
+          </div>
+        </div>
+        <div class="chart-hero">
+          <span class="big num" id="chart-big">—</span>
+          <span class="delta" id="chart-delta">—</span>
+          <span class="chart-hint">drag · scroll to zoom · double-click resets</span>
+          <span class="range-note" id="chart-note">—</span>
+        </div>
+        <div class="chart-host" id="chart-host">
+          <div class="plot-hit" id="plot-hit"></div>
+          <div class="axis-hit" id="axis-hit" title="Drag up or down to stretch the price scale"></div>
+          <div class="tooltip" id="chart-tip" role="status"></div>
+        </div>
+        <div class="sr-only" id="chart-table"></div>
+      </section>
+
+      <div class="stage-bottom">
+
+      <section class="panel today">
+        <div class="panel-head">
+          <div class="today-title">
+            <h2 id="today-heading">Today</h2>
+            <span class="eyebrow" id="today-date">—</span>
+            <button type="button" class="mini hidden" id="today-reset">Back to latest</button>
+          </div>
+          <div class="segmented" id="today-tabs" role="group" aria-label="Trade list">
+            <button type="button" data-tab="closed" aria-pressed="true">Closed <span id="n-closed">0</span></button>
+            <button type="button" data-tab="open" aria-pressed="false">Open now <span id="n-open">0</span></button>
+          </div>
+        </div>
+        <div class="today-sum" id="today-sum"></div>
+        <div class="today-wrap">
+          <table class="trades" id="today-table"></table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div class="cal-title">
+            <div class="stepper">
+              <button type="button" id="cal-prev" aria-label="Previous month">&#8249;</button>
+              <button type="button" id="cal-next" aria-label="Next month">&#8250;</button>
+            </div>
+            <span class="m" id="cal-month">—</span>
+          </div>
+          <div class="cal-summary">
+            <div><span class="k">Trades</span><span class="v" id="sum-trades">—</span></div>
+            <div><span class="k">Wins</span><span class="v" id="sum-wins">—</span></div>
+            <div><span class="k">P&amp;L</span><span class="v" id="sum-pnl">—</span></div>
+            <div><span class="k">Return</span><span class="v" id="sum-pct">—</span></div>
+          </div>
+        </div>
+        <div class="cal-wrap">
+          <table class="cal">
+            <caption class="sr-only">Daily profit and loss by trading day, with weekly totals in the final column</caption>
+            <thead>
+              <tr>
+                <th scope="col">Mon</th><th scope="col">Tue</th><th scope="col">Wed</th>
+                <th scope="col">Thu</th><th scope="col">Fri</th><th scope="col">Total</th>
+              </tr>
+            </thead>
+            <tbody id="cal-body"></tbody>
+          </table>
+        </div>
+        <div class="cal-foot">
+          <span class="swatches">
+            <span class="swatch loss-swatch"></span><span>Loss</span>
+            <span class="swatch flat-swatch"></span><span>No trades</span>
+            <span class="swatch gain-swatch"></span><span>Gain</span>
+          </span>
+          <span>Tint depth tracks the size of the day&rsquo;s P&amp;L.</span>
+        </div>
+        <div class="tooltip" id="cal-tip" role="status"></div>
+      </section>
+
+      </div>
+
+    </div>
+  </div>
+  </div>
+
+  <!-- ═══ PORTFOLIO ═══════════════════════════════════════ -->
+  <div class="view hidden" id="view-portfolio">
+    <div class="grid">
+
+      <div class="rail">
+        <section class="panel">
+          <div class="panel-head"><h2>Holdings</h2><span class="eyebrow">USD</span></div>
+          <div class="panel-body">
+            <div class="value-row">
+              <span class="label">Market value</span>
+              <span class="figure" id="pf-value">—</span>
+            </div>
+            <div class="value-row secondary">
+              <span class="label">Cash</span>
+              <span class="figure" id="pf-cash">—</span>
+            </div>
+            <div class="stat-grid">
+              <div class="stat"><span class="k">Unrealised</span><span class="v" id="pf-unreal">—</span></div>
+              <div class="stat"><span class="k">Positions</span><span class="v" id="pf-count">—</span></div>
+              <div class="stat"><span class="k">Exposure</span><span class="v" id="pf-exposure">—</span></div>
+              <div class="stat"><span class="k">Largest</span><span class="v" id="pf-largest">—</span></div>
+              <div class="stat">
+                <span class="k">Buying power</span>
+                <span class="v" id="pf-risk">—</span>
+              </div>
+              <div class="stat">
+                <span class="k">Position cap</span>
+                <span class="lim" id="pf-cap">—</span>
+                <div class="meter"><i id="pf-cap-meter"></i></div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>Allocation</h2><span class="eyebrow">By strategy</span></div>
+          <div class="panel-body"><div class="alloc" id="pf-alloc"></div></div>
+        </section>
+
+        <section class="panel strategies">
+          <div class="panel-head"><h2>Position weight</h2><span class="eyebrow">vs 10% cap</span></div>
+          <div class="panel-body"><div class="stoplist" id="pf-stops"></div></div>
+        </section>
+      </div>
+
+      <div class="stage pf-stage">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Open positions</h2>
+            <span class="eyebrow" id="pf-open-note">—</span>
+          </div>
+          <div class="today-wrap"><table class="trades" id="pf-open-table"></table></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <div class="today-title"><h2>Previous session</h2><span class="eyebrow" id="pf-prev-date">—</span></div>
+          </div>
+          <div class="today-sum" id="pf-prev-sum"></div>
+          <div class="today-wrap"><table class="trades" id="pf-prev-table"></table></div>
+        </section>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ═══ HISTORY ═════════════════════════════════════════ -->
+  <div class="view hidden" id="view-history">
+    <div class="history">
+
+      <section class="panel">
+        <div class="panel-head"><h2>Since inception</h2><span class="eyebrow" id="hs-span">—</span></div>
+        <div class="panel-body"><div class="tiles" id="hs-tiles"></div></div>
+      </section>
+
+      <div class="hist-two">
+        <section class="panel">
+          <div class="panel-head"><h2>Session P&amp;L</h2><span class="eyebrow">USD</span></div>
+          <div class="panel-body">
+            <div class="ystrip" id="hs-strip"></div>
+            <div class="table-scroll"><table class="data" id="hs-months"></table></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>By strategy</h2><span class="eyebrow">Since inception</span></div>
+          <div class="panel-body"><div class="table-scroll"><table class="data" id="hs-strats"></table></div></div>
+        </section>
+      </div>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Trade log</h2>
+          <span class="eyebrow" id="hs-count">—</span>
+        </div>
+        <div class="filters" id="hs-filters">
+          <label class="field"><span>Strategy</span>
+            <select id="f-strategy"><option value="">All</option></select>
+          </label>
+          <label class="field"><span>Side</span>
+            <select id="f-side"><option value="">All</option><option value="long">Long</option><option value="short">Short</option></select>
+          </label>
+          <label class="field"><span>Result</span>
+            <select id="f-result"><option value="">All</option><option value="win">Wins</option><option value="loss">Losses</option></select>
+          </label>
+          <label class="field"><span>Session</span>
+            <select id="f-month"><option value="">All</option></select>
+          </label>
+          <label class="field grow"><span>Symbol</span>
+            <input id="f-symbol" type="search" placeholder="e.g. NVDA" autocomplete="off">
+          </label>
+          <button type="button" class="mini" id="f-clear">Clear</button>
+        </div>
+        <div class="log-wrap"><table class="trades log" id="hs-log"></table></div>
+      </section>
+
+    </div>
+  </div>
+
+</div>
 </body>
 </html>

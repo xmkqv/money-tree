@@ -1,8 +1,11 @@
+import asyncio
 import hashlib
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+import httpx
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
@@ -11,14 +14,20 @@ from pydantic import AwareDatetime, ValidationError
 from starlette.responses import FileResponse
 
 from bot.types import STATE_SIGNATURE_SALT, RuntimeSnapshot
-from ui.alpaca import AlpacaReadClient
+from ui.alpaca import AlpacaMarketDataClient, AlpacaReadClient
 from ui.config import WebSettings
+from ui.ledger import TRADING_ZONE, match_cycles, sessions, strategy_labels, summarise
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
 DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.html").read_bytes()
 DASHBOARD_CSS = ASSET_DIRECTORY / "dashboard.css"
 DASHBOARD_JAVASCRIPT = ASSET_DIRECTORY / "dashboard.js"
+DASHBOARD_THEME = ASSET_DIRECTORY / "theme.js"
+LEDGER_TTL_SECONDS = 60
+BENCHMARK_SYMBOL = "SPY"
+POSITION_CAP_FALLBACK = 0.10
+DAILY_LOSS_FALLBACK = 0.02
 NO_STORE = {"Cache-Control": "no-store"}
 IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
 HEARTBEAT_TIMEOUT = timedelta(seconds=15)
@@ -30,11 +39,41 @@ PORTFOLIO_TIMEFRAMES = {"1D": "5Min", "1W": "15Min", "1M": "1D", "1A": "1D"}
 DASHBOARD_HEADERS = {
     "Cache-Control": "private, no-cache",
     "Content-Security-Policy": (
-        "default-src 'self'; script-src 'self' https://unpkg.com; "
-        "style-src 'self' https://unpkg.com; connect-src 'self'; img-src 'self' data:; "
+        "default-src 'self'; script-src 'self'; "
+        "style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; "
+        "connect-src 'self'; img-src 'self' data:; "
         "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
     ),
 }
+
+
+class LedgerCache:
+    """Fills and orders are paged reads, so the assembled view is held briefly.
+
+    The bot shares this Alpaca key, and Alpaca rate-limits per key, so the cost
+    of the dashboard is capped here rather than left to scale with viewers: one
+    assembly per minute regardless of how many people are watching. At the page
+    ceiling that is roughly 47 requests a minute against a 200 limit.
+    """
+
+    def __init__(self, ttl_seconds: int = LEDGER_TTL_SECONDS) -> None:
+        self._ttl = ttl_seconds
+        self._lock = asyncio.Lock()
+        self._payload: dict[str, Any] | None = None
+        self._stamped_at = 0.0
+
+    def fresh(self) -> dict[str, Any] | None:
+        if self._payload is None or time.monotonic() - self._stamped_at > self._ttl:
+            return None
+        return self._payload
+
+    def store(self, payload: dict[str, Any]) -> None:
+        self._payload = payload
+        self._stamped_at = time.monotonic()
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        return self._lock
 
 
 class RuntimeStore:
@@ -71,6 +110,135 @@ def read_response(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
     )
 
 
+def _funded_points(history: dict[str, Any]) -> list[tuple[datetime, float]]:
+    """Equity readings from the point the account was actually funded."""
+    return [
+        (datetime.fromtimestamp(int(point["timestamp"]), TRADING_ZONE), float(point["equity"]))
+        for point in history["points"]
+        if point["equity"]
+    ]
+
+
+def _equity_series(history: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {"date": when.date().isoformat(), "equity": round(value, 2)}
+        for when, value in _funded_points(history)
+    ]
+
+
+def _intraday_series(history: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+    points = _funded_points(history)
+    rows = [{"t": when.strftime("%H:%M"), "equity": round(value, 2)} for when, value in points]
+    return rows, points[0][0].date().isoformat() if points else ""
+
+
+def _position_rows(
+    raw: list[dict[str, Any]],
+    equity: float,
+    open_cycles: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in raw:
+        symbol = str(item["symbol"])
+        held = open_cycles.get(symbol, {})
+        value = float(item["market_value"])
+        rows.append(
+            {
+                "symbol": symbol,
+                "side": "long" if item["side"] == "long" else "short",
+                "strategy": held.get("strategy", "unattributed"),
+                "opened": held.get("opened", "—"),
+                "qty": round(abs(float(item["qty"])), 4),
+                "entry": round(float(item["avg_entry_price"]), 4),
+                "last": round(float(item["current_price"]), 4),
+                "value": round(value, 2),
+                "unreal": round(float(item["unrealized_pl"]), 2),
+                "unrealPct": round(float(item["unrealized_plpc"]) * 100, 2),
+                "weight": round(value / equity * 100, 2) if equity else 0.0,
+            }
+        )
+    rows.sort(key=lambda row: -float(row["value"]))
+    return rows
+
+
+async def build_ledger(
+    alpaca: AlpacaReadClient,
+    market: AlpacaMarketDataClient,
+    snapshot: RuntimeSnapshot | None,
+    stale: bool,
+) -> dict[str, Any]:
+    """One assembled view of the account: state, holdings, closed trades, curves."""
+    account, positions, fills, orders, daily, intraday, clock = await asyncio.gather(
+        alpaca.account(),
+        alpaca.positions(),
+        alpaca.raw_fills(),
+        alpaca.raw_closed_orders(),
+        alpaca.equity("1A", "1D"),
+        alpaca.equity("1D", "5Min"),
+        alpaca.clock(),
+    )
+
+    cycles, open_cycles = match_cycles(fills, orders)
+    equity_daily = _equity_series(daily)
+    intraday_points, intraday_date = _intraday_series(intraday)
+
+    invested = equity_daily[0]["equity"] if equity_daily else float(account["equity"])
+    funded = equity_daily[0]["date"] if equity_daily else ""
+    equity = round(float(account["equity"]), 2)
+    closes = {row["date"]: float(row["equity"]) for row in equity_daily}
+
+    today = datetime.now(TRADING_ZONE).date().isoformat()
+    if not equity_daily or equity_daily[-1]["date"] != today:
+        equity_daily.append({"date": today, "equity": equity})
+
+    rows = _position_rows(positions, equity, open_cycles)
+    configuration = snapshot.configuration if snapshot else None
+    benchmark_start = funded or today
+
+    try:
+        bars = await market.daily_bars(BENCHMARK_SYMBOL, benchmark_start)
+    except httpx.HTTPError:
+        bars = []
+
+    return {
+        "asOf": datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M ET"),
+        "today": today,
+        "accountNumber": str(account["account_number"]),
+        "status": str(account["status"]),
+        "marketOpen": bool(clock["is_open"]),
+        "nextOpen": datetime.fromisoformat(str(clock["next_open"])).strftime("%H:%M ET"),
+        "invested": invested,
+        "funded": datetime.fromisoformat(funded).strftime("%-d %b %Y") if funded else "—",
+        "equity": equity,
+        "lastEquity": round(float(account["last_equity"]), 2),
+        "cash": round(float(account["cash"]), 2),
+        "buyingPower": round(float(account["buying_power"]), 2),
+        "marketValue": round(sum(float(row["value"]) for row in rows), 2),
+        "unrealised": round(sum(float(row["unreal"]) for row in rows), 2),
+        "positionCapPct": round(
+            100 * (configuration.position_fraction_max if configuration else POSITION_CAP_FALLBACK),
+            2,
+        ),
+        "dailyLossLimitPct": round(
+            100 * (configuration.risk_per_day_max if configuration else DAILY_LOSS_FALLBACK), 2
+        ),
+        "bot": {
+            "status": snapshot.status if snapshot else "unknown",
+            "stale": stale,
+            "strategies": snapshot.strategies if snapshot else [],
+        },
+        "strategies": strategy_labels(),
+        "positions": rows,
+        "trades": cycles,
+        "days": sessions(cycles, closes, invested),
+        "totals": summarise(cycles),
+        "equityDaily": equity_daily,
+        "intraday": intraday_points,
+        "intradayDate": intraday_date,
+        "spy": [{"date": str(bar["t"])[:10], "close": float(bar["c"])} for bar in bars],
+    }
+
+
 def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeStore) -> APIRouter:
     router = APIRouter()
     mode = b"PAPER" if configuration.alpaca_is_paper else b"LIVE"
@@ -81,8 +249,13 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         digest_method=hashlib.sha256,
     )
 
+    ledger_cache = LedgerCache()
+
     def alpaca(request: Request) -> AlpacaReadClient:
         return request.state.alpaca
+
+    def market(request: Request) -> AlpacaMarketDataClient:
+        return request.state.market
 
     def runtime_state() -> tuple[RuntimeSnapshot | None, bool]:
         snapshot = runtime_store.read()
@@ -104,6 +277,10 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
             media_type="text/javascript",
             headers=IMMUTABLE,
         )
+
+    @router.get("/assets/theme.js")
+    async def dashboard_theme() -> FileResponse:
+        return FileResponse(DASHBOARD_THEME, media_type="text/javascript", headers=IMMUTABLE)
 
     @router.get("/api/session")
     async def session(request: Request) -> JSONResponse:
@@ -149,6 +326,19 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
     ) -> JSONResponse:
         max_age = 300 if page_token is not None else 15
         return read_response(await alpaca(request).fills(limit, page_token), max_age)
+
+    @router.get("/api/ledger")
+    async def ledger(request: Request) -> JSONResponse:
+        cached = ledger_cache.fresh()
+        if cached is not None:
+            return read_response(cached, 10)
+        async with ledger_cache.lock:
+            cached = ledger_cache.fresh()
+            if cached is None:
+                snapshot, stale = runtime_state()
+                cached = await build_ledger(alpaca(request), market(request), snapshot, stale)
+                ledger_cache.store(cached)
+        return read_response(cached, 10)
 
     @router.get("/api/equity")
     async def equity(
