@@ -1307,7 +1307,7 @@ function renderLog() {
 /* ══ views ═══════════════════════════════════════════════ */
 
 let currentView = "dashboard";
-const viewReady = { dashboard: true, portfolio: false, history: false };
+const viewReady = { dashboard: true, portfolio: false, history: false, strategies: false };
 
 function switchView(name) {
   currentView = name;
@@ -1317,19 +1317,126 @@ function switchView(name) {
     if (b.dataset.view === name) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }
-  for (const id of ["dashboard", "portfolio", "history"]) {
+  for (const id of ["dashboard", "portfolio", "history", "strategies"]) {
     document.getElementById("view-" + id).classList.toggle("hidden", id !== name);
   }
 
   if (!viewReady[name]) {
     if (name === "portfolio") renderPortfolio();
     if (name === "history") renderHistory();
+    if (name === "strategies") renderRules();
     viewReady[name] = true;
   }
 
   /* the chart measured zero while its panel was hidden */
   if (name === "dashboard") requestAnimationFrame(drawChart);
   window.scrollTo(0, 0);
+}
+
+
+/* ══ rule sheet ══════════════════════════════════════════
+
+   Fetched once when the page is first opened rather than on every poll: the
+   rules only change when the service is redeployed. The run-state badges come
+   from the live feed, so they keep refreshing with everything else. */
+
+let RULES = null;
+
+function ruleRow(row) {
+  const tr = document.createElement("tr");
+  const head = document.createElement("th");
+  head.scope = "row";
+  head.textContent = row.field;
+  const cell = document.createElement("td");
+  cell.textContent = row.value;
+  if (row.source) {
+    const src = document.createElement("span");
+    src.className = "rule-source";
+    src.textContent = row.source;
+    cell.append(src);
+  }
+  tr.append(head, cell);
+  return tr;
+}
+
+function renderRuleStates() {
+  for (const card of document.querySelectorAll("#rules-cards .rule-card")) {
+    const pill = card.querySelector(".run-state");
+    if (!pill) continue;
+    const state = runState(card.dataset.strategy);
+    pill.className = "run-state is-" + state;
+    pill.textContent = RUN_STATE[state].label;
+    pill.title = RUN_STATE[state].hint;
+    card.classList.toggle("is-idle", state !== "active");
+  }
+}
+
+function paintRules() {
+  if (!RULES) return;
+
+  const portfolio = document.getElementById("rules-portfolio");
+  portfolio.replaceChildren();
+  const caption = document.createElement("caption");
+  caption.textContent = "Applies to every strategy at once";
+  const pbody = document.createElement("tbody");
+  for (const row of RULES.portfolio) pbody.append(ruleRow(row));
+  portfolio.append(caption, pbody);
+
+  document.getElementById("rules-config").textContent = RULES.configured
+    ? "Risk limits as reported by the bot"
+    : "Bot not reporting — risk limits shown are the defaults";
+
+  const host = document.getElementById("rules-cards");
+  host.replaceChildren();
+  for (const strategy of RULES.strategies) {
+    const card = document.createElement("section");
+    card.className = "panel rule-card";
+    card.dataset.strategy = strategy.id;
+
+    const head = document.createElement("div");
+    head.className = "panel-head";
+    const title = document.createElement("h2");
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.style.background = STRATEGY_COLOURS[strategy.id] || "var(--ink-3)";
+    const name = document.createElement("span");
+    name.textContent = strategy.short;
+    title.append(chip, name);
+    const pill = document.createElement("span");
+    pill.className = "run-state";
+    head.append(title, pill);
+
+    const sub = document.createElement("div");
+    sub.className = "rule-sub";
+    sub.textContent = strategy.label + " · " + strategy.kind;
+
+    const body = document.createElement("div");
+    body.className = "panel-body";
+    const table = document.createElement("table");
+    table.className = "data rules-table";
+    const tbody = document.createElement("tbody");
+    for (const row of strategy.rows) tbody.append(ruleRow(row));
+    table.append(tbody);
+    body.append(table);
+
+    card.append(head, sub, body);
+    host.append(card);
+  }
+  renderRuleStates();
+}
+
+async function renderRules() {
+  if (RULES) { paintRules(); return; }
+  try {
+    const response = await fetch("/api/strategies", { credentials: "same-origin" });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    RULES = (await response.json()).data;
+  } catch (error) {
+    document.getElementById("rules-cards").textContent =
+      "The rule sheet could not be loaded. Reload the page to try again.";
+    return;
+  }
+  paintRules();
 }
 
 /* ══ live feed ═══════════════════════════════════════════ */
@@ -1345,6 +1452,7 @@ function renderAll() {
   renderToday();
   if (viewReady.portfolio) renderPortfolio();
   if (viewReady.history) renderHistory();
+  if (viewReady.strategies) renderRuleStates();
 }
 
 function markFeed(state, detail) {
