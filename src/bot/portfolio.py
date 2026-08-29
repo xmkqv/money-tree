@@ -43,6 +43,7 @@ FIVE_MINUTES = TimeFrame(5, cast(TimeFrameUnit, TimeFrameUnit.Minute))
 TEN_MINUTES = TimeFrame(10, cast(TimeFrameUnit, TimeFrameUnit.Minute))
 UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
 PREPARATION_ATTEMPTS_MAX = 2
+STOP_COVERAGE_TOLERANCE = 1e-6
 
 
 @dataclass(slots=True)
@@ -93,7 +94,7 @@ class Strategy(StrategyBase):
         self._holdings: dict[str, Holding] = {}
         self._pending: dict[str, Pending] = {}
         self._claims: dict[str, StrategyName | None] = {}
-        self._stops: dict[str, float] = {}
+        self._stops: dict[str, tuple[float, float]] = {}
         self._closing: set[str] = set()
         self._events: set[str] = set()
         self._orb_traded: set[tuple[date, str]] = set()
@@ -153,11 +154,11 @@ class Strategy(StrategyBase):
         if pending is not None and entry_side in side:
             self._pending.pop(asset)
             holding = pending.holding
-            holding.entry = float(price)
+            holding.entry = self._entry_price(order, price)
             holding.risk = abs(holding.entry - holding.stop)
             holding.highest = holding.entry
             holding.lowest = holding.entry
-            holding.original_quantity = abs(float(quantity))
+            holding.original_quantity = self._entry_quantity_filled(asset, quantity)
             if holding.engine == "orb":
                 holding.targets = cast(
                     tuple[float, float, float],
@@ -168,14 +169,28 @@ class Strategy(StrategyBase):
                 )
             self._holdings[asset] = holding
             if holding.engine in {"orb", "orb_momentum"}:
-                self._protect(holding, float(quantity))
+                self._protect(holding)
             return
         self._closing.discard(asset)
         remaining = abs(float(getattr(position, "quantity", 0.0)))
         if remaining <= 0:
             self._release(asset)
         elif asset in self._holdings:
-            self._protect(self._holdings[asset], remaining)
+            holding = self._holdings[asset]
+            if holding.stage == 0:
+                holding.original_quantity = max(holding.original_quantity, remaining)
+            self._protect(holding, remaining)
+
+    def _entry_price(self, order: Any, price: float) -> float:
+        average = getattr(order, "avg_fill_price", None)
+        try:
+            value = float(average) if average is not None else 0.0
+        except (TypeError, ValueError):
+            value = 0.0
+        return value if isfinite(value) and value > 0 else float(price)
+
+    def _entry_quantity_filled(self, asset: str, reported: float | int) -> float:
+        return max(self._quantity(asset), abs(float(reported)))
 
     def _event(
         self,
@@ -323,6 +338,23 @@ class Strategy(StrategyBase):
         for asset in set(self._stops).difference(active):
             self._stops.pop(asset, None)
         self._closing.intersection_update(active)
+        self._resync_stops(positions)
+
+    def _resync_stops(self, positions: dict[str, Any]) -> None:
+        for asset, holding in self._holdings.items():
+            if holding.engine not in {"orb", "orb_momentum"} or asset in self._closing:
+                continue
+            position = positions.get(asset)
+            if position is None:
+                continue
+            quantity = abs(float(position.qty))
+            if quantity <= 0:
+                continue
+            if holding.stage == 0:
+                holding.original_quantity = max(holding.original_quantity, quantity)
+            resting = self._stops.get(asset)
+            if resting is None or resting[1] < quantity - STOP_COVERAGE_TOLERANCE:
+                self._protect(holding, quantity)
 
     def _prepare(self, day: date) -> None:
         if self._prepared_on == day:
@@ -859,12 +891,15 @@ class Strategy(StrategyBase):
         ):
             self._exit(holding)
             return
-        if self._stops.get(holding.asset) == stop:
+        size = quantity_value(amount, bool(self.parameters["fractional_orders"]))
+        if size <= 0:
+            return
+        if self._stops.get(holding.asset) == (stop, float(size)):
             return
         self._cancel(holding.asset)
         order = self.create_order(
             holding.asset,
-            quantity_value(amount, bool(self.parameters["fractional_orders"])),
+            size,
             "sell" if holding.direction == 1 else "buy",
             stop_price=stop,
             time_in_force="day",
@@ -875,7 +910,7 @@ class Strategy(StrategyBase):
             },
         )
         self.submit_order(order)
-        self._stops[holding.asset] = stop
+        self._stops[holding.asset] = (stop, float(size))
 
     def _exit(self, holding: Holding, quantity: float | None = None) -> None:
         if holding.asset in self._closing:
