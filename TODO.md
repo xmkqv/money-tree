@@ -12,3 +12,8 @@ holds the strategy register.
 ## new strategies
 
 - [ ] Develop a momentum strategy.
+
+## bugs
+
+- [ ] Momentum strategy stops aren't firing. DNTH is below its SMA 20 and RSI is
+      below 50, but the position has not been sold.
