@@ -377,7 +377,7 @@ function stratCell(id) {
   return { node: wrap };
 }
 
-function buildTable(table, headers, rows, rightFrom) {
+function buildTable(table, headers, rows, rightFrom, rowClass) {
   const thead = document.createElement("thead");
   const hr = document.createElement("tr");
   headers.forEach((h, i) => {
@@ -390,8 +390,12 @@ function buildTable(table, headers, rows, rightFrom) {
   thead.append(hr);
 
   const tbody = document.createElement("tbody");
-  for (const row of rows) {
+  rows.forEach((row, index) => {
     const tr = document.createElement("tr");
+    if (rowClass) {
+      const extra = rowClass(row, index);
+      if (extra) tr.className = extra;
+    }
     for (const c of row) {
       const td = document.createElement("td");
       if (c.node) td.append(c.node);
@@ -402,7 +406,7 @@ function buildTable(table, headers, rows, rightFrom) {
       tr.append(td);
     }
     tbody.append(tr);
-  }
+  });
   /* Rebuilt in place on every poll, so clear first: appending would stack a
      fresh header and body under the previous ones on each refresh. */
   table.replaceChildren(thead, tbody);
@@ -1311,6 +1315,25 @@ function renderHistory() {
   renderLog();
 }
 
+/* A daily engine can hold for days, so an entry time alone would read as if the
+   trade opened and closed in the same session. Name the day when it did not. */
+function openedCell(trade) {
+  const wrap = document.createElement("span");
+  wrap.className = "in-time";
+  const clock = document.createElement("span");
+  clock.textContent = clockLabel(trade.inMinute);
+  wrap.append(clock);
+  if (trade.inDate && trade.inDate !== trade.date) {
+    const [, m, day] = dparts(trade.inDate);
+    const tag = document.createElement("span");
+    tag.className = "in-day";
+    tag.textContent = day + " " + MON3[m - 1];
+    wrap.append(tag);
+    wrap.title = "Opened " + day + " " + MON3[m - 1] + ", held to the exit shown";
+  }
+  return { node: wrap, dim: true };
+}
+
 function renderLog() {
   const strategy = document.getElementById("f-strategy").value;
   const side = document.getElementById("f-side").value;
@@ -1340,17 +1363,25 @@ function renderLog() {
     return;
   }
 
+  /* Shade every other session so the eye can find where one day ends. Parity is
+     counted from the earliest day on show, so the banding reads the same way
+     chronologically however the list is filtered, and a day with no trades
+     never leaves two shaded sessions touching. */
+  const days = [...new Set(rows.map(t => t.date))].sort();
+  const shade = rows.map(t => days.indexOf(t.date) % 2 === 1);
+
   buildTable(table,
-    ["Date", "Time", "Symbol", "Strategy", "In", "Out", "P&L"],
+    ["Date", "In time", "Out time", "Symbol", "Strategy", "Entry", "Exit", "P&L"],
     rows.map(t => [
       { t: DAY3[t.weekday] + " " + t.day + " " + MON3[t.m] + " " + String(t.y).slice(2), cls: "log-date" },
+      openedCell(t),
       { t: clockLabel(t.minute), dim: true },
       symbolCell(t.symbol, t.side),
       stratCell(t.strategy),
       { t: money(t.entry), r: true },
       { t: money(t.exit), r: true },
       { t: signedMoney(t.pnl), r: true, cls: tone(t.pnl) },
-    ]), 4);
+    ]), 5, (_row, index) => shade[index] ? "band" : "");
 }
 
 /* ══ views ═══════════════════════════════════════════════ */
