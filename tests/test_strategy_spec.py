@@ -8,6 +8,7 @@ threshold in the bot fails a test instead of leaving the page confidently wrong.
 
 import ast
 import inspect
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,8 @@ from bot.portfolio import Strategy as PortfolioStrategy
 from bot.strategies import orb, orb_momentum, sma, tfb_50
 from bot.types import TradingConfiguration
 from tests.test_ledger import _snapshot
-from ui.dashboard import bot_state
+from ui.dashboard import CHART_TIMEFRAMES, bot_state, chart_window
+from ui.ledger import TRADING_ZONE
 from ui.strategies import (
     FIELDS,
     ORB_RISK_CEILING,
@@ -230,3 +232,33 @@ def test_bot_state_says_whether_a_roster_was_reported_at_all() -> None:
     assert bot_state(None, stale=True)["reported"] is False
     assert bot_state(_snapshot(), stale=False)["reported"] is True
     assert bot_state(_snapshot(), stale=True)["reported"] is True
+
+
+@pytest.mark.parametrize(
+    ("timeframe", "least_days"),
+    [("5Min", 2), ("1Hour", 14), ("1Day", 240)],
+)
+def test_each_timeframe_puts_its_own_context_around_a_trade(
+    timeframe: str, least_days: int
+) -> None:
+    """A day chart needs months either side; a five-minute chart needs hours."""
+    start, end = chart_window(timeframe, date(2026, 8, 27), date(2026, 8, 27))
+
+    assert (end - start).days >= least_days
+    assert start.date() < date(2026, 8, 27) < end.date()
+    assert str(start.tzinfo) == str(TRADING_ZONE)
+
+
+def test_a_long_hold_cannot_ask_for_an_unbounded_run_of_bars() -> None:
+    """The window is clamped, so one chart stays one upstream page."""
+    start, end = chart_window("5Min", date(2020, 1, 2), date(2026, 8, 27))
+
+    assert (end - start).days <= CHART_TIMEFRAMES["5Min"]["span_max"]
+    assert end.date() > date(2026, 8, 27)
+
+
+def test_the_window_always_covers_the_trade_it_is_drawn_for() -> None:
+    for timeframe in CHART_TIMEFRAMES:
+        start, end = chart_window(timeframe, date(2026, 8, 24), date(2026, 8, 28))
+        assert start.date() <= date(2026, 8, 24), timeframe
+        assert end.date() >= date(2026, 8, 28), timeframe

@@ -392,6 +392,33 @@
     </div>
   </div>
 
+  <div class="view hidden" id="view-chart">
+    <section class="panel chart-panel">
+      <div class="panel-head trade-head">
+        <button type="button" class="ghost back" id="chart-back">← Trade log</button>
+        <h2 id="tc-title">—</h2>
+        <span class="eyebrow" id="tc-sub">—</span>
+        <div class="segmented" id="tc-range" role="group" aria-label="Bar size">
+          <button type="button" data-bar="5Min" aria-pressed="true">5 min</button>
+          <button type="button" data-bar="1Hour" aria-pressed="false">1 hour</button>
+          <button type="button" data-bar="1Day" aria-pressed="false">Day</button>
+        </div>
+      </div>
+      <div class="trade-facts" id="tc-facts"></div>
+      <div class="chart-host trade-host" id="tc-host">
+        <div class="plot-hit" id="tc-hit"></div>
+        <div class="tooltip" id="tc-tip" role="status"></div>
+        <p class="tc-state" id="tc-state" hidden></p>
+      </div>
+      <p class="tc-note">
+        Prices come from the IEX feed, one exchange rather than the whole market, so volume
+        is a share of the true total. Entry and exit are the average fill price for the trade;
+        a scaled-out position had several fills around them.
+      </p>
+      <div class="sr-only" id="tc-table"></div>
+    </section>
+  </div>
+
 </div>
 </body>
 </html>

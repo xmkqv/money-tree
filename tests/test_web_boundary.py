@@ -256,3 +256,64 @@ def test_account_response_is_rejected_when_upstream_fails() -> None:
 
     assert response.status_code == 502
     assert response.json() == {"detail": "Upstream read failed"}
+
+
+def test_bars_rejects_a_symbol_that_is_not_a_ticker() -> None:
+    """The symbol reaches an upstream path, so it is constrained at the edge."""
+    with web_client() as client:
+        authenticate(client)
+        responses = {
+            name: client.get(
+                "/api/bars",
+                params={
+                    "symbol": name,
+                    "timeframe": "5Min",
+                    "opened": "2026-08-27",
+                    "closed": "2026-08-27",
+                },
+            ).status_code
+            for name in ("../secrets", "nvda", "N V", "", "A" * 40)
+        }
+
+    assert all(status == 422 for status in responses.values()), responses
+
+
+def test_bars_rejects_an_unknown_timeframe_and_a_reversed_window() -> None:
+    with web_client() as client:
+        authenticate(client)
+        timeframe = client.get(
+            "/api/bars",
+            params={
+                "symbol": "NVDA",
+                "timeframe": "1Min",
+                "opened": "2026-08-27",
+                "closed": "2026-08-27",
+            },
+        )
+        reversed_window = client.get(
+            "/api/bars",
+            params={
+                "symbol": "NVDA",
+                "timeframe": "5Min",
+                "opened": "2026-08-28",
+                "closed": "2026-08-27",
+            },
+        )
+
+    assert timeframe.status_code == 422
+    assert reversed_window.status_code == 422
+
+
+def test_bars_requires_a_session() -> None:
+    with web_client() as client:
+        response = client.get(
+            "/api/bars",
+            params={
+                "symbol": "NVDA",
+                "timeframe": "5Min",
+                "opened": "2026-08-27",
+                "closed": "2026-08-27",
+            },
+        )
+
+    assert response.status_code == 401

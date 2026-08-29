@@ -1,7 +1,9 @@
 import asyncio
 import hashlib
 import time
-from datetime import UTC, datetime, timedelta
+from collections import OrderedDict
+from datetime import UTC, date, datetime, timedelta
+from datetime import time as dtime
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -19,6 +21,7 @@ from ui.config import WebSettings
 from ui.ledger import (
     TRADING_ZONE,
     match_cycles,
+    parse_day,
     sessions,
     strategy_id,
     strategy_labels,
@@ -109,6 +112,69 @@ class LedgerCache:
     @property
     def lock(self) -> asyncio.Lock:
         return self._lock
+
+
+# How much context each timeframe puts around a trade, and the bar size Alpaca
+# is asked for. The window is bounded per timeframe so one chart is always one
+# upstream page, whatever the trade's span.
+CHART_TIMEFRAMES: dict[str, dict[str, Any]] = {
+    "5Min": {"bar": "5Min", "pad_days": 1, "span_max": 10},
+    "1Hour": {"bar": "1Hour", "pad_days": 7, "span_max": 90},
+    "1Day": {"bar": "1Day", "pad_days": 120, "span_max": 900},
+}
+CHART_TTL_SECONDS = 120
+CHART_CACHE_MAX = 64
+
+
+class BarCache:
+    """Keyed by symbol, timeframe and window, so revisiting a trade is free.
+
+    A chart is one upstream read, but the symbol is chosen by whoever is
+    clicking, so the volume is not bounded by the page the way the ledger is.
+    Holding each answer briefly keeps a browse through the log from turning into
+    a read per click against the limit the bot shares.
+    """
+
+    def __init__(self, ttl_seconds: int = CHART_TTL_SECONDS) -> None:
+        self._ttl = ttl_seconds
+        self._entries: OrderedDict[str, tuple[float, list[dict[str, Any]]]] = OrderedDict()
+        self._lock = asyncio.Lock()
+
+    def fresh(self, key: str) -> list[dict[str, Any]] | None:
+        entry = self._entries.get(key)
+        if entry is None or time.monotonic() - entry[0] > self._ttl:
+            return None
+        self._entries.move_to_end(key)
+        return entry[1]
+
+    def store(self, key: str, bars: list[dict[str, Any]]) -> None:
+        self._entries[key] = (time.monotonic(), bars)
+        self._entries.move_to_end(key)
+        while len(self._entries) > CHART_CACHE_MAX:
+            self._entries.popitem(last=False)
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        return self._lock
+
+
+def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, datetime]:
+    """The span of market data to draw around a trade, in exchange time.
+
+    Padding gives the trade somewhere to sit rather than starting hard on the
+    entry, and the span is clamped so a long hold cannot ask for a year of
+    five-minute bars.
+    """
+    rules = CHART_TIMEFRAMES[timeframe]
+    pad = timedelta(days=int(rules["pad_days"]))
+    start = opened - pad
+    end = closed + pad
+    if (end - start).days > int(rules["span_max"]):
+        start = end - timedelta(days=int(rules["span_max"]))
+    return (
+        datetime.combine(start, dtime(0, 0), TRADING_ZONE),
+        datetime.combine(end, dtime(23, 59), TRADING_ZONE),
+    )
 
 
 class RuntimeStore:
@@ -305,6 +371,7 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
     )
 
     ledger_cache = LedgerCache()
+    bar_cache = BarCache()
 
     def alpaca(request: Request) -> AlpacaReadClient:
         return request.state.alpaca
@@ -373,6 +440,55 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
     ) -> JSONResponse:
         max_age = 300 if page_token is not None else 15
         return read_response(await alpaca(request).fills(limit, page_token), max_age)
+
+    @router.get("/api/bars")
+    async def bars(
+        request: Request,
+        symbol: Annotated[str, Query(min_length=1, max_length=12, pattern=r"^[A-Z][A-Z.]*$")],
+        timeframe: Annotated[Literal["5Min", "1Hour", "1Day"], Query()],
+        opened: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
+        closed: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
+    ) -> JSONResponse:
+        """Bars around one trade. The window is derived here, not sent by the page."""
+        try:
+            opened_on, closed_on = parse_day(opened), parse_day(closed)
+        except ValueError:
+            return error_response("Dates are invalid", 422)
+        if closed_on < opened_on:
+            return error_response("The close cannot precede the open", 422)
+
+        start, end = chart_window(timeframe, opened_on, closed_on)
+        key = f"{symbol}|{timeframe}|{start.isoformat()}|{end.isoformat()}"
+        cached = bar_cache.fresh(key)
+        if cached is None:
+            async with bar_cache.lock:
+                cached = bar_cache.fresh(key)
+                if cached is None:
+                    cached = await market(request).bars(
+                        symbol,
+                        str(CHART_TIMEFRAMES[timeframe]["bar"]),
+                        start.isoformat(),
+                        end.isoformat(),
+                    )
+                    bar_cache.store(key, cached)
+        return read_response(
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "bars": [
+                    {
+                        "t": str(bar["t"]),
+                        "o": float(bar["o"]),
+                        "h": float(bar["h"]),
+                        "l": float(bar["l"]),
+                        "c": float(bar["c"]),
+                        "v": float(bar.get("v") or 0),
+                    }
+                    for bar in cached
+                ],
+            },
+            60,
+        )
 
     @router.get("/api/strategies")
     async def strategies() -> JSONResponse:
