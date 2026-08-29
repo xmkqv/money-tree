@@ -357,11 +357,17 @@ function renderToday() {
     ]), 3);
 }
 
-function symbolCell(symbol, side) {
+function symbolCell(symbol, side, trade) {
   const wrap = document.createElement("span");
-  const sym = document.createElement("span");
+  const sym = document.createElement(trade ? "button" : "span");
   sym.className = "sym";
   sym.textContent = symbol;
+  if (trade) {
+    sym.type = "button";
+    sym.classList.add("linked");
+    sym.title = "Chart this trade";
+    sym.addEventListener("click", () => openTradeChart(trade));
+  }
   const tag = document.createElement("span");
   tag.className = "side" + (side === "short" ? " short" : "");
   tag.textContent = side === "short" ? "S" : "L";
@@ -1387,7 +1393,7 @@ function renderLog() {
       { t: DAY3[t.weekday] + " " + t.day + " " + MON3[t.m] + " " + String(t.y).slice(2), cls: "log-date" },
       openedCell(t),
       { t: clockLabel(t.minute), dim: true },
-      symbolCell(t.symbol, t.side),
+      symbolCell(t.symbol, t.side, t),
       stratCell(t.strategy),
       { t: money(t.entry), r: true },
       { t: money(t.exit), r: true },
@@ -1398,20 +1404,342 @@ function renderLog() {
     ].filter(Boolean).join(" "));
 }
 
+
+/* ══ trade chart ═════════════════════════════════════════
+
+   Opened from a symbol in the trade log, so it always answers one question:
+   what did this stock do around the trade the bot took? The trade is the
+   subject — the candles are context, the entry and exit are the marks that
+   matter, and the line between them carries the result. */
+
+const TC_BARS = { "5Min": "5 min", "1Hour": "1 hour", "1Day": "Day" };
+let TRADE = null, TC_STATE = { bar: "5Min", bars: null, hover: null };
+
+function clockOf(iso) {
+  const at = new Date(iso);
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(at);
+}
+
+function dayOf(iso) {
+  const at = new Date(iso);
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/New_York", day: "numeric", month: "short",
+  }).formatToParts(at);
+  return parts.filter(p => p.type !== "literal").map(p => p.value).join(" ");
+}
+
+/* Exchange-time minutes since the epoch, so a bar and a fill can be compared
+   on one axis without either being read in the viewer's own timezone. */
+function stampOf(dateISO, minute) {
+  return Date.parse(dateISO + "T00:00:00Z") / 60000 + minute;
+}
+
+function barStamp(iso) {
+  const at = new Date(iso);
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(at);
+  const get = t => parts.find(p => p.type === t).value;
+  return stampOf(`${get("year")}-${get("month")}-${get("day")}`,
+    Number(get("hour")) * 60 + Number(get("minute")));
+}
+
+async function openTradeChart(trade) {
+  TRADE = trade;
+  TC_STATE = { bar: "5Min", bars: null, hover: null };
+  for (const b of document.querySelectorAll("#tc-range button"))
+    b.setAttribute("aria-pressed", String(b.dataset.bar === "5Min"));
+  switchView("chart");
+  paintTradeFacts();
+  await loadTradeBars();
+}
+
+function paintTradeFacts() {
+  const t = TRADE;
+  document.getElementById("tc-title").textContent = t.symbol;
+  const strategy = STRAT_BY_ID[t.strategy];
+  document.getElementById("tc-sub").textContent =
+    (strategy ? strategy.label : t.strategy) + " · " + (t.side === "short" ? "Short" : "Long");
+
+  const held = t.heldMin >= 1440
+    ? Math.round(t.heldMin / 1440) + "d"
+    : t.heldMin >= 60 ? Math.floor(t.heldMin / 60) + "h " + (t.heldMin % 60) + "m" : t.heldMin + "m";
+
+  const facts = [
+    ["Entry", money(t.entry), dayOf2(t.inDate) + " " + clockLabel(t.inMinute)],
+    ["Exit", money(t.exit), dayOf2(t.date) + " " + clockLabel(t.minute)],
+    ["Quantity", plainNum(Math.round(t.qty * 100) / 100), ""],
+    ["Held", held, ""],
+    ["P&L", signedMoney(t.pnl), signedPct(((t.exit - t.entry) / t.entry) * 100 * (t.side === "short" ? -1 : 1))],
+  ];
+  const host = document.getElementById("tc-facts");
+  host.replaceChildren();
+  for (const [label, value, sub] of facts) {
+    const cell = document.createElement("div");
+    cell.className = "fact";
+    const k = document.createElement("span");
+    k.className = "k";
+    k.textContent = label;
+    const v = document.createElement("span");
+    v.className = "v num" + (label === "P&L" ? " " + tone(t.pnl) : "");
+    v.textContent = value;
+    cell.append(k, v);
+    if (sub) {
+      const s = document.createElement("span");
+      s.className = "s";
+      s.textContent = sub;
+      cell.append(s);
+    }
+    host.append(cell);
+  }
+}
+
+function dayOf2(iso) {
+  const [, m, d] = dparts(iso);
+  return d + " " + MON3[m - 1];
+}
+
+function tcState(message) {
+  const el = document.getElementById("tc-state");
+  el.textContent = message || "";
+  el.hidden = !message;
+}
+
+async function loadTradeBars() {
+  const t = TRADE;
+  tcState("Loading " + TC_BARS[TC_STATE.bar].toLowerCase() + " bars…");
+  document.getElementById("tc-host").querySelectorAll("svg").forEach(n => n.remove());
+  const query = new URLSearchParams({
+    symbol: t.symbol, timeframe: TC_STATE.bar, opened: t.inDate, closed: t.date,
+  });
+  try {
+    const response = await fetch("/api/bars?" + query, { headers: { Accept: "application/json" } });
+    if (response.status === 401) { location.replace("/login"); return; }
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const payload = await response.json();
+    TC_STATE.bars = payload.data.bars.map(b => ({ ...b, x: barStamp(b.t) }));
+  } catch (error) {
+    TC_STATE.bars = null;
+    tcState("Market data could not be read. Try again in a moment.");
+    return;
+  }
+  if (!TC_STATE.bars.length) {
+    tcState("No bars for this window. The IEX feed may not have quoted this stock then.");
+    return;
+  }
+  tcState("");
+  drawTradeChart();
+}
+
+const TC_PAD = { l: 10, r: 62, t: 16, b: 26 };
+
+function drawTradeChart() {
+  const host = document.getElementById("tc-host");
+  const bars = TC_STATE.bars;
+  if (!bars || !bars.length) return;
+  const width = host.clientWidth, height = host.clientHeight;
+  if (width < 80 || height < 80) return;
+  readTheme();
+
+  const t = TRADE;
+  const inX = stampOf(t.inDate, t.inMinute), outX = stampOf(t.date, t.minute);
+  const plotW = width - TC_PAD.l - TC_PAD.r, plotH = height - TC_PAD.t - TC_PAD.b;
+
+  /* Bars are drawn on their index, not their clock, so overnight gaps and the
+     lunch lull do not open dead space across the plot. */
+  const nearest = x => {
+    let best = 0, gap = Infinity;
+    bars.forEach((b, i) => { const d = Math.abs(b.x - x); if (d < gap) { gap = d; best = i; } });
+    return best;
+  };
+  const inIndex = nearest(inX), outIndex = nearest(outX);
+
+  const lows = bars.map(b => b.l).concat([t.entry, t.exit]);
+  const highs = bars.map(b => b.h).concat([t.entry, t.exit]);
+  let yMin = Math.min(...lows), yMax = Math.max(...highs);
+  const pad = ((yMax - yMin) || Math.max(yMax * 0.01, 0.01)) * 0.10;
+  yMin -= pad; yMax += pad;
+
+  const step = plotW / bars.length;
+  const px = i => TC_PAD.l + (i + 0.5) * step;
+  const py = v => TC_PAD.t + (1 - (v - yMin) / (yMax - yMin)) * plotH;
+  TC_STATE.geo = { px, py, step, width, height, inIndex, outIndex };
+
+  const ticks = [];
+  const gridStep = niceStep((yMax - yMin) / 4.2);
+  for (let v = Math.ceil(yMin / gridStep) * gridStep; v <= yMax; v += gridStep) ticks.push(v);
+  const grid = ticks.map(v =>
+    '<line x1="' + TC_PAD.l + '" y1="' + py(v).toFixed(2) + '" x2="' + (width - TC_PAD.r) +
+    '" y2="' + py(v).toFixed(2) + '" stroke="' + C.grid + '" stroke-width="1"/>' +
+    '<text x="' + (width - TC_PAD.r + 8) + '" y="' + (py(v) + 3.5).toFixed(2) + '" fill="' + C.axis +
+    '" font-size="10" font-family="Roboto Mono, monospace">' + money(v) + "</text>").join("");
+
+  /* Candles carry direction by shape as well as hue: a body drawn from open to
+     close is up or down whichever way the colour reads. */
+  const bodyW = Math.max(1.5, Math.min(9, step * 0.62));
+  const candles = bars.map((b, i) => {
+    const up = b.c >= b.o;
+    const colour = up ? GAIN : LOSS;
+    const x = px(i);
+    const top = py(Math.max(b.o, b.c)), bottom = py(Math.min(b.o, b.c));
+    const h = Math.max(1, bottom - top);
+    return '<line x1="' + x.toFixed(2) + '" y1="' + py(b.h).toFixed(2) + '" x2="' + x.toFixed(2) +
+      '" y2="' + py(b.l).toFixed(2) + '" stroke="' + colour + '" stroke-width="1"/>' +
+      '<rect x="' + (x - bodyW / 2).toFixed(2) + '" y="' + top.toFixed(2) + '" width="' + bodyW.toFixed(2) +
+      '" height="' + h.toFixed(2) + '" fill="' + (up ? colour : colour) + '" opacity="' + (up ? 0.9 : 1) + '"/>';
+  }).join("");
+
+  /* The trend line is the trade's own result: entry to exit, coloured by which
+     way it went, so the direction is readable before any number is. */
+  const tone2 = t.pnl >= 0 ? GAIN : LOSS;
+  const x1 = px(inIndex), y1 = py(t.entry), x2 = px(outIndex), y2 = py(t.exit);
+  const trend =
+    '<line x1="' + x1.toFixed(2) + '" y1="' + y1.toFixed(2) + '" x2="' + x2.toFixed(2) + '" y2="' + y2.toFixed(2) +
+    '" stroke="' + tone2 + '" stroke-width="2" stroke-linecap="round" stroke-dasharray="6 4" opacity="0.95"/>';
+
+  const level = (y, colour) =>
+    '<line x1="' + TC_PAD.l + '" y1="' + y.toFixed(2) + '" x2="' + (width - TC_PAD.r) + '" y2="' + y.toFixed(2) +
+    '" stroke="' + colour + '" stroke-width="1" stroke-dasharray="2 5" opacity="0.5"/>';
+
+  /* Shape separates the two ends, colour reports the result: a hollow ring
+     starts the trade, a filled dot closes it in the tone the line carries. So
+     neither end depends on telling one colour from another to be identified. */
+  const entryMark =
+    '<circle cx="' + x1.toFixed(2) + '" cy="' + y1.toFixed(2) + '" r="5.5" fill="' + C.ring +
+    '" stroke="' + C.axis + '" stroke-width="2.5"/>';
+  const exitMark =
+    '<circle cx="' + x2.toFixed(2) + '" cy="' + y2.toFixed(2) + '" r="6" fill="' + tone2 +
+    '" stroke="' + C.ring + '" stroke-width="2"/>';
+
+  host.querySelectorAll("svg").forEach(n => n.remove());
+  host.insertAdjacentHTML("afterbegin",
+    '<svg viewBox="0 0 ' + width + " " + height + '" preserveAspectRatio="none" role="img" ' +
+    'aria-label="' + t.symbol + " price around the trade, entry " + money(t.entry) +
+    " and exit " + money(t.exit) + '">' +
+    grid + candles + level(y1, C.axis) + level(y2, C.axis) + trend + entryMark + exitMark +
+    "</svg>");
+
+  /* size the hover target from the same padding, so it cannot drift from it */
+  const hit = document.getElementById("tc-hit");
+  hit.style.left = TC_PAD.l + "px";
+  hit.style.top = TC_PAD.t + "px";
+  hit.style.width = plotW + "px";
+  hit.style.height = plotH + "px";
+
+  paintTradeLabels(x1, y1, x2, y2, width);
+  paintTradeTable();
+}
+
+/* The two marks are labelled on the plot rather than in a legend: there are only
+   two, and each carries a price and the strategy that placed it. */
+function paintTradeLabels(x1, y1, x2, y2, width) {
+  const result = TRADE.pnl >= 0 ? GAIN : LOSS;
+  const host = document.getElementById("tc-host");
+  host.querySelectorAll(".tc-mark").forEach(n => n.remove());
+  const strategy = STRAT_BY_ID[TRADE.strategy];
+  const place = (x, y, title, price, cls) => {
+    const el = document.createElement("div");
+    el.className = "tc-mark " + cls;
+    const head = document.createElement("span");
+    head.className = "tc-k";
+    head.textContent = title;
+    const val = document.createElement("span");
+    val.className = "tc-v num";
+    val.textContent = money(price);
+    const who = document.createElement("span");
+    who.className = "tc-s";
+    who.textContent = strategy ? strategy.label : TRADE.strategy;
+    el.append(head, val, who);
+    el.style.left = Math.round(x) + "px";
+    el.style.top = Math.round(y) + "px";
+    /* the exit edge reports the result, so it cannot be a fixed colour */
+    el.style.borderLeftColor = cls === "exit" ? result : "var(--ink-3)";
+    if (x > width * 0.6) el.classList.add("flip");
+    host.append(el);
+  };
+  place(x1, y1, "Entry", TRADE.entry, "entry");
+  place(x2, y2, "Exit", TRADE.exit, "exit");
+  separateMarks(host);
+}
+
+/* On a daily chart an intraday trade opens and closes on the same candle, so
+   the two cards land on top of each other. Push them apart along the price
+   axis, keeping the higher price above, rather than letting one hide the other. */
+function separateMarks(host) {
+  const [a, b] = [...host.querySelectorAll(".tc-mark")];
+  if (!a || !b) return;
+  const boxA = a.getBoundingClientRect(), boxB = b.getBoundingClientRect();
+  const overlapY = Math.min(boxA.bottom, boxB.bottom) - Math.max(boxA.top, boxB.top);
+  const overlapX = Math.min(boxA.right, boxB.right) - Math.max(boxA.left, boxB.left);
+  if (overlapY <= 0 || overlapX <= 0) return;
+  const shift = (overlapY + 8) / 2;
+  const upper = TRADE.entry >= TRADE.exit ? a : b;
+  const lower = upper === a ? b : a;
+  upper.style.marginTop = -shift + "px";
+  lower.style.marginTop = shift + "px";
+}
+
+function paintTradeTable() {
+  const rows = TC_STATE.bars.map(b =>
+    `${dayOf(b.t)} ${clockOf(b.t)} open ${money(b.o)} high ${money(b.h)} low ${money(b.l)} close ${money(b.c)}`);
+  document.getElementById("tc-table").textContent =
+    TRADE.symbol + " " + TC_BARS[TC_STATE.bar] + " bars. " + rows.join(". ");
+}
+
+function tradeHover(event) {
+  const geo = TC_STATE.geo, bars = TC_STATE.bars;
+  const tip = document.getElementById("tc-tip");
+  if (!geo || !bars) return;
+  const host = document.getElementById("tc-host");
+  const rect = host.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const index = clamp(Math.round((x - TC_PAD.l) / geo.step - 0.5), 0, bars.length - 1);
+  const b = bars[index];
+  const row = (label, value) =>
+    '<span class="tt-row"><span>' + label + "</span><span>" + money(value) + "</span></span>";
+  tip.innerHTML =
+    '<span class="tt-k">' + dayOf(b.t) + " " + clockOf(b.t) + "</span>" +
+    '<span class="tt-v">' + money(b.c) + "</span>" +
+    row("Open", b.o) + row("High", b.h) + row("Low", b.l);
+  tip.style.left = clamp(geo.px(index), 70, geo.width - 70) + "px";
+  tip.style.top = clamp(geo.py(b.h) - 12, 8, geo.height - 40) + "px";
+  tip.classList.add("on");
+}
+
+function wireTradeChart() {
+  document.getElementById("chart-back").addEventListener("click", () => switchView("history"));
+  document.getElementById("tc-range").addEventListener("click", event => {
+    const button = event.target.closest("button");
+    if (!button || button.dataset.bar === TC_STATE.bar) return;
+    TC_STATE.bar = button.dataset.bar;
+    for (const b of document.querySelectorAll("#tc-range button"))
+      b.setAttribute("aria-pressed", String(b === button));
+    loadTradeBars();
+  });
+  const hit = document.getElementById("tc-hit");
+  hit.addEventListener("pointermove", tradeHover);
+  hit.addEventListener("pointerleave", () => document.getElementById("tc-tip").classList.remove("on"));
+}
+
 /* ══ views ═══════════════════════════════════════════════ */
 
 let currentView = "dashboard";
-const viewReady = { dashboard: true, portfolio: false, history: false, strategies: false };
+const viewReady = { dashboard: true, portfolio: false, history: false, strategies: false, chart: true };
 
 function switchView(name) {
   currentView = name;
   document.body.dataset.view = name;
 
   for (const b of document.querySelectorAll(".tabs button")) {
-    if (b.dataset.view === name) b.setAttribute("aria-current", "page");
+    /* the trade chart is opened from the log, so History stays the current tab */
+    const owner = name === "chart" ? "history" : name;
+    if (b.dataset.view === owner) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }
-  for (const id of ["dashboard", "portfolio", "history", "strategies"]) {
+  for (const id of ["dashboard", "portfolio", "history", "strategies", "chart"]) {
     document.getElementById("view-" + id).classList.toggle("hidden", id !== name);
   }
 
@@ -1422,8 +1750,9 @@ function switchView(name) {
     viewReady[name] = true;
   }
 
-  /* the chart measured zero while its panel was hidden */
+  /* a chart measures zero while its panel is hidden */
   if (name === "dashboard") requestAnimationFrame(drawChart);
+  if (name === "chart") requestAnimationFrame(drawTradeChart);
   window.scrollTo(0, 0);
 }
 
@@ -1716,8 +2045,15 @@ new ResizeObserver(entries => {
   resizeTimer = setTimeout(drawChart, 80);
 }).observe(document.getElementById("chart-host"));
 
+let tradeResizeTimer = 0;
+new ResizeObserver(() => {
+  clearTimeout(tradeResizeTimer);
+  tradeResizeTimer = setTimeout(() => { if (currentView === "chart") drawTradeChart(); }, 80);
+}).observe(document.getElementById("tc-host"));
+
 document.body.dataset.view = "dashboard";
 syncThemeButtons();
 initChartInteraction();
+wireTradeChart();
 refresh();
 setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);

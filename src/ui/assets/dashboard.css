@@ -1373,3 +1373,91 @@ table.trades.log td { font-size: 12.5px; }
 /* Heavier than the row rules it sits among, so the week boundary is the first
    division the eye finds; the day banding stays the finer grain inside it. */
 .trades.log tbody tr.week-edge td { border-top: 2px solid var(--week-rule); }
+
+/* ══ trade chart ═════════════════════════════════════════ */
+
+.sym.linked {
+  font: inherit;
+  font-family: var(--font-ui);
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  border-bottom: 1px dashed var(--hairline-strong);
+}
+.sym.linked:hover { color: var(--accent, var(--s-orb5)); border-bottom-color: currentColor; }
+.sym.linked:focus-visible { outline: 2px solid var(--s-orb5); outline-offset: 2px; border-radius: 3px; }
+
+.chart-panel { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.trade-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.trade-head h2 { font-size: 17px; letter-spacing: -0.02em; }
+.trade-head .segmented { margin-left: auto; }
+.ghost.back {
+  font-size: 12px;
+  color: var(--ink-2);
+  background: none;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.ghost.back:hover { color: var(--ink); }
+
+.trade-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+  gap: 10px 18px;
+  padding: 2px var(--pad, 16px) 12px;
+}
+.trade-facts .fact { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.trade-facts .k { font-size: 11px; color: var(--ink-3); letter-spacing: 0.02em; }
+.trade-facts .v { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.trade-facts .s { font-size: 11px; color: var(--ink-3); font-family: var(--font-data); }
+
+.trade-host { flex: 1; min-height: 260px; position: relative; margin: 0 var(--pad, 16px); }
+.trade-host .plot-hit { cursor: crosshair; }
+.tc-state {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  margin: 0; color: var(--ink-3); font-size: 13px; text-align: center; padding: 0 24px;
+}
+/* the author display wins over the browser's own [hidden] rule, so an empty
+   overlay would otherwise sit invisibly over the plot and eat every hover */
+.tc-state[hidden] { display: none; }
+
+/* Each mark names itself on the plot — two of them, each with a price and the
+   strategy behind it, so nothing depends on matching a colour to a legend. */
+.tc-mark {
+  position: absolute;
+  transform: translate(12px, -50%);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 4px 8px;
+  border-radius: 7px;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  border: 1px solid var(--hairline-strong);
+  pointer-events: none;
+  white-space: nowrap;
+  backdrop-filter: blur(3px);
+}
+.tc-mark.flip { transform: translate(calc(-100% - 12px), -50%); }
+.tc-mark .tc-k { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+.tc-mark .tc-v { font-size: 13px; font-weight: 600; color: var(--ink); }
+.tc-mark .tc-s { font-size: 10.5px; color: var(--ink-2); }
+/* the edge colour is set per trade — the exit carries the result */
+.tc-mark.entry, .tc-mark.exit { border-left-width: 3px; border-left-style: solid; }
+
+.tc-note {
+  margin: 10px var(--pad, 16px) 0;
+  color: var(--ink-3);
+  font-size: 11.5px;
+  line-height: 1.5;
+  max-width: 92ch;
+}
+body[data-view="chart"] .view { display: block; }
+body[data-view="chart"] { overflow: auto; }
+body[data-view="chart"] .app { height: auto; min-height: 100%; }
+body[data-view="chart"] .chart-panel { min-height: 74vh; }

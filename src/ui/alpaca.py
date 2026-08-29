@@ -172,10 +172,26 @@ class AlpacaMarketDataClient:
         self._client = client
 
     async def daily_bars(self, symbol: str, start: str) -> list[JsonRow]:
-        response = await self._client.get(
-            f"/v2/stocks/{symbol}/bars",
-            params={"timeframe": "1Day", "start": start, "limit": "1000", "feed": "iex"},
-        )
+        return await self.bars(symbol, "1Day", start)
+
+    async def bars(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: str,
+        end: str | None = None,
+        limit: int = 1000,
+    ) -> list[JsonRow]:
+        """One page of bars. Callers bound the window, so no paging is needed."""
+        params = {
+            "timeframe": timeframe,
+            "start": start,
+            "limit": str(limit),
+            "feed": "iex",
+        }
+        if end is not None:
+            params["end"] = end
+        response = await self._client.get(f"/v2/stocks/{symbol}/bars", params=params)
         response.raise_for_status()
         payload: Any = response.json()
         return list(payload.get("bars") or [])
