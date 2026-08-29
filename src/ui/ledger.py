@@ -1,6 +1,6 @@
 from collections import defaultdict
 from datetime import date, datetime
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 from zoneinfo import ZoneInfo
 
 from bot.attribution import find_order_strategy
@@ -10,6 +10,16 @@ from bot.types import STRATEGY_LABELS, StrategyName
 TRADING_ZONE = ZoneInfo("America/New_York")
 UNATTRIBUTED = "unattributed"
 EPSILON = 1e-9
+
+
+class Fill(TypedDict):
+    """One execution inside a cycle, so a scaled-out exit is not hidden by its average."""
+
+    d: str
+    m: int
+    p: float
+    q: float
+    s: str
 
 
 class Cycle(TypedDict):
@@ -25,6 +35,7 @@ class Cycle(TypedDict):
     inDate: str
     inMinute: int
     heldMin: int
+    fills: list[Fill]
 
 
 class Session(TypedDict):
@@ -103,9 +114,20 @@ def match_cycles(
                 "out_value": 0.0,
                 "opened": when,
                 "engine": engines.get(str(fill["order_id"])),
+                "fills": [],
             }
 
-        if (signed > 0) == (cycle["direction"] > 0):
+        entering = (signed > 0) == (cycle["direction"] > 0)
+        cast(list[Fill], cycle["fills"]).append(
+            Fill(
+                d=when.date().isoformat(),
+                m=when.hour * 60 + when.minute,
+                p=round(price, 4),
+                q=round(qty, 4),
+                s="in" if entering else "out",
+            )
+        )
+        if entering:
             cycle["in_qty"] += qty
             cycle["in_value"] += qty * price
             if cycle["engine"] is None:
@@ -134,6 +156,7 @@ def match_cycles(
                 inDate=opened.date().isoformat(),
                 inMinute=opened.hour * 60 + opened.minute,
                 heldMin=max(0, int((when - opened).total_seconds() // 60)),
+                fills=cast(list[Fill], cycle["fills"]),
             )
         )
         del live[symbol]

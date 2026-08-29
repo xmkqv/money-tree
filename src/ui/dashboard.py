@@ -118,10 +118,11 @@ class LedgerCache:
 # is asked for. The window is bounded per timeframe so one chart is always one
 # upstream page, whatever the trade's span.
 CHART_TIMEFRAMES: dict[str, dict[str, Any]] = {
-    "5Min": {"bar": "5Min", "pad_days": 1, "span_max": 10},
-    "1Hour": {"bar": "1Hour", "pad_days": 7, "span_max": 90},
-    "1Day": {"bar": "1Day", "pad_days": 120, "span_max": 900},
+    "5Min": {"bar": "5Min", "pad_days": 1, "span_max": 10, "warmup_days": 5},
+    "1Hour": {"bar": "1Hour", "pad_days": 7, "span_max": 90, "warmup_days": 46},
+    "1Day": {"bar": "1Day", "pad_days": 120, "span_max": 900, "warmup_days": 300},
 }
+SMA_LENGTHS = (20, 50, 200)
 CHART_TTL_SECONDS = 120
 CHART_CACHE_MAX = 64
 
@@ -158,23 +159,100 @@ class BarCache:
         return self._lock
 
 
-def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, datetime]:
-    """The span of market data to draw around a trade, in exchange time.
+def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, datetime, datetime]:
+    """Data start, display start and end for a trade, in exchange time.
 
     Padding gives the trade somewhere to sit rather than starting hard on the
     entry, and the span is clamped so a long hold cannot ask for a year of
-    five-minute bars.
+    five-minute bars. The data reaches further back than the display so a
+    200-period average has something to average before the first drawn bar —
+    otherwise the longest line would simply be missing from every chart.
     """
     rules = CHART_TIMEFRAMES[timeframe]
     pad = timedelta(days=int(rules["pad_days"]))
-    start = opened - pad
+    display = opened - pad
     end = closed + pad
-    if (end - start).days > int(rules["span_max"]):
-        start = end - timedelta(days=int(rules["span_max"]))
+    if (end - display).days > int(rules["span_max"]):
+        display = end - timedelta(days=int(rules["span_max"]))
+    data = display - timedelta(days=int(rules["warmup_days"]))
     return (
-        datetime.combine(start, dtime(0, 0), TRADING_ZONE),
+        datetime.combine(data, dtime(0, 0), TRADING_ZONE),
+        datetime.combine(display, dtime(0, 0), TRADING_ZONE),
         datetime.combine(end, dtime(23, 59), TRADING_ZONE),
     )
+
+
+# Reconstruction of the levels an engine would have set, from the same rules the
+# composer uses. It is a reconstruction and the page says so: the live stop
+# trails once a target is hit, so where it finally sat is not recoverable from
+# market data alone.
+ATR_PERIOD = 14
+DAILY_STOP_MULTIPLES = {"sma": 1.5, "tfb_50": 2.0}
+ORB_OPENING_MINUTES = {"orb": 5, "orb_momentum": 10}
+ORB_TARGET_MULTIPLES = (1.5, 2.5, 4.0)
+ORB_SPAN_MULTIPLES = (0.5, 1.0, 2.0)
+ORB_STOP_FRACTION = {1: 0.75, -1: 0.25}
+
+
+def wilder_atr(bars: list[dict[str, Any]], period: int = ATR_PERIOD) -> float | None:
+    """Average true range, smoothed the way pandas-ta smooths it for the bot.
+
+    Reimplemented here rather than imported so the web service does not pull in
+    the whole strategy stack — lumibot, pandas-ta and the exchange calendars —
+    to draw one dashed line.
+    """
+    if len(bars) <= period:
+        return None
+    ranges: list[float] = []
+    for index, bar in enumerate(bars):
+        high, low = float(bar["h"]), float(bar["l"])
+        if index == 0:
+            ranges.append(high - low)
+            continue
+        close = float(bars[index - 1]["c"])
+        ranges.append(max(high - low, abs(high - close), abs(low - close)))
+    average = ranges[0]
+    for value in ranges[1:]:
+        average += (value - average) / period
+    return average if average > 0 else None
+
+
+def opening_range(
+    bars: list[dict[str, Any]], day: date, minutes: int
+) -> tuple[float, float] | None:
+    """High and low of the session's first candle of that length."""
+    opens = datetime.combine(day, dtime(9, 30), TRADING_ZONE)
+    closes = opens + timedelta(minutes=minutes)
+    inside = [
+        bar
+        for bar in bars
+        if opens
+        <= datetime.fromisoformat(str(bar["t"]).replace("Z", "+00:00")).astimezone(TRADING_ZONE)
+        < closes
+    ]
+    if not inside:
+        return None
+    return max(float(b["h"]) for b in inside), min(float(b["l"]) for b in inside)
+
+
+def orb_levels(
+    engine: str, direction: int, entry: float, high: float, low: float
+) -> dict[str, Any]:
+    """The stop and the three targets the composer would have set on this range."""
+    span = high - low
+    stop = low + span * ORB_STOP_FRACTION[direction]
+    if engine == "orb":
+        # the five-minute engine re-cuts its targets from the filled price
+        risk = abs(entry - stop)
+        targets = [entry + direction * risk * multiple for multiple in ORB_TARGET_MULTIPLES]
+    else:
+        edge = high if direction == 1 else low
+        targets = [edge + direction * span * multiple for multiple in ORB_SPAN_MULTIPLES]
+    return {
+        "range": {"high": round(high, 4), "low": round(low, 4)},
+        "stop": round(stop, 4),
+        "targets": [round(value, 4) for value in targets],
+    }
 
 
 class RuntimeStore:
@@ -457,7 +535,7 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         if closed_on < opened_on:
             return error_response("The close cannot precede the open", 422)
 
-        start, end = chart_window(timeframe, opened_on, closed_on)
+        start, display, end = chart_window(timeframe, opened_on, closed_on)
         key = f"{symbol}|{timeframe}|{start.isoformat()}|{end.isoformat()}"
         cached = bar_cache.fresh(key)
         if cached is None:
@@ -475,6 +553,8 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
             {
                 "symbol": symbol,
                 "timeframe": timeframe,
+                "displayFrom": display.isoformat(),
+                "smaLengths": list(SMA_LENGTHS),
                 "bars": [
                     {
                         "t": str(bar["t"]),
@@ -489,6 +569,64 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
             },
             60,
         )
+
+    @router.get("/api/levels")
+    async def levels(
+        request: Request,
+        symbol: Annotated[str, Query(min_length=1, max_length=12, pattern=r"^[A-Z][A-Z.]*$")],
+        strategy: Annotated[
+            Literal["orb", "orb_momentum", "sma", "tfb_50", "unattributed"], Query()
+        ],
+        side: Annotated[Literal["long", "short"], Query()],
+        entry: Annotated[float, Query(gt=0)],
+        opened: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
+    ) -> JSONResponse:
+        """Where this engine's rules put the stop and targets for one trade.
+
+        Fetched once per trade rather than per timeframe, so switching bar size
+        costs nothing, and cached like the bars because the symbol is chosen by
+        whoever is clicking rather than bounded by the page.
+        """
+        try:
+            opened_on = parse_day(opened)
+        except ValueError:
+            return error_response("The open date is invalid", 422)
+
+        key = f"levels|{symbol}|{strategy}|{side}|{entry}|{opened}"
+        cached = bar_cache.fresh(key)
+        if cached is not None:
+            return read_response(cached[0] if cached else {}, 300)
+
+        direction = 1 if side == "long" else -1
+        payload: dict[str, Any] = {"strategy": strategy, "reconstructed": True}
+
+        async with bar_cache.lock:
+            if strategy in ORB_OPENING_MINUTES:
+                session = await market(request).bars(
+                    symbol,
+                    "5Min",
+                    datetime.combine(opened_on, dtime(9, 30), TRADING_ZONE).isoformat(),
+                    datetime.combine(opened_on, dtime(9, 45), TRADING_ZONE).isoformat(),
+                    limit=10,
+                )
+                found = opening_range(session, opened_on, ORB_OPENING_MINUTES[strategy])
+                if found is not None:
+                    payload.update(orb_levels(strategy, direction, entry, *found))
+            elif strategy in DAILY_STOP_MULTIPLES:
+                history = await market(request).bars(
+                    symbol,
+                    "1Day",
+                    (opened_on - timedelta(days=90)).isoformat(),
+                    datetime.combine(opened_on, dtime(0, 0), TRADING_ZONE).isoformat(),
+                    limit=90,
+                )
+                average_range = wilder_atr(history)
+                if average_range is not None:
+                    distance = DAILY_STOP_MULTIPLES[strategy] * average_range
+                    payload["stop"] = round(entry - direction * distance, 4)
+                    payload["atr"] = round(average_range, 4)
+            bar_cache.store(key, [payload])
+        return read_response(payload, 300)
 
     @router.get("/api/strategies")
     async def strategies() -> JSONResponse:

@@ -19,7 +19,14 @@ from bot.portfolio import Strategy as PortfolioStrategy
 from bot.strategies import orb, orb_momentum, sma, tfb_50
 from bot.types import TradingConfiguration
 from tests.test_ledger import _snapshot
-from ui.dashboard import CHART_TIMEFRAMES, bot_state, chart_window
+from ui.dashboard import (
+    CHART_TIMEFRAMES,
+    bot_state,
+    chart_window,
+    opening_range,
+    orb_levels,
+    wilder_atr,
+)
 from ui.ledger import TRADING_ZONE
 from ui.strategies import (
     FIELDS,
@@ -246,23 +253,76 @@ def test_each_timeframe_puts_its_own_context_around_a_trade(
     timeframe: str, least_days: int
 ) -> None:
     """A day chart needs months either side; a five-minute chart needs hours."""
-    start, end = chart_window(timeframe, date(2026, 8, 27), date(2026, 8, 27))
+    _, display, end = chart_window(timeframe, date(2026, 8, 27), date(2026, 8, 27))
 
-    assert (end - start).days >= least_days
-    assert start.date() < date(2026, 8, 27) < end.date()
-    assert str(start.tzinfo) == str(TRADING_ZONE)
+    assert (end - display).days >= least_days
+    assert display.date() < date(2026, 8, 27) < end.date()
+    assert str(display.tzinfo) == str(TRADING_ZONE)
 
 
 def test_a_long_hold_cannot_ask_for_an_unbounded_run_of_bars() -> None:
     """The window is clamped, so one chart stays one upstream page."""
-    start, end = chart_window("5Min", date(2020, 1, 2), date(2026, 8, 27))
+    _, display, end = chart_window("5Min", date(2020, 1, 2), date(2026, 8, 27))
 
-    assert (end - start).days <= CHART_TIMEFRAMES["5Min"]["span_max"]
+    assert (end - display).days <= CHART_TIMEFRAMES["5Min"]["span_max"]
     assert end.date() > date(2026, 8, 27)
 
 
 def test_the_window_always_covers_the_trade_it_is_drawn_for() -> None:
     for timeframe in CHART_TIMEFRAMES:
-        start, end = chart_window(timeframe, date(2026, 8, 24), date(2026, 8, 28))
-        assert start.date() <= date(2026, 8, 24), timeframe
+        _, display, end = chart_window(timeframe, date(2026, 8, 24), date(2026, 8, 28))
+        assert display.date() <= date(2026, 8, 24), timeframe
         assert end.date() >= date(2026, 8, 28), timeframe
+
+
+@pytest.mark.parametrize("timeframe", list(CHART_TIMEFRAMES))
+def test_data_reaches_back_far_enough_to_warm_a_200_period_average(timeframe: str) -> None:
+    """Without a run-up the longest average would be missing from every chart."""
+    data, display, _ = chart_window(timeframe, date(2026, 8, 27), date(2026, 8, 27))
+    lead = (display - data).days
+
+    assert lead >= int(CHART_TIMEFRAMES[timeframe]["warmup_days"]) - 1, timeframe
+    # roughly 200 bars of the timeframe's own size, allowing for weekends
+    sessions = lead * 5 / 7
+    per_session = {"5Min": 78, "1Hour": 7, "1Day": 1}[timeframe]
+    assert sessions * per_session >= 200, timeframe
+
+
+def test_reconstructed_orb_levels_follow_the_composer() -> None:
+    """A 10.00-10.50 range: the stop sits three quarters back for a long."""
+    long = orb_levels("orb", 1, entry=10.60, high=10.50, low=10.00)
+
+    assert long["range"] == {"high": 10.5, "low": 10.0}
+    assert long["stop"] == pytest.approx(10.375)
+    risk = 10.60 - 10.375
+    assert long["targets"] == pytest.approx([10.60 + risk * m for m in (1.5, 2.5, 4.0)])
+
+    short = orb_levels("orb", -1, entry=9.90, high=10.50, low=10.00)
+    assert short["stop"] == pytest.approx(10.125)
+
+
+def test_the_ten_minute_engine_keeps_range_based_targets() -> None:
+    """Only the five-minute engine re-cuts its targets from the fill."""
+    levels = orb_levels("orb_momentum", 1, entry=10.60, high=10.50, low=10.00)
+
+    assert levels["targets"] == pytest.approx([10.75, 11.0, 11.5])
+
+
+def test_average_true_range_needs_more_bars_than_its_period() -> None:
+    flat = [{"h": 2.0, "l": 1.0, "c": 1.5} for _ in range(14)]
+
+    assert wilder_atr(flat) is None
+    assert wilder_atr(flat + [{"h": 2.0, "l": 1.0, "c": 1.5}]) == pytest.approx(1.0)
+
+
+def test_the_opening_range_is_the_first_candle_of_its_length() -> None:
+    bars = [
+        {"t": "2026-08-27T13:30:00Z", "h": 10.5, "l": 10.0, "c": 10.2},
+        {"t": "2026-08-27T13:35:00Z", "h": 11.0, "l": 9.5, "c": 10.8},
+        {"t": "2026-08-27T13:45:00Z", "h": 12.0, "l": 8.0, "c": 11.0},
+    ]
+
+    assert opening_range(bars, date(2026, 8, 27), 5) == (10.5, 10.0)
+    # the ten-minute engine takes both of the first two candles
+    assert opening_range(bars, date(2026, 8, 27), 10) == (11.0, 9.5)
+    assert opening_range([], date(2026, 8, 27), 5) is None
