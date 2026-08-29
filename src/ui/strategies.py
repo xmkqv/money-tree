@@ -90,7 +90,7 @@ def _pct(fraction: float) -> str:
 def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float) -> list[Row]:
     opening_end = "09:34" if minutes == 5 else "09:39"
     first_scan = "09:35" if minutes == 5 else "09:40"
-    risk_cap = min(per_trade, ORB_RISK_CEILING) if minutes == 5 else per_trade
+    risk_cap = ORB_RISK_CEILING if minutes == 5 else per_trade
 
     confirmation = (
         f"Volume traded so far today is at least {volume_multiple:g}x the 20-session "
@@ -152,10 +152,10 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
             field="Max Risk",
             value=f"{_pct(risk_cap)} of account equity per trade"
             + (
-                f" — the tighter of the configured {_pct(per_trade)} and this engine's own "
-                f"{_pct(ORB_RISK_CEILING)} ceiling."
+                f" — this engine states its own {_pct(ORB_RISK_CEILING)} in the register, so "
+                f"that governs instead of the configured {_pct(per_trade)}."
                 if minutes == 5
-                else " (the configured per-trade limit; this engine adds no extra ceiling)."
+                else " (the configured per-trade limit; this engine states none of its own)."
             )
             + f" A single position is never worth more than {_pct(POSITION_FRACTION_CEILING)} "
             "of equity.",
@@ -171,7 +171,8 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
         ),
         Row(
             field="Emergency Exit",
-            value="Everything is closed at 15:55 — this engine never holds overnight. The "
+            value="Everything is closed before 15:55 — the exit is sent at 15:54 so the "
+            "market order fills in time, and this engine never holds overnight. The "
             "daily loss limit closes all positions and stops new entries for the rest of "
             "the day.",
             source="portfolio.py · _manage, _daily_loss_reached",

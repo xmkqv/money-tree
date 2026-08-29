@@ -44,6 +44,9 @@ TEN_MINUTES = TimeFrame(10, cast(TimeFrameUnit, TimeFrameUnit.Minute))
 UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
 PREPARATION_ATTEMPTS_MAX = 2
 STOP_COVERAGE_TOLERANCE = 1e-6
+# The register closes intraday positions *before* 15:55 ET. The exit is a market
+# order, so it is submitted a minute early to leave room for the fill.
+ORB_CLOSE_DEADLINE = time(15, 54)
 
 
 @dataclass(slots=True)
@@ -311,6 +314,8 @@ class Strategy(StrategyBase):
             self._holdings[asset] = holding
             self._claims[asset] = engine
             self._claims[signal] = engine
+            if engine in {"orb", "orb_momentum"}:
+                self._orb_traded.add((entered_at.astimezone(TRADING_ZONE).date(), asset))
             if engine not in self._enabled:
                 self._exit_only.add(engine)
                 self._event(
@@ -609,7 +614,13 @@ class Strategy(StrategyBase):
         for symbol in self._eligible_symbols:
             key = (now.date(), engine, symbol)
             frame = frames.get(symbol)
-            if key in self._orb_scanned or frame is None or frame.empty or self._claimed(symbol):
+            if (
+                key in self._orb_scanned
+                or (now.date(), symbol) in self._orb_traded
+                or frame is None
+                or frame.empty
+                or self._claimed(symbol)
+            ):
                 continue
             opening = cast(
                 DataFrame,
@@ -712,7 +723,7 @@ class Strategy(StrategyBase):
 
     def _manage(self, now: datetime) -> None:
         for holding in list(self._holdings.values()):
-            if now.time() >= time(15, 55) and holding.engine in {"orb", "orb_momentum"}:
+            if now.time() >= ORB_CLOSE_DEADLINE and holding.engine in {"orb", "orb_momentum"}:
                 self._exit(holding)
                 continue
             if holding.engine in {"sma", "tfb_50"}:
@@ -887,6 +898,8 @@ class Strategy(StrategyBase):
             },
         )
         self.submit_order(order)
+        if engine in {"orb", "orb_momentum"}:
+            self._orb_traded.add((now.date(), asset))
         return True
 
     def _protect(self, holding: Holding, quantity: float | None = None) -> None:

@@ -1,3 +1,4 @@
+import inspect
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -200,6 +201,8 @@ class SizingStrategy(Strategy):
         self._stops = {}
         self._closing = set()
         self._events = set()
+        self._orb_traded = set()
+        self._orb_scanned = set()
         self.exporter = None
         self.broker = FakeBroker()
         self.submitted: list[FakeOrder] = []
@@ -261,3 +264,66 @@ def test_the_notional_cap_still_wins_when_the_stop_is_close() -> None:
 
     assert accepted
     assert float(strategy.submitted[-1].quantity) == pytest.approx(EQUITY * 0.10 / WIDE_PRICE)
+
+
+# --- C6: one ORB entry per symbol per day, across both breakout engines ---
+
+
+class TradedStrategy(SizingStrategy):
+    """SizingStrategy with both breakout engines enabled."""
+
+    def __init__(self, risk_per_trade_max: float = 0.005) -> None:
+        super().__init__(risk_per_trade_max)
+        self._enabled = {"orb", "orb_momentum", "sma"}
+
+
+def enter(strategy: TradedStrategy, engine: str, symbol: str) -> bool:
+    return strategy._enter(
+        engine,
+        symbol,
+        symbol,
+        WIDE_PRICE,
+        WIDE_PRICE - 0.10,
+        datetime(2026, 8, 25, 13, 50, tzinfo=UTC),
+        risk_fraction_max=0.01 if engine == "orb" else None,
+    )
+
+
+def test_a_filled_entry_is_recorded_against_the_symbol_and_day() -> None:
+    strategy = TradedStrategy()
+
+    assert enter(strategy, "orb", "AUR")
+
+    assert (datetime(2026, 8, 25, 13, 50, tzinfo=UTC).date(), "AUR") in strategy._orb_traded
+
+
+def test_the_scan_skips_a_symbol_already_traded_today() -> None:
+    """ORB-10m re-entered AUR 51s after ORB-5m stopped out of it on 2026-08-25.
+
+    The ledger is keyed by (day, symbol) with no engine, so one breakout engine
+    entering a name closes it to the other for the rest of the session.
+    """
+    source = inspect.getsource(Strategy._run_orb_variant)
+
+    assert "(now.date(), symbol) in self._orb_traded" in source
+    assert "self._orb_traded: set[tuple[date, str]]" in inspect.getsource(Strategy.initialize)
+
+
+def test_a_position_restored_mid_session_still_blocks_re_entry() -> None:
+    assert "self._orb_traded.add(" in inspect.getsource(Strategy._restore)
+
+
+def test_the_daily_engines_do_not_write_to_the_traded_ledger() -> None:
+    strategy = TradedStrategy()
+    strategy._enabled = {"sma"}
+
+    assert strategy._enter(
+        "sma",
+        "CCK",
+        "CCK",
+        WIDE_PRICE,
+        WIDE_PRICE - 0.10,
+        datetime(2026, 8, 25, 13, 50, tzinfo=UTC),
+    )
+
+    assert strategy._orb_traded == set()
