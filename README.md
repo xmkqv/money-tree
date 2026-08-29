@@ -3,8 +3,9 @@
 Four US-equity trading strategies, written down first and then run: backtesting,
 multi-strategy portfolio composition, and Alpaca execution.
 
-The register below is the specification. `src/bot/strategies/` implements it, and
-`STRATEGY_LABELS` in `src/bot/types.py` lists what actually runs.
+The register below is the specification. `src/bot/strategies/` implements it,
+`STRATEGY_LABELS` in `src/bot/types.py` lists what actually runs, and
+`PAUSED_STRATEGIES` there names the strategies that take no new entries.
 
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python: 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](pyproject.toml)
@@ -41,7 +42,7 @@ uv run mt backtest --strategy orb --symbols SPY --start 2023-01-01 --end 2024-01
 Run live or paper against the broker. `ALPACA_IS_PAPER` decides which.
 
 ```sh
-uv run mt trade --strategies orb,sma
+uv run mt trade --strategies orb
 ```
 
 The dashboard is a FastAPI app under `src/ui/`, deployed to Railway from
@@ -66,9 +67,11 @@ ADX = average directional index
 MACD = moving average convergence divergence
 none = the strategy does not use this rule
 not set = no rule was provided
+enabled = the strategy opens new positions and manages them
+paused = the strategy opens no new positions; open ones run to their exit rules
 ```
 
-### enabled strategies
+### strategies
 
 #### ORB (5-minute)
 
@@ -123,7 +126,7 @@ exit
 
 ```text:surface
 status
-    state = enabled
+    state = paused
 
 market
     asset = US stocks
@@ -176,7 +179,7 @@ exit
 
 ```text:surface
 status
-    state = enabled
+    state = paused
 
 market
     asset = US stocks
@@ -222,7 +225,7 @@ exit
 
 ```text:surface
 status
-    state = enabled
+    state = paused
 
 market
     asset = US stocks
