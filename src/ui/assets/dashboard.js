@@ -56,6 +56,13 @@ const STRATEGY_COLOURS = {
 const clockLabel = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
 const dparts = d => d.split("-").map(Number);
 const dateOf = d => { const [y, m, day] = dparts(d); return new Date(y, m - 1, day); };
+/* The Monday a date belongs to, so the log can rule off between trading weeks.
+   Sunday is 0 in JS, so shift the index before taking the offset back. */
+const mondayOf = d => {
+  const at = dateOf(d);
+  at.setDate(at.getDate() - ((at.getDay() + 6) % 7));
+  return at.getFullYear() + "-" + (at.getMonth() + 1) + "-" + at.getDate();
+};
 
 let LIVE, ACCOUNT, STRATEGIES, STRAT_BY_ID, OPEN_POSITIONS, ALL_TRADES, tradesByDate;
 let LEDGER, SESSIONS, LAST_SESSION, DAY_PNL, WEEK_PNL, SPX, DAILY, INTRADAY, LATEST;
@@ -1370,6 +1377,10 @@ function renderLog() {
   const days = [...new Set(rows.map(t => t.date))].sort();
   const shade = rows.map(t => days.indexOf(t.date) % 2 === 1);
 
+  /* A heavier rule wherever the list crosses from one trading week into the
+     next, so a Friday and the Monday after it are never read as one stretch. */
+  const weeks = rows.map(t => mondayOf(t.date));
+
   buildTable(table,
     ["Date", "In time", "Out time", "Symbol", "Strategy", "Entry", "Exit", "P&L"],
     rows.map(t => [
@@ -1381,7 +1392,10 @@ function renderLog() {
       { t: money(t.entry), r: true },
       { t: money(t.exit), r: true },
       { t: signedMoney(t.pnl), r: true, cls: tone(t.pnl) },
-    ]), 5, (_row, index) => shade[index] ? "band" : "");
+    ]), 5, (_row, index) => [
+      shade[index] ? "band" : "",
+      index && weeks[index] !== weeks[index - 1] ? "week-edge" : "",
+    ].filter(Boolean).join(" "));
 }
 
 /* ══ views ═══════════════════════════════════════════════ */
