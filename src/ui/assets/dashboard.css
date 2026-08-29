@@ -1346,3 +1346,23 @@ table.trades.log td { font-size: 12.5px; }
   .rules-grid { grid-template-columns: 1fr; }
   .rules-table th[scope="row"] { width: 96px; }
 }
+
+
+/* ══ trade log ═══════════════════════════════════════════ */
+
+/* Alternate sessions carry a wash rather than a rule, so a day reads as one
+   block without adding a second kind of line to a table that already has them.
+   It is a reading aid only — the date column still names every day. */
+.trades.log tbody tr.band td { background: var(--surface-2); }
+.trades.log tbody tr.band td:first-child { border-top-left-radius: 5px; border-bottom-left-radius: 5px; }
+.trades.log tbody tr.band td:last-child { border-top-right-radius: 5px; border-bottom-right-radius: 5px; }
+
+.in-time { display: inline-flex; align-items: baseline; gap: 5px; }
+.in-day {
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  color: var(--ink-3);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 4px;
+  padding: 0 4px;
+}

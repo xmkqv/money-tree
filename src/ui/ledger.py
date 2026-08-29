@@ -22,6 +22,8 @@ class Cycle(TypedDict):
     pnl: float
     date: str
     minute: int
+    inDate: str
+    inMinute: int
     heldMin: int
 
 
@@ -129,6 +131,8 @@ def match_cycles(
                 pnl=round(pnl, 2),
                 date=when.date().isoformat(),
                 minute=when.hour * 60 + when.minute,
+                inDate=opened.date().isoformat(),
+                inMinute=opened.hour * 60 + opened.minute,
                 heldMin=max(0, int((when - opened).total_seconds() // 60)),
             )
         )

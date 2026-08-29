@@ -232,3 +232,34 @@ def test_bot_state_still_accepts_a_roster_published_as_ids() -> None:
 
 def test_bot_state_keeps_an_unrecognised_roster_entry_visible() -> None:
     assert bot_state(_snapshot(strategies=["mystery"]), stale=False)["strategies"] == ["mystery"]
+
+
+def test_cycle_records_when_the_trade_opened_as_well_as_when_it_closed() -> None:
+    """The log shows both ends, so entry time is carried, not inferred from the hold."""
+    cycles, _ = match_cycles(
+        [
+            fill("NVDA", "buy", "10", "100.00", "2026-08-27T13:33:00Z", "entry"),
+            fill("NVDA", "sell", "10", "105.00", "2026-08-27T19:45:00Z", "exit"),
+        ],
+        [ENTRY, EXIT],
+    )
+
+    assert cycles[0]["inDate"] == "2026-08-27"
+    assert cycles[0]["inMinute"] == 9 * 60 + 33
+    assert cycles[0]["date"] == "2026-08-27"
+    assert cycles[0]["minute"] == 15 * 60 + 45
+
+
+def test_an_overnight_hold_reports_the_day_it_opened_not_the_day_it_closed() -> None:
+    """A daily engine can hold for days, so the two ends carry their own dates."""
+    cycles, _ = match_cycles(
+        [
+            fill("CAH", "buy", "5", "50.00", "2026-08-24T14:10:00Z", "entry"),
+            fill("CAH", "sell", "5", "52.00", "2026-08-27T19:50:00Z", "exit"),
+        ],
+        [ENTRY, EXIT],
+    )
+
+    assert cycles[0]["inDate"] == "2026-08-24"
+    assert cycles[0]["inMinute"] == 10 * 60 + 10
+    assert cycles[0]["date"] == "2026-08-27"
