@@ -1414,12 +1414,29 @@ function renderLog() {
 
 const TC_BARS = { "5Min": "5 min", "1Hour": "1 hour", "1Day": "Day" };
 let TRADE = null, TC_STATE = { bar: "5Min", bars: null, hover: null };
+let TC_LEVELS = null, TC_SIBLINGS = [];
+
+/* Three lengths of the same measure, so they read as one family; validated for
+   colour-vision separation against both surfaces, and each line is labelled at
+   its right end so the colour is never the only way to tell them apart. */
+const SMA_SET = [
+  { length: 20, token: "--s-orb5" },
+  { length: 50, token: "--s-orb10" },
+  { length: 200, token: "--s-tfb50" },
+];
+const TC_SHOW = { sma20: false, sma50: false, sma200: false, range: true, stop: true, targets: true };
 
 function clockOf(iso) {
   const at = new Date(iso);
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(at);
+}
+
+function weekdayOf(iso) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/New_York", weekday: "short",
+  }).format(new Date(iso));
 }
 
 function dayOf(iso) {
@@ -1449,12 +1466,113 @@ function barStamp(iso) {
 
 async function openTradeChart(trade) {
   TRADE = trade;
+  TC_LEVELS = null;
   TC_STATE = { bar: "5Min", bars: null, hover: null };
+  /* the bot's other trades in this stock, oldest first, for the stepper */
+  TC_SIBLINGS = ALL_TRADES.filter(t => t.symbol === trade.symbol).slice().reverse();
   for (const b of document.querySelectorAll("#tc-range button"))
     b.setAttribute("aria-pressed", String(b.dataset.bar === "5Min"));
   switchView("chart");
   paintTradeFacts();
+  paintRail();
+  paintStepper();
+  loadTradeLevels();
   await loadTradeBars();
+}
+
+/* Fetched once per trade rather than once per bar size, so switching between
+   five minutes and a day costs nothing and the levels stay put. */
+async function loadTradeLevels() {
+  const t = TRADE;
+  if (t.strategy === "unattributed") { TC_LEVELS = {}; paintRail(); return; }
+  const query = new URLSearchParams({
+    symbol: t.symbol, strategy: t.strategy, side: t.side, entry: String(t.entry), opened: t.inDate,
+  });
+  try {
+    const response = await fetch("/api/levels?" + query, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    TC_LEVELS = (await response.json()).data;
+  } catch {
+    TC_LEVELS = {};
+  }
+  paintRail();
+  if (TC_STATE.bars) drawTradeChart();
+}
+
+function paintStepper() {
+  const index = TC_SIBLINGS.findIndex(t => t === TRADE);
+  /* only worth showing when the bot traded this stock more than once */
+  document.getElementById("tc-step").hidden = TC_SIBLINGS.length < 2;
+  document.getElementById("tc-count").textContent = (index + 1) + " of " + TC_SIBLINGS.length;
+  document.getElementById("tc-prev").disabled = index <= 0;
+  document.getElementById("tc-next").disabled = index < 0 || index >= TC_SIBLINGS.length - 1;
+}
+
+function stepTrade(by) {
+  const index = TC_SIBLINGS.findIndex(t => t === TRADE) + by;
+  if (index < 0 || index >= TC_SIBLINGS.length) return;
+  openTradeChart(TC_SIBLINGS[index]);
+}
+
+/* Averages are computed on the bars on screen, so a 200-period line needs 200
+   bars behind the first one drawn — that is what the run-up in the window is
+   for. Where the data still falls short the toggle says so rather than
+   silently drawing nothing. */
+function movingAverage(bars, length) {
+  const out = new Array(bars.length).fill(null);
+  let total = 0;
+  for (let i = 0; i < bars.length; i++) {
+    total += bars[i].c;
+    if (i >= length) total -= bars[i - length].c;
+    if (i >= length - 1) out[i] = total / length;
+  }
+  return out;
+}
+
+function paintRail() {
+  const host = document.getElementById("tc-smas");
+  host.replaceChildren();
+  const bars = TC_STATE.bars || [];
+  for (const { length, token } of SMA_SET) {
+    const key = "sma" + length;
+    const enough = bars.length >= length;
+    host.append(railToggle(key, "SMA " + length, token, enough,
+      enough ? "" : "Not enough bars at this size"));
+  }
+
+  const levels = document.getElementById("tc-overlays");
+  levels.replaceChildren();
+  const has = TC_LEVELS || {};
+  levels.append(
+    railToggle("range", "Opening range", null, Boolean(has.range), has.range ? "" : "ORB trades only"),
+    railToggle("stop", "Stop", null, has.stop !== undefined, has.stop !== undefined ? "" : "Not reconstructable"),
+    railToggle("targets", "Targets", null, Boolean(has.targets), has.targets ? "" : "ORB trades only"),
+  );
+  document.getElementById("tc-rail-note").textContent =
+    has.reconstructed ? "Stop and targets are reconstructed from the rules." : "";
+}
+
+function railToggle(key, label, token, enabled, why) {
+  const row = document.createElement("label");
+  row.className = "tc-toggle" + (enabled ? "" : " off");
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.checked = enabled && TC_SHOW[key];
+  box.disabled = !enabled;
+  box.addEventListener("change", () => { TC_SHOW[key] = box.checked; drawTradeChart(); });
+  const swatch = document.createElement("span");
+  swatch.className = "tc-swatch";
+  if (token) swatch.style.background = tokenValue(token);
+  else swatch.classList.add("plain");
+  const text = document.createElement("span");
+  text.textContent = label;
+  row.append(box, swatch, text);
+  if (why) row.title = why;
+  return row;
+}
+
+function tokenValue(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
 function paintTradeFacts() {
@@ -1521,6 +1639,9 @@ async function loadTradeBars() {
     if (!response.ok) throw new Error("HTTP " + response.status);
     const payload = await response.json();
     TC_STATE.bars = payload.data.bars.map(b => ({ ...b, x: barStamp(b.t) }));
+    /* bars before this are run-up for the averages, not part of the picture */
+    const from = barStamp(payload.data.displayFrom);
+    TC_STATE.first = Math.max(0, TC_STATE.bars.findIndex(b => b.x >= from));
   } catch (error) {
     TC_STATE.bars = null;
     tcState("Market data could not be read. Try again in a moment.");
@@ -1531,10 +1652,11 @@ async function loadTradeBars() {
     return;
   }
   tcState("");
+  paintRail();
   drawTradeChart();
 }
 
-const TC_PAD = { l: 10, r: 62, t: 16, b: 26 };
+const TC_PAD = { l: 10, r: 62, t: 16, b: 40 };
 
 function drawTradeChart() {
   const host = document.getElementById("tc-host");
@@ -1545,28 +1667,47 @@ function drawTradeChart() {
   readTheme();
 
   const t = TRADE;
-  const inX = stampOf(t.inDate, t.inMinute), outX = stampOf(t.date, t.minute);
   const plotW = width - TC_PAD.l - TC_PAD.r, plotH = height - TC_PAD.t - TC_PAD.b;
+
+  /* Averages need the run-up bars; everything else works on the drawn window. */
+  const averages = {};
+  for (const { length } of SMA_SET) {
+    if (TC_SHOW["sma" + length] && bars.length >= length) {
+      averages[length] = movingAverage(bars, length);
+    }
+  }
+  const first = TC_STATE.first || 0;
+  const shown = bars.slice(first);
+  if (!shown.length) return;
 
   /* Bars are drawn on their index, not their clock, so overnight gaps and the
      lunch lull do not open dead space across the plot. */
   const nearest = x => {
     let best = 0, gap = Infinity;
-    bars.forEach((b, i) => { const d = Math.abs(b.x - x); if (d < gap) { gap = d; best = i; } });
+    shown.forEach((b, i) => { const d = Math.abs(b.x - x); if (d < gap) { gap = d; best = i; } });
     return best;
   };
-  const inIndex = nearest(inX), outIndex = nearest(outX);
+  const inIndex = nearest(stampOf(t.inDate, t.inMinute));
+  const outIndex = nearest(stampOf(t.date, t.minute));
 
-  const lows = bars.map(b => b.l).concat([t.entry, t.exit]);
-  const highs = bars.map(b => b.h).concat([t.entry, t.exit]);
-  let yMin = Math.min(...lows), yMax = Math.max(...highs);
+  const levels = TC_LEVELS || {};
+  const extra = [t.entry, t.exit];
+  if (TC_SHOW.range && levels.range) extra.push(levels.range.high, levels.range.low);
+  if (TC_SHOW.stop && levels.stop !== undefined) extra.push(levels.stop);
+  if (TC_SHOW.targets && levels.targets) extra.push(...levels.targets);
+  for (const values of Object.values(averages)) {
+    for (let i = first; i < bars.length; i++) if (values[i] !== null) extra.push(values[i]);
+  }
+
+  let yMin = Math.min(...shown.map(b => b.l), ...extra);
+  let yMax = Math.max(...shown.map(b => b.h), ...extra);
   const pad = ((yMax - yMin) || Math.max(yMax * 0.01, 0.01)) * 0.10;
   yMin -= pad; yMax += pad;
 
-  const step = plotW / bars.length;
+  const step = plotW / shown.length;
   const px = i => TC_PAD.l + (i + 0.5) * step;
   const py = v => TC_PAD.t + (1 - (v - yMin) / (yMax - yMin)) * plotH;
-  TC_STATE.geo = { px, py, step, width, height, inIndex, outIndex };
+  TC_STATE.geo = { px, py, step, width, height, inIndex, outIndex, shown };
 
   const ticks = [];
   const gridStep = niceStep((yMax - yMin) / 4.2);
@@ -1577,10 +1718,103 @@ function drawTradeChart() {
     '<text x="' + (width - TC_PAD.r + 8) + '" y="' + (py(v) + 3.5).toFixed(2) + '" fill="' + C.axis +
     '" font-size="10" font-family="Roboto Mono, monospace">' + money(v) + "</text>").join("");
 
+  /* Time along the axis, and the day named wherever the date turns over — every
+     label carrying the full date would not fit a chart spanning several
+     sessions, and none of them carrying it leaves the reader guessing. */
+  const dayStarts = new Map();
+  shown.forEach((b, i) => {
+    const key = dayOf(b.t);
+    if (!dayStarts.has(key)) dayStarts.set(key, i);
+  });
+  const boundary = new Set(dayStarts.values());
+  const every = Math.max(1, Math.round(shown.length / 8));
+  /* a dated label is twice the width of a bare time, so keep plain labels well
+     clear of one rather than letting the two print over each other */
+  const clearOf = Math.max(2, Math.round(shown.length / 14));
+  const axis = shown.map((b, i) => {
+    const isBoundary = boundary.has(i);
+    if (!isBoundary && i % every !== 0) return "";
+    if (!isBoundary && [...boundary].some(at => Math.abs(at - i) < clearOf)) return "";
+    const x = clamp(px(i), TC_PAD.l + 26, width - TC_PAD.r - 26);
+    const label = TC_STATE.bar === "1Day"
+      ? [weekdayOf(b.t) + " " + dayOf(b.t)]
+      : isBoundary ? [weekdayOf(b.t) + " " + dayOf(b.t), clockOf(b.t)] : [clockOf(b.t)];
+    const rule = isBoundary && i > 0
+      ? '<line x1="' + px(i - 0.5).toFixed(2) + '" y1="' + TC_PAD.t + '" x2="' + px(i - 0.5).toFixed(2) +
+        '" y2="' + (TC_PAD.t + plotH) + '" stroke="' + C.grid + '" stroke-width="1"/>'
+      : "";
+    return rule + label.map((line, row) =>
+      '<text x="' + x.toFixed(2) + '" y="' + (height - 15 + row * 11) + '" fill="' + C.axis +
+      '" font-size="10" text-anchor="middle" font-family="Roboto Mono, monospace"' +
+      (isBoundary ? ' font-weight="600"' : "") + ">" + line + "</text>").join("");
+  }).join("");
+
+  /* One line per length, each labelled at its right end. */
+  const smaEnds = [];
+  const smaLines = SMA_SET.map(({ length, token }) => {
+    const values = averages[length];
+    if (!values) return "";
+    const colour = tokenValue(token);
+    let path = "", lastY = null;
+    shown.forEach((_, i) => {
+      const v = values[i + first];
+      if (v === null || v === undefined) return;
+      path += (path ? "L" : "M") + px(i).toFixed(2) + " " + py(v).toFixed(2) + " ";
+      lastY = py(v);
+    });
+    if (!path) return "";
+    if (lastY !== null) smaEnds.push({ y: lastY, colour, length });
+    return '<path d="' + path.trim() + '" fill="none" stroke="' + colour +
+      '" stroke-width="1.5" stroke-linejoin="round" opacity="0.95"/>';
+  }).join("");
+
+  /* three averages can converge; nudge their end labels apart so all read */
+  smaEnds.sort((a, b) => a.y - b.y);
+  smaEnds.forEach((end, i) => {
+    if (i && end.y - smaEnds[i - 1].y < 12) end.y = smaEnds[i - 1].y + 12;
+  });
+  const smaLabels = smaEnds.map(end =>
+    '<text x="' + (width - TC_PAD.r - 4) + '" y="' + (end.y - 3).toFixed(2) + '" fill="' + end.colour +
+    '" font-size="10" text-anchor="end" font-weight="600" paint-order="stroke" stroke="' + C.ring +
+    '" stroke-width="3" stroke-linejoin="round" font-family="Roboto Mono, monospace">' +
+    end.length + "</text>").join("");
+
+  /* The levels the strategy's rules put on this trade. */
+  const band = (top, bottom, colour) =>
+    '<rect x="' + TC_PAD.l + '" y="' + Math.min(top, bottom).toFixed(2) + '" width="' + plotW +
+    '" height="' + Math.abs(bottom - top).toFixed(2) + '" fill="' + colour + '" opacity="0.07"/>';
+  /* Lines go under the price action so the candles stay legible; their labels
+     go over everything, with a plate behind, or a wick crosses out the text. */
+  let overlays = "", overlayText = "";
+  const named = (y, colour, text, dash) => {
+    overlays +=
+      '<line x1="' + TC_PAD.l + '" y1="' + y.toFixed(2) + '" x2="' + (width - TC_PAD.r) + '" y2="' + y.toFixed(2) +
+      '" stroke="' + colour + '" stroke-width="1" stroke-dasharray="' + dash + '" opacity="0.72"/>';
+    overlayText +=
+      '<text x="' + (TC_PAD.l + 5) + '" y="' + (y - 4).toFixed(2) + '" fill="' + colour +
+      '" font-size="9.5" font-family="Roboto Mono, monospace" letter-spacing="0.04em" ' +
+      'paint-order="stroke" stroke="' + C.ring + '" stroke-width="3" stroke-linejoin="round">' +
+      text + "</text>";
+  };
+
+  if (TC_SHOW.range && levels.range) {
+    overlays += band(py(levels.range.high), py(levels.range.low), C.axis);
+    named(py(levels.range.high), C.axis, "RANGE HIGH " + money(levels.range.high), "4 3");
+    named(py(levels.range.low), C.axis, "RANGE LOW " + money(levels.range.low), "4 3");
+  }
+  if (TC_SHOW.stop && levels.stop !== undefined) {
+    named(py(levels.stop), LOSS, "STOP " + money(levels.stop), "5 4");
+  }
+  if (TC_SHOW.targets && levels.targets) {
+    levels.targets.forEach((value, i) => {
+      named(py(value), GAIN, "TARGET " + (i + 1) + " " + money(value), "1 4");
+    });
+  }
+
   /* Candles carry direction by shape as well as hue: a body drawn from open to
      close is up or down whichever way the colour reads. */
   const bodyW = Math.max(1.5, Math.min(9, step * 0.62));
-  const candles = bars.map((b, i) => {
+  const candles = shown.map((b, i) => {
     const up = b.c >= b.o;
     const colour = up ? GAIN : LOSS;
     const x = px(i);
@@ -1614,12 +1848,25 @@ function drawTradeChart() {
     '<circle cx="' + x2.toFixed(2) + '" cy="' + y2.toFixed(2) + '" r="6" fill="' + tone2 +
     '" stroke="' + C.ring + '" stroke-width="2"/>';
 
+  /* Every execution, not just the two averages. A scaled-out ORB position left
+     three exits at three prices; one averaged dot hides that entirely. The
+     averages stay as the larger marks, these are the smaller ticks behind. */
+  const fillMarks = (t.fills || []).map(f => {
+    const i = nearest(stampOf(f.d, f.m));
+    const x = px(i), y = py(f.p);
+    return '<rect x="' + (x - 3.5).toFixed(2) + '" y="' + (y - 3.5).toFixed(2) +
+      '" width="7" height="7" rx="1.5" transform="rotate(45 ' + x.toFixed(2) + " " + y.toFixed(2) +
+      ')" fill="' + (f.s === "in" ? C.ring : tone2) + '" stroke="' + (f.s === "in" ? C.axis : tone2) +
+      '" stroke-width="1.5" opacity="0.9"/>';
+  }).join("");
+
   host.querySelectorAll("svg").forEach(n => n.remove());
   host.insertAdjacentHTML("afterbegin",
     '<svg viewBox="0 0 ' + width + " " + height + '" preserveAspectRatio="none" role="img" ' +
     'aria-label="' + t.symbol + " price around the trade, entry " + money(t.entry) +
     " and exit " + money(t.exit) + '">' +
-    grid + candles + level(y1, C.axis) + level(y2, C.axis) + trend + entryMark + exitMark +
+    grid + axis + overlays + candles + smaLines + smaLabels + overlayText +
+    level(y1, C.axis) + level(y2, C.axis) + trend + fillMarks + entryMark + exitMark +
     "</svg>");
 
   /* size the hover target from the same padding, so it cannot drift from it */
@@ -1711,6 +1958,8 @@ function tradeHover(event) {
 
 function wireTradeChart() {
   document.getElementById("chart-back").addEventListener("click", () => switchView("history"));
+  document.getElementById("tc-prev").addEventListener("click", () => stepTrade(-1));
+  document.getElementById("tc-next").addEventListener("click", () => stepTrade(1));
   document.getElementById("tc-range").addEventListener("click", event => {
     const button = event.target.closest("button");
     if (!button || button.dataset.bar === TC_STATE.bar) return;

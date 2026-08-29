@@ -1461,3 +1461,66 @@ body[data-view="chart"] .view { display: block; }
 body[data-view="chart"] { overflow: auto; }
 body[data-view="chart"] .app { height: auto; min-height: 100%; }
 body[data-view="chart"] .chart-panel { min-height: 74vh; }
+
+/* ══ trade chart rail ════════════════════════════════════ */
+
+.trade-stage { display: flex; gap: 14px; flex: 1; min-height: 0; padding-left: var(--pad, 16px); }
+.tc-rail {
+  width: 150px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-top: 2px;
+}
+.tc-rail-head {
+  margin: 8px 0 2px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.tc-rail-head:first-child { margin-top: 0; }
+.tc-rail-note { margin: 10px 0 0; font-size: 10.5px; line-height: 1.45; color: var(--ink-3); }
+
+.tc-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--ink);
+  padding: 3px 5px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.tc-toggle:hover { background: var(--surface-2); }
+.tc-toggle.off { color: var(--ink-3); cursor: not-allowed; }
+.tc-toggle.off:hover { background: none; }
+.tc-toggle input { accent-color: var(--s-orb5); margin: 0; }
+.tc-swatch { width: 12px; height: 3px; border-radius: 2px; flex: none; }
+.tc-swatch.plain { background: var(--ink-3); }
+
+.tc-step { display: inline-flex; align-items: center; gap: 6px; }
+.tc-count { font-size: 11px; color: var(--ink-3); font-family: var(--font-data); min-width: 46px; }
+.ghost.step {
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 8px;
+  color: var(--ink-2);
+  background: none;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.ghost.step:hover:not(:disabled) { color: var(--ink); }
+.ghost.step:disabled { opacity: 0.35; cursor: default; }
+
+.trade-host { margin-right: var(--pad, 16px); margin-left: 0; }
+
+@media (max-width: 1100px) {
+  .trade-stage { flex-direction: column; padding-right: var(--pad, 16px); }
+  .tc-rail { width: auto; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .tc-rail-head { margin: 0; }
+  .tc-rail-note { flex-basis: 100%; margin: 0; }
+  .trade-host { margin: 0; }
+}

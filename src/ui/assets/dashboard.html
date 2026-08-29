@@ -398,6 +398,11 @@
         <button type="button" class="ghost back" id="chart-back">← Trade log</button>
         <h2 id="tc-title">—</h2>
         <span class="eyebrow" id="tc-sub">—</span>
+        <span class="tc-step" id="tc-step" hidden>
+          <button type="button" class="ghost step" id="tc-prev" title="Earlier trade in this stock">‹</button>
+          <span class="tc-count" id="tc-count"></span>
+          <button type="button" class="ghost step" id="tc-next" title="Later trade in this stock">›</button>
+        </span>
         <div class="segmented" id="tc-range" role="group" aria-label="Bar size">
           <button type="button" data-bar="5Min" aria-pressed="true">5 min</button>
           <button type="button" data-bar="1Hour" aria-pressed="false">1 hour</button>
@@ -405,15 +410,26 @@
         </div>
       </div>
       <div class="trade-facts" id="tc-facts"></div>
-      <div class="chart-host trade-host" id="tc-host">
-        <div class="plot-hit" id="tc-hit"></div>
-        <div class="tooltip" id="tc-tip" role="status"></div>
-        <p class="tc-state" id="tc-state" hidden></p>
+      <div class="trade-stage">
+        <aside class="tc-rail" aria-label="Chart overlays">
+          <p class="tc-rail-head">Averages</p>
+          <div id="tc-smas"></div>
+          <p class="tc-rail-head">Levels</p>
+          <div id="tc-overlays"></div>
+          <p class="tc-rail-note" id="tc-rail-note"></p>
+        </aside>
+        <div class="chart-host trade-host" id="tc-host">
+          <div class="plot-hit" id="tc-hit"></div>
+          <div class="tooltip" id="tc-tip" role="status"></div>
+          <p class="tc-state" id="tc-state" hidden></p>
+        </div>
       </div>
       <p class="tc-note">
         Prices come from the IEX feed, one exchange rather than the whole market, so volume
-        is a share of the true total. Entry and exit are the average fill price for the trade;
-        a scaled-out position had several fills around them.
+        is a share of the true total. Every fill is marked as a small diamond; the entry and
+        exit figures above are their averages. Stop and target levels are reconstructed from
+        the strategy's rules, not read back from the bot — the live stop trails once a target
+        is hit, so where it finally sat is not recoverable from market data.
       </p>
       <div class="sr-only" id="tc-table"></div>
     </section>
