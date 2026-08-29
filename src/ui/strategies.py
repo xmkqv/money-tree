@@ -11,7 +11,7 @@ tests/test_strategy_spec.py. A threshold changed in the bot without this table
 following it fails those tests rather than quietly leaving the page wrong.
 """
 
-from datetime import time
+from datetime import datetime, time, timedelta
 from typing import Any, TypedDict
 
 from bot.types import STRATEGY_LABELS, TradingConfiguration
@@ -102,7 +102,13 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
     # first be read. portfolio.py selects it by label, between_time("09:30", "09:34"),
     # which is the same one candle — but 09:34 is a stamp, not the end of the period,
     # so quoting it here would understate the range by a minute.
-    opening_end = "09:35" if minutes == 5 else "09:40"
+    #
+    # A signal candle must have closed at or after the opening candle did, so the
+    # opening candle cannot break its own range. The earliest a breakout can be read
+    # is therefore one candle later still, and the order goes in at that moment.
+    session_open = datetime(2000, 1, 1, 9, 30)
+    opening_end = f"{session_open + timedelta(minutes=minutes):%H:%M}"
+    first_entry = f"{session_open + timedelta(minutes=2 * minutes):%H:%M}"
     risk_cap = ORB_RISK_CEILING if minutes == 5 else per_trade
 
     confirmation = (
@@ -115,6 +121,7 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
     if uses_macd:
         confirmation += " MACD (12/26/9) must also be rising for a long, falling for a short."
 
+    fill_sets = "the entry, the risk and the targets" if minutes == 5 else "the entry and the risk"
     if minutes == 5:
         targets = (
             "Targets are re-cut from the filled price: 1.5x, 2.5x and 4x the risk actually "
@@ -160,11 +167,15 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
         Row(field="Confirmation", value=confirmation, source="portfolio.py · _orb_confirm"),
         Row(
             field="Entry",
-            value="Market order at the breakout candle's close, good for the day only. It is "
-            "passed over if another engine already holds the stock, if the account is at its "
-            "position cap or fully invested, or if the size that fits the risk limits comes to "
-            f"less than ${POSITION_NOTIONAL_MIN}.",
-            source="portfolio.py · _enter",
+            value="A market order goes in the moment the breakout candle closes, so it fills "
+            f"at the open of the next {minutes}-minute candle — {first_entry} at the earliest, "
+            "since the opening candle cannot break its own range. Good for the day only. The "
+            "size is worked out from the breakout candle's close, the last price known when the "
+            f"order is sent, and the fill then sets {fill_sets}. It is passed "
+            "over if another engine already holds the stock, if the account is at its position "
+            "cap or fully invested, or if the size that fits the risk limits comes to less than "
+            f"${POSITION_NOTIONAL_MIN}.",
+            source="portfolio.py · on_trading_iteration, _run_orb_variant, _enter",
         ),
         Row(
             field="Stop Loss",

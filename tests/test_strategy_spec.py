@@ -137,6 +137,51 @@ def test_the_opening_range_is_quoted_as_a_period_not_a_bar_stamp(engine: str, mi
     assert f"from {opening_end}, the moment the opening candle closes" in rows["Setup"]
 
 
+@pytest.mark.parametrize(("engine", "minutes"), [("orb", 5), ("orb_momentum", 10)])
+def test_the_order_is_sent_when_the_signal_candle_closes(engine: str, minutes: int) -> None:
+    """The register enters at the next candle's open; the composer sends the order there.
+
+    The scan runs on the candle boundary, reads the candle that has just closed, and
+    submits in the same pass — so the order reaches the market at the open of the next
+    candle. A signal candle must have closed at or after the opening candle did, which
+    keeps the opening candle from breaking its own range and puts the earliest possible
+    entry one candle beyond the range.
+    """
+    loop = inspect.getsource(PortfolioStrategy.on_trading_iteration)
+    variant = inspect.getsource(PortfolioStrategy._run_orb_variant)
+
+    assert "now.minute % 5 == 0" in loop
+    assert "self._run_orb(now)" in loop and "self._run_orb_momentum(now)" in loop
+    assert "or now.minute % minutes" in variant
+    assert "if opening.empty or frame_at.time() < opening_end:" in variant
+    assert "self._enter(" in variant, "the scan submits in the same pass"
+
+    opening_end = entry_windows()[engine]["from"]
+    hour, minute = (int(part) for part in opening_end.split(":"))
+    first_entry = f"{hour:02d}:{minute + minutes:02d}"
+
+    entry = spec_rows(engine)["Entry"]
+    assert f"open of the next {minutes}-minute candle" in entry
+    assert f"{first_entry} at the earliest" in entry
+    assert "cannot break its own range" in entry
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_the_fill_and_not_the_signal_price_sets_the_trade(engine: str) -> None:
+    """Sizing uses the last known price; everything after it is read off the fill."""
+    filled = inspect.getsource(PortfolioStrategy.on_filled_order)
+
+    assert "holding.entry = self._entry_price(order, price)" in filled
+    assert "holding.risk = abs(holding.entry - holding.stop)" in filled
+    assert "avg_fill_price" in inspect.getsource(PortfolioStrategy._entry_price)
+    assert "candidate.close," in inspect.getsource(PortfolioStrategy._run_orb_variant)
+
+    entry = spec_rows(engine)["Entry"]
+    assert "size is worked out from the breakout candle's close" in entry
+    assert "the fill then sets the entry" in entry
+    assert ("the risk and the targets" in entry) is (engine == "orb")
+
+
 @pytest.mark.parametrize("engine", ORB_ENGINES)
 def test_relative_volume_needs_a_full_history_to_confirm(engine: str) -> None:
     """A short history is no confirmation, so the page must not promise an average."""
