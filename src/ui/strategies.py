@@ -97,8 +97,12 @@ def _pct(fraction: float) -> str:
 
 
 def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float) -> list[Row]:
-    opening_end = "09:34" if minutes == 5 else "09:39"
-    first_scan = "09:35" if minutes == 5 else "09:40"
+    # The opening candle closes at the same instant the first scan runs: the candle
+    # stamped 09:30 covers the five minutes up to 09:35, and 09:35 is when it can
+    # first be read. portfolio.py selects it by label, between_time("09:30", "09:34"),
+    # which is the same one candle — but 09:34 is a stamp, not the end of the period,
+    # so quoting it here would understate the range by a minute.
+    opening_end = "09:35" if minutes == 5 else "09:40"
     risk_cap = ORB_RISK_CEILING if minutes == 5 else per_trade
 
     confirmation = (
@@ -138,15 +142,17 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
         ),
         Row(
             field="Range",
-            value=f"The opening range is 09:30 to {opening_end} — the first {minutes}-minute "
-            "candle. Its high and low set the levels for the day.",
+            value=f"The opening range is the first {minutes}-minute candle: 09:30 up to "
+            f"{opening_end}, the last trade before {opening_end} being the one that closes it. "
+            "Its high and low set the levels for the day.",
             source="portfolio.py · _run_orb_variant",
         ),
         Row(
             field="Setup",
             value=f"A completed {minutes}-minute candle closes above the range high (long) or "
             f"below the range low (short) — a candle still forming never signals. Checked every "
-            f"{minutes} minutes from {first_scan} to 10:30, at most once per stock per day. "
+            f"{minutes} minutes from {opening_end}, the moment the opening candle closes, to "
+            "10:30, at most once per stock per day. "
             "Once either breakout engine has traded a stock, both leave it alone for the rest "
             "of the session.",
             source="portfolio.py · _run_orb_variant",

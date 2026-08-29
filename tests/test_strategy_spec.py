@@ -113,6 +113,30 @@ def test_the_standalone_orb_classes_still_agree_with_the_composer(
 ORB_ENGINES = ["orb", "orb_momentum"]
 
 
+@pytest.mark.parametrize(("engine", "minutes"), [("orb", 5), ("orb_momentum", 10)])
+def test_the_opening_range_is_quoted_as_a_period_not_a_bar_stamp(engine: str, minutes: int) -> None:
+    """between_time bounds the candle by its stamp; the page must quote what it covers.
+
+    The candle stamped 09:30 covers the five minutes up to 09:35 — _completed proves
+    the stamp is the start, since it waits until stamp + minutes has passed. Selecting
+    it as "09:30" to "09:34" picks that one candle, but 09:34 is not when the range
+    ends, and the range ends exactly when the first scan runs.
+    """
+    variant = inspect.getsource(PortfolioStrategy._run_orb_variant)
+    label_end = "09:34" if minutes == 5 else "09:39"
+
+    assert 'between_time("09:30", "09:34" if minutes == 5 else "09:39")' in variant
+    assert "index) + timedelta(minutes=minutes) <= now" in inspect.getsource(
+        PortfolioStrategy._completed
+    )
+
+    opening_end = entry_windows()[engine]["from"]
+    rows = spec_rows(engine)
+    assert f"09:30 up to {opening_end}" in rows["Range"]
+    assert label_end not in rows["Range"], "a bar stamp is not the end of the period"
+    assert f"from {opening_end}, the moment the opening candle closes" in rows["Setup"]
+
+
 @pytest.mark.parametrize("engine", ORB_ENGINES)
 def test_relative_volume_needs_a_full_history_to_confirm(engine: str) -> None:
     """A short history is no confirmation, so the page must not promise an average."""
