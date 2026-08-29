@@ -832,13 +832,18 @@ class Strategy(StrategyBase):
             pending.notional for pending in self._pending.values()
         )
         if len(positions) + len(self._pending) >= 10 or gross >= equity:
-            self._event("capacity", "warning", "Portfolio position capacity reached")
+            self._event(
+                f"capacity-{asset}-{now.date()}",
+                "warning",
+                f"{asset} entry skipped: portfolio position capacity reached",
+                engine,
+            )
             return False
         risk_fraction = float(self.parameters["risk_per_trade_max"])
         if equity <= 0:
             return False
         if risk_fraction_max is not None:
-            risk_fraction = min(risk_fraction, risk_fraction_max)
+            risk_fraction = risk_fraction_max
         quantity = entry_quantity(
             equity,
             price,
@@ -849,6 +854,12 @@ class Strategy(StrategyBase):
         )
         notional = float(quantity) * price
         if quantity <= 0 or gross + notional > equity:
+            self._event(
+                f"sizing-{asset}-{now.date()}",
+                "warning",
+                f"{asset} entry skipped: no affordable position size",
+                engine,
+            )
             return False
         holding = Holding(
             engine,
@@ -896,7 +907,7 @@ class Strategy(StrategyBase):
             return
         if self._stops.get(holding.asset) == (stop, float(size)):
             return
-        self._cancel(holding.asset)
+        self._cancel(holding.asset, "s")
         order = self.create_order(
             holding.asset,
             size,
@@ -935,12 +946,14 @@ class Strategy(StrategyBase):
         self.submit_order(order)
         self._closing.add(holding.asset)
 
-    def _cancel(self, asset: str) -> None:
-        orders = [
-            order
-            for order in cast(list[Any], self.get_orders())
-            if order.is_active() and str(order.asset.symbol) == asset
-        ]
+    def _cancel(self, asset: str, kind: str | None = None) -> None:
+        def matches(order: Any) -> bool:
+            if not order.is_active() or str(order.asset.symbol) != asset:
+                return False
+            identifier = str(getattr(order, "client_order_id", "") or "")
+            return kind is None or self._order_kind(identifier) == kind
+
+        orders = [order for order in cast(list[Any], self.get_orders()) if matches(order)]
         self.cancel_open_orders(orders)
         if orders:
             self.sleep(1)
@@ -970,6 +983,10 @@ class Strategy(StrategyBase):
 
     def _order_engine(self, value: str) -> StrategyName | None:
         return find_order_strategy(value)
+
+    def _order_kind(self, value: str) -> str | None:
+        parts = value.split("-")
+        return parts[2] if len(parts) == 6 and parts[0] == "mt" else None
 
     def _order_signal(self, value: str) -> str | None:
         parts = value.split("-")
