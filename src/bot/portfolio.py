@@ -44,6 +44,9 @@ TEN_MINUTES = TimeFrame(10, cast(TimeFrameUnit, TimeFrameUnit.Minute))
 UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
 PREPARATION_ATTEMPTS_MAX = 2
 STOP_COVERAGE_TOLERANCE = 1e-6
+# The register closes intraday positions *before* 15:55 ET. The exit is a market
+# order, so it is submitted a minute early to leave room for the fill.
+ORB_CLOSE_DEADLINE = time(15, 54)
 
 
 @dataclass(slots=True)
@@ -311,6 +314,8 @@ class Strategy(StrategyBase):
             self._holdings[asset] = holding
             self._claims[asset] = engine
             self._claims[signal] = engine
+            if engine in {"orb", "orb_momentum"}:
+                self._orb_traded.add((entered_at.astimezone(TRADING_ZONE).date(), asset))
             if engine not in self._enabled:
                 self._exit_only.add(engine)
                 self._event(
@@ -609,7 +614,13 @@ class Strategy(StrategyBase):
         for symbol in self._eligible_symbols:
             key = (now.date(), engine, symbol)
             frame = frames.get(symbol)
-            if key in self._orb_scanned or frame is None or frame.empty or self._claimed(symbol):
+            if (
+                key in self._orb_scanned
+                or (now.date(), symbol) in self._orb_traded
+                or frame is None
+                or frame.empty
+                or self._claimed(symbol)
+            ):
                 continue
             opening = cast(
                 DataFrame,
@@ -712,7 +723,7 @@ class Strategy(StrategyBase):
 
     def _manage(self, now: datetime) -> None:
         for holding in list(self._holdings.values()):
-            if now.time() >= time(15, 55) and holding.engine in {"orb", "orb_momentum"}:
+            if now.time() >= ORB_CLOSE_DEADLINE and holding.engine in {"orb", "orb_momentum"}:
                 self._exit(holding)
                 continue
             if holding.engine in {"sma", "tfb_50"}:
@@ -832,13 +843,18 @@ class Strategy(StrategyBase):
             pending.notional for pending in self._pending.values()
         )
         if len(positions) + len(self._pending) >= 10 or gross >= equity:
-            self._event("capacity", "warning", "Portfolio position capacity reached")
+            self._event(
+                f"capacity-{asset}-{now.date()}",
+                "warning",
+                f"{asset} entry skipped: portfolio position capacity reached",
+                engine,
+            )
             return False
         risk_fraction = float(self.parameters["risk_per_trade_max"])
         if equity <= 0:
             return False
         if risk_fraction_max is not None:
-            risk_fraction = min(risk_fraction, risk_fraction_max)
+            risk_fraction = risk_fraction_max
         quantity = entry_quantity(
             equity,
             price,
@@ -849,6 +865,12 @@ class Strategy(StrategyBase):
         )
         notional = float(quantity) * price
         if quantity <= 0 or gross + notional > equity:
+            self._event(
+                f"sizing-{asset}-{now.date()}",
+                "warning",
+                f"{asset} entry skipped: no affordable position size",
+                engine,
+            )
             return False
         holding = Holding(
             engine,
@@ -876,6 +898,8 @@ class Strategy(StrategyBase):
             },
         )
         self.submit_order(order)
+        if engine in {"orb", "orb_momentum"}:
+            self._orb_traded.add((now.date(), asset))
         return True
 
     def _protect(self, holding: Holding, quantity: float | None = None) -> None:
@@ -896,7 +920,7 @@ class Strategy(StrategyBase):
             return
         if self._stops.get(holding.asset) == (stop, float(size)):
             return
-        self._cancel(holding.asset)
+        self._cancel(holding.asset, "s")
         order = self.create_order(
             holding.asset,
             size,
@@ -935,12 +959,14 @@ class Strategy(StrategyBase):
         self.submit_order(order)
         self._closing.add(holding.asset)
 
-    def _cancel(self, asset: str) -> None:
-        orders = [
-            order
-            for order in cast(list[Any], self.get_orders())
-            if order.is_active() and str(order.asset.symbol) == asset
-        ]
+    def _cancel(self, asset: str, kind: str | None = None) -> None:
+        def matches(order: Any) -> bool:
+            if not order.is_active() or str(order.asset.symbol) != asset:
+                return False
+            identifier = str(getattr(order, "client_order_id", "") or "")
+            return kind is None or self._order_kind(identifier) == kind
+
+        orders = [order for order in cast(list[Any], self.get_orders()) if matches(order)]
         self.cancel_open_orders(orders)
         if orders:
             self.sleep(1)
@@ -970,6 +996,10 @@ class Strategy(StrategyBase):
 
     def _order_engine(self, value: str) -> StrategyName | None:
         return find_order_strategy(value)
+
+    def _order_kind(self, value: str) -> str | None:
+        parts = value.split("-")
+        return parts[2] if len(parts) == 6 and parts[0] == "mt" else None
 
     def _order_signal(self, value: str) -> str | None:
         parts = value.split("-")

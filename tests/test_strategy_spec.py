@@ -8,11 +8,13 @@ threshold in the bot fails a test instead of leaving the page confidently wrong.
 
 import ast
 import inspect
+from datetime import time
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from bot.portfolio import ORB_CLOSE_DEADLINE
 from bot.portfolio import Strategy as PortfolioStrategy
 from bot.strategies import orb, orb_momentum, sma, tfb_50
 from bot.types import TradingConfiguration
@@ -102,24 +104,26 @@ def test_the_standalone_orb_classes_still_agree_with_the_composer(
     assert module.Strategy.uses_macd is uses_macd
 
 
-def test_only_the_five_minute_engine_carries_the_tighter_risk_ceiling() -> None:
-    """The ceiling binds only when the configured per-trade limit is looser than it."""
+def test_the_five_minute_engine_states_its_own_risk_ceiling() -> None:
+    """ORB declares 1% in the register, so the configured limit does not override it."""
     source = inspect.getsource(PortfolioStrategy._run_orb_variant)
 
     assert f'risk_fraction_max={ORB_RISK_CEILING} if engine == "orb" else None' in source
     assert orb.Strategy.risk_fraction_max == ORB_RISK_CEILING
     assert orb_momentum.Strategy.risk_fraction_max is None
+    assert "risk_fraction = risk_fraction_max" in inspect.getsource(PortfolioStrategy._enter)
 
-    loose = strategy_spec(configuration(per_trade=0.02))["strategies"]
     risk = {
         card["id"]: next(row for row in card["rows"] if row["field"] == "Max Risk")["value"]
-        for card in loose
+        for card in strategy_spec(configuration(per_trade=0.02))["strategies"]
     }
     assert risk["orb"].startswith("1% of account equity per trade")
     assert risk["orb_momentum"].startswith("2% of account equity per trade")
 
-    tight = spec_rows("orb")["Max Risk"]
-    assert tight.startswith("0.5% of account equity per trade")
+    # A tighter configured limit must not drag the published ORB figure down with it,
+    # because the bot no longer applies it to this engine.
+    assert spec_rows("orb")["Max Risk"].startswith("1% of account equity per trade")
+    assert spec_rows("orb_momentum")["Max Risk"].startswith("0.5% of account equity per trade")
 
 
 @pytest.mark.parametrize(("engine", "multiple"), [("sma", 1.5), ("tfb_50", 2.0)])
@@ -155,7 +159,8 @@ def test_portfolio_limits_match_the_composer() -> None:
 
 
 def test_intraday_engines_are_flat_before_the_close() -> None:
-    assert "time(15, 55)" in inspect.getsource(PortfolioStrategy._manage)
+    assert "ORB_CLOSE_DEADLINE" in inspect.getsource(PortfolioStrategy._manage)
+    assert time(15, 55) > ORB_CLOSE_DEADLINE, "the market order needs room to fill"
 
     for engine in ("orb", "orb_momentum"):
         assert "15:55" in spec_rows(engine)["Emergency Exit"]
