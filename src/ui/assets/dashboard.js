@@ -1415,6 +1415,10 @@ function renderLog() {
 const TC_BARS = { "5Min": "5 min", "1Hour": "1 hour", "1Day": "Day" };
 let TRADE = null, TC_STATE = { bar: "5Min", bars: null, hover: null };
 let TC_LEVELS = null, TC_SIBLINGS = [];
+/* i0/i1 index the drawn bars and may be fractional; yManual locks the price
+   scale once it has been stretched by hand. custom means the reader has moved
+   the view, after which the level lines no longer drag the scale open. */
+let TC_VIEW = { i0: 0, i1: 0, yManual: null, custom: false };
 
 /* Three lengths of the same measure, so they read as one family; validated for
    colour-vision separation against both surfaces, and each line is labelled at
@@ -1652,6 +1656,7 @@ async function loadTradeBars() {
     return;
   }
   tcState("");
+  TC_VIEW = { i0: 0, i1: Math.max(1, TC_STATE.bars.length - TC_STATE.first), yManual: null, custom: false };
   paintRail();
   drawTradeChart();
 }
@@ -1677,37 +1682,63 @@ function drawTradeChart() {
     }
   }
   const first = TC_STATE.first || 0;
-  const shown = bars.slice(first);
-  if (!shown.length) return;
+  const all = bars.slice(first);
+  if (!all.length) return;
+  if (TC_VIEW.i1 <= TC_VIEW.i0) TC_VIEW = { i0: 0, i1: all.length, yManual: null, custom: false };
 
   /* Bars are drawn on their index, not their clock, so overnight gaps and the
      lunch lull do not open dead space across the plot. */
   const nearest = x => {
     let best = 0, gap = Infinity;
-    shown.forEach((b, i) => { const d = Math.abs(b.x - x); if (d < gap) { gap = d; best = i; } });
+    all.forEach((b, i) => { const d = Math.abs(b.x - x); if (d < gap) { gap = d; best = i; } });
     return best;
   };
   const inIndex = nearest(stampOf(t.inDate, t.inMinute));
   const outIndex = nearest(stampOf(t.date, t.minute));
 
+  const i0 = TC_VIEW.i0, i1 = TC_VIEW.i1;
+  const lo = clamp(Math.floor(i0), 0, all.length - 1);
+  const hi = clamp(Math.ceil(i1), 0, all.length - 1);
+  const shown = all.slice(lo, hi + 1);
+
   const levels = TC_LEVELS || {};
-  const extra = [t.entry, t.exit];
-  if (TC_SHOW.range && levels.range) extra.push(levels.range.high, levels.range.low);
-  if (TC_SHOW.stop && levels.stop !== undefined) extra.push(levels.stop);
-  if (TC_SHOW.targets && levels.targets) extra.push(...levels.targets);
+  /* The levels open the scale far enough to see them, but only until the reader
+     takes hold of it — after that the view is theirs and nothing widens it. */
+  const extra = [];
+  if (!TC_VIEW.custom) {
+    extra.push(t.entry, t.exit);
+    if (TC_SHOW.range && levels.range) extra.push(levels.range.high, levels.range.low);
+    if (TC_SHOW.stop && levels.stop !== undefined) extra.push(levels.stop);
+    if (TC_SHOW.targets && levels.targets) extra.push(...levels.targets);
+  }
   for (const values of Object.values(averages)) {
-    for (let i = first; i < bars.length; i++) if (values[i] !== null) extra.push(values[i]);
+    for (let i = lo; i <= hi; i++) {
+      const v = values[i + first];
+      if (v !== null && v !== undefined) extra.push(v);
+    }
   }
 
-  let yMin = Math.min(...shown.map(b => b.l), ...extra);
-  let yMax = Math.max(...shown.map(b => b.h), ...extra);
-  const pad = ((yMax - yMin) || Math.max(yMax * 0.01, 0.01)) * 0.10;
-  yMin -= pad; yMax += pad;
+  let yMin, yMax;
+  if (TC_VIEW.yManual) {
+    yMin = TC_VIEW.yManual.min; yMax = TC_VIEW.yManual.max;
+  } else {
+    yMin = Math.min(...shown.map(b => b.l), ...extra);
+    yMax = Math.max(...shown.map(b => b.h), ...extra);
+    const pad = ((yMax - yMin) || Math.max(yMax * 0.01, 0.01)) * 0.10;
+    yMin -= pad; yMax += pad;
+  }
 
-  const step = plotW / shown.length;
-  const px = i => TC_PAD.l + (i + 0.5) * step;
+  const step = plotW / (i1 - i0);
+  const px = i => TC_PAD.l + (i - i0 + 0.5) * step;
   const py = v => TC_PAD.t + (1 - (v - yMin) / (yMax - yMin)) * plotH;
-  TC_STATE.geo = { px, py, step, width, height, inIndex, outIndex, shown };
+  const indexAt = clientX => {
+    const rect = document.getElementById("tc-host").getBoundingClientRect();
+    return i0 + (clientX - rect.left - TC_PAD.l) / step - 0.5;
+  };
+  TC_STATE.geo = {
+    px, py, step, width, height, inIndex, outIndex, shown: all,
+    lo, hi, yMin, yMax, plotW, plotH, indexAt, count: all.length,
+  };
 
   const ticks = [];
   const gridStep = niceStep((yMax - yMin) / 4.2);
@@ -1722,16 +1753,17 @@ function drawTradeChart() {
      label carrying the full date would not fit a chart spanning several
      sessions, and none of them carrying it leaves the reader guessing. */
   const dayStarts = new Map();
-  shown.forEach((b, i) => {
+  shown.forEach((b, k) => {
     const key = dayOf(b.t);
-    if (!dayStarts.has(key)) dayStarts.set(key, i);
+    if (!dayStarts.has(key)) dayStarts.set(key, k + lo);
   });
   const boundary = new Set(dayStarts.values());
   const every = Math.max(1, Math.round(shown.length / 8));
   /* a dated label is twice the width of a bare time, so keep plain labels well
      clear of one rather than letting the two print over each other */
   const clearOf = Math.max(2, Math.round(shown.length / 14));
-  const axis = shown.map((b, i) => {
+  const axis = shown.map((b, k) => {
+    const i = k + lo;
     const isBoundary = boundary.has(i);
     if (!isBoundary && i % every !== 0) return "";
     if (!isBoundary && [...boundary].some(at => Math.abs(at - i) < clearOf)) return "";
@@ -1756,7 +1788,8 @@ function drawTradeChart() {
     if (!values) return "";
     const colour = tokenValue(token);
     let path = "", lastY = null;
-    shown.forEach((_, i) => {
+    shown.forEach((_, k) => {
+      const i = k + lo;
       const v = values[i + first];
       if (v === null || v === undefined) return;
       path += (path ? "L" : "M") + px(i).toFixed(2) + " " + py(v).toFixed(2) + " ";
@@ -1814,7 +1847,8 @@ function drawTradeChart() {
   /* Candles carry direction by shape as well as hue: a body drawn from open to
      close is up or down whichever way the colour reads. */
   const bodyW = Math.max(1.5, Math.min(9, step * 0.62));
-  const candles = shown.map((b, i) => {
+  const candles = shown.map((b, k) => {
+    const i = k + lo;
     const up = b.c >= b.o;
     const colour = up ? GAIN : LOSS;
     const x = px(i);
@@ -1860,13 +1894,22 @@ function drawTradeChart() {
       '" stroke-width="1.5" opacity="0.9"/>';
   }).join("");
 
+  /* Everything that moves with the view is clipped to the plot, or panning
+     would run candles out over the price axis and the dates below. */
+  const plotted =
+    overlays + candles + smaLines +
+    level(y1, C.axis) + level(y2, C.axis) + trend + fillMarks + entryMark + exitMark;
+
   host.querySelectorAll("svg").forEach(n => n.remove());
   host.insertAdjacentHTML("afterbegin",
     '<svg viewBox="0 0 ' + width + " " + height + '" preserveAspectRatio="none" role="img" ' +
     'aria-label="' + t.symbol + " price around the trade, entry " + money(t.entry) +
     " and exit " + money(t.exit) + '">' +
-    grid + axis + overlays + candles + smaLines + smaLabels + overlayText +
-    level(y1, C.axis) + level(y2, C.axis) + trend + fillMarks + entryMark + exitMark +
+    '<defs><clipPath id="tcClip"><rect x="' + TC_PAD.l + '" y="' + TC_PAD.t +
+    '" width="' + plotW + '" height="' + plotH + '"/></clipPath></defs>' +
+    grid + axis +
+    '<g clip-path="url(#tcClip)">' + plotted + "</g>" +
+    smaLabels + overlayText +
     "</svg>");
 
   /* size the hover target from the same padding, so it cannot drift from it */
@@ -1875,14 +1918,20 @@ function drawTradeChart() {
   hit.style.top = TC_PAD.t + "px";
   hit.style.width = plotW + "px";
   hit.style.height = plotH + "px";
+  const axisHit = document.getElementById("tc-axis-hit");
+  axisHit.style.left = (width - TC_PAD.r) + "px";
+  axisHit.style.top = TC_PAD.t + "px";
+  axisHit.style.width = TC_PAD.r + "px";
+  axisHit.style.height = plotH + "px";
 
-  paintTradeLabels(x1, y1, x2, y2, width);
+  paintTradeLabels(x1, y1, x2, y2, width, inIndex >= i0 && inIndex <= i1,
+    outIndex >= i0 && outIndex <= i1);
   paintTradeTable();
 }
 
 /* The two marks are labelled on the plot rather than in a legend: there are only
    two, and each carries a price and the strategy that placed it. */
-function paintTradeLabels(x1, y1, x2, y2, width) {
+function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
   const result = TRADE.pnl >= 0 ? GAIN : LOSS;
   const host = document.getElementById("tc-host");
   host.querySelectorAll(".tc-mark").forEach(n => n.remove());
@@ -1907,8 +1956,8 @@ function paintTradeLabels(x1, y1, x2, y2, width) {
     if (x > width * 0.6) el.classList.add("flip");
     host.append(el);
   };
-  place(x1, y1, "Entry", TRADE.entry, "entry");
-  place(x2, y2, "Exit", TRADE.exit, "exit");
+  if (entryInView) place(x1, y1, "Entry", TRADE.entry, "entry");
+  if (exitInView) place(x2, y2, "Exit", TRADE.exit, "exit");
   separateMarks(host);
 }
 
@@ -1937,14 +1986,16 @@ function paintTradeTable() {
 }
 
 function tradeHover(event) {
-  const geo = TC_STATE.geo, bars = TC_STATE.bars;
+  const geo = TC_STATE.geo;
   const tip = document.getElementById("tc-tip");
-  if (!geo || !bars) return;
-  const host = document.getElementById("tc-host");
-  const rect = host.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const index = clamp(Math.round((x - TC_PAD.l) / geo.step - 0.5), 0, bars.length - 1);
+  if (!geo) return;
+  /* the drawn window, not TC_STATE.bars — that still carries the run-up bars
+     the averages need, and reading the cursor against those reports a bar from
+     days before the one under the pointer */
+  const bars = geo.shown;
+  const index = clamp(Math.round(geo.indexAt(event.clientX)), geo.lo, geo.hi);
   const b = bars[index];
+  if (!b) return;
   const row = (label, value) =>
     '<span class="tt-row"><span>' + label + "</span><span>" + money(value) + "</span></span>";
   tip.innerHTML =
@@ -1969,8 +2020,97 @@ function wireTradeChart() {
     loadTradeBars();
   });
   const hit = document.getElementById("tc-hit");
-  hit.addEventListener("pointermove", tradeHover);
-  hit.addEventListener("pointerleave", () => document.getElementById("tc-tip").classList.remove("on"));
+  const axis = document.getElementById("tc-axis-hit");
+  let drag = null;
+
+  const redraw = () => { TC_VIEW.custom = true; drawTradeChart(); };
+
+  const clampWindow = () => {
+    const count = TC_STATE.geo ? TC_STATE.geo.count : 0;
+    if (!count) return;
+    const span = Math.min(TC_VIEW.i1 - TC_VIEW.i0, count);
+    TC_VIEW.i0 = clamp(TC_VIEW.i0, 0, count - span);
+    TC_VIEW.i1 = TC_VIEW.i0 + span;
+  };
+
+  /* zoom time around whatever the pointer is over, so the bar under the cursor
+     stays under it */
+  hit.addEventListener("wheel", event => {
+    event.preventDefault();
+    const geo = TC_STATE.geo;
+    if (!geo) return;
+    const anchor = geo.indexAt(event.clientX);
+    const span = TC_VIEW.i1 - TC_VIEW.i0;
+    const next = clamp(span * (event.deltaY > 0 ? 1.14 : 1 / 1.14), 4, geo.count);
+    TC_VIEW.i0 = anchor - (anchor - TC_VIEW.i0) * (next / span);
+    TC_VIEW.i1 = TC_VIEW.i0 + next;
+    clampWindow();
+    redraw();
+  }, { passive: false });
+
+  hit.addEventListener("pointerdown", event => {
+    hit.setPointerCapture(event.pointerId);
+    hit.classList.add("dragging");
+    drag = { x: event.clientX, y: event.clientY, mode: "pan" };
+  });
+
+  axis.addEventListener("pointerdown", event => {
+    axis.setPointerCapture(event.pointerId);
+    const geo = TC_STATE.geo;
+    if (!TC_VIEW.yManual && geo) TC_VIEW.yManual = { min: geo.yMin, max: geo.yMax };
+    drag = { x: event.clientX, y: event.clientY, mode: "scale" };
+  });
+
+  const endDrag = event => {
+    if (!drag) return;
+    drag = null;
+    hit.classList.remove("dragging");
+    if (hit.hasPointerCapture?.(event.pointerId)) hit.releasePointerCapture(event.pointerId);
+    if (axis.hasPointerCapture?.(event.pointerId)) axis.releasePointerCapture(event.pointerId);
+  };
+  for (const el of [hit, axis]) {
+    el.addEventListener("pointerup", endDrag);
+    el.addEventListener("pointercancel", endDrag);
+    el.addEventListener("dblclick", () => {
+      TC_VIEW = { i0: 0, i1: (TC_STATE.geo?.count) || 1, yManual: null, custom: false };
+      drawTradeChart();
+    });
+  }
+
+  hit.addEventListener("pointermove", event => {
+    const geo = TC_STATE.geo;
+    if (!geo) return;
+    if (!drag) { tradeHover(event); return; }
+
+    const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+    drag.x = event.clientX; drag.y = event.clientY;
+    const span = TC_VIEW.i1 - TC_VIEW.i0;
+    const move = -dx * (span / geo.plotW);
+    TC_VIEW.i0 += move; TC_VIEW.i1 += move;
+    clampWindow();
+    /* price only follows the drag once the scale has been locked by hand,
+       so an ordinary sideways drag does not quietly rescale the y axis */
+    if (TC_VIEW.yManual) {
+      const shift = dy * ((geo.yMax - geo.yMin) / geo.plotH);
+      TC_VIEW.yManual.min += shift; TC_VIEW.yManual.max += shift;
+    }
+    document.getElementById("tc-tip").classList.remove("on");
+    redraw();
+  });
+
+  axis.addEventListener("pointermove", event => {
+    if (!drag || drag.mode !== "scale" || !TC_VIEW.yManual) return;
+    const dy = event.clientY - drag.y;
+    drag.y = event.clientY;
+    const mid = (TC_VIEW.yManual.min + TC_VIEW.yManual.max) / 2;
+    const half = (TC_VIEW.yManual.max - TC_VIEW.yManual.min) / 2;
+    const next = clamp(half * (1 + dy / 180), 1e-4, 1e9);
+    TC_VIEW.yManual = { min: mid - next, max: mid + next };
+    redraw();
+  });
+
+  hit.addEventListener("pointerleave", () =>
+    document.getElementById("tc-tip").classList.remove("on"));
 }
 
 /* ══ views ═══════════════════════════════════════════════ */

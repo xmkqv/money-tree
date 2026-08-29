@@ -1524,3 +1524,13 @@ body[data-view="chart"] .chart-panel { min-height: 74vh; }
   .tc-rail-note { flex-basis: 100%; margin: 0; }
   .trade-host { margin: 0; }
 }
+
+.trade-host .plot-hit { cursor: grab; }
+.trade-host .plot-hit.dragging { cursor: grabbing; }
+.trade-host .axis-hit { cursor: ns-resize; }
+.tc-hint {
+  margin: 8px var(--pad, 16px) 0;
+  font-size: 11px;
+  color: var(--ink-3);
+  letter-spacing: 0.01em;
+}
