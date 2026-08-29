@@ -42,6 +42,15 @@ POSITION_FRACTION_CEILING = 0.10
 POSITIONS_MAX = 10
 ORB_RISK_CEILING = 0.01
 
+# Breakout figures the composer hard-codes: relative volume needs exactly this
+# many earlier sessions to compare against, the trail reads this ATR multiple
+# off this many completed candles, and a position worth less than this is not
+# opened at all. Each is pinned to its source in tests/test_strategy_spec.py.
+ORB_HISTORY_SESSIONS = 20
+ORB_TRAIL_ATR_MULTIPLE = 1.5
+ORB_TRAIL_BARS_MIN = 15
+POSITION_NOTIONAL_MIN = 1
+
 # When each engine can open a trade, from portfolio.py. The daily pair is
 # checked once a session before 09:40; the two breakout engines scan on their
 # own candle boundary until 10:30. Positions already open keep being managed
@@ -93,15 +102,20 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
     risk_cap = ORB_RISK_CEILING if minutes == 5 else per_trade
 
     confirmation = (
-        f"Volume traded so far today is at least {volume_multiple:g}x the 20-session "
-        "average at the same time of day, and that average session turns over at "
-        "least 1M shares."
+        f"Volume traded so far today is at least {volume_multiple:g}x the "
+        f"{ORB_HISTORY_SESSIONS}-session average at the same time of day, and that average "
+        f"session turns over at least 1M shares. All {ORB_HISTORY_SESSIONS} earlier sessions "
+        "must be there to compare against — a shorter history is not a weaker signal, it is "
+        "no confirmation at all, and the breakout is passed over."
     )
     if uses_macd:
         confirmation += " MACD (12/26/9) must also be rising for a long, falling for a short."
 
     if minutes == 5:
-        targets = "Targets are re-cut from the filled price: 1.5x, 2.5x and 4x the risk taken."
+        targets = (
+            "Targets are re-cut from the filled price: 1.5x, 2.5x and 4x the risk actually "
+            "taken, so a fill away from the signal price carries them with it."
+        )
         reward = "1.5:1 at the first target, then 2.5:1 and 4:1."
     else:
         targets = "Targets sit half a range, one range and two ranges beyond the breakout level."
@@ -131,22 +145,32 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
         Row(
             field="Setup",
             value=f"A completed {minutes}-minute candle closes above the range high (long) or "
-            f"below the range low (short). Checked every {minutes} minutes from {first_scan} "
-            "to 10:30, at most once per stock per day.",
+            f"below the range low (short) — a candle still forming never signals. Checked every "
+            f"{minutes} minutes from {first_scan} to 10:30, at most once per stock per day. "
+            "Once either breakout engine has traded a stock, both leave it alone for the rest "
+            "of the session.",
             source="portfolio.py · _run_orb_variant",
         ),
         Row(field="Confirmation", value=confirmation, source="portfolio.py · _orb_confirm"),
         Row(
             field="Entry",
-            value="Market order at the breakout candle's close, good for the day only.",
+            value="Market order at the breakout candle's close, good for the day only. It is "
+            "passed over if another engine already holds the stock, if the account is at its "
+            "position cap or fully invested, or if the size that fits the risk limits comes to "
+            f"less than ${POSITION_NOTIONAL_MIN}.",
             source="portfolio.py · _enter",
         ),
         Row(
             field="Stop Loss",
             value="Three quarters of the way back into the opening range for a long, a quarter "
-            "for a short. Once the first target is hit the stop trails 1.5x the 14-period "
-            "ATR and never moves back past the entry price.",
-            source="portfolio.py · _run_orb_variant, _manage_orb",
+            "for a short. Once the first target is hit the stop trails "
+            f"{ORB_TRAIL_ATR_MULTIPLE:g}x the 14-period ATR behind the best price the trade has "
+            "seen, and never moves back "
+            f"past the entry price. The trail needs {ORB_TRAIL_BARS_MIN} completed candles to read "
+            "that ATR, and holds where it is until they exist. The level rests as a live order at "
+            "the broker, replaced whenever it moves and re-sent if it ever stops covering the "
+            "whole position.",
+            source="portfolio.py · _run_orb_variant, _manage_orb, _resync_stops",
         ),
         Row(
             field="Max Risk",
@@ -164,9 +188,9 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
         Row(field="Min. R:R", value=f"{reward} {targets}", source="portfolio.py · on_filled_order"),
         Row(
             field="Exit Rule",
-            value="Scaled out in three: half the position at the first target, a quarter at the "
-            "second, the remainder at the third. The trailing stop takes whatever is left "
-            "if price turns first.",
+            value="Scaled out in three: half the position as first filled at the first target, "
+            "a quarter of it at the second, the remainder at the third. The trailing stop "
+            "takes whatever is left if price turns first.",
             source="portfolio.py · _manage_orb",
         ),
         Row(
