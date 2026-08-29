@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from bot.types import Settings
+from bot.types import PAUSED_STRATEGIES, STRATEGY_LABELS, Settings, active_strategies
 from cli import __main__ as cli
 from tests.world.index import web_settings
 
@@ -20,6 +20,18 @@ def test_strategies_are_normalized_when_configuration_is_valid() -> None:
 def test_configuration_is_rejected_when_strategy_selection_is_invalid(strategies: str) -> None:
     with pytest.raises(ValidationError, match="STRATEGIES|unknown strategies"):
         Settings(_env_file=None, strategies=strategies)
+
+
+def test_paused_strategies_are_registered_strategy_names() -> None:
+    assert sorted(PAUSED_STRATEGIES) == ["orb_momentum", "sma", "tfb_50"]
+    assert PAUSED_STRATEGIES.issubset(STRATEGY_LABELS)
+
+
+def test_paused_strategies_take_no_entries_when_selection_includes_them() -> None:
+    settings = Settings(_env_file=None, strategies="orb,sma,tfb_50,orb_momentum")
+
+    assert settings.strategy_names == ["orb", "sma", "tfb_50", "orb_momentum"]
+    assert active_strategies(settings.strategy_names) == ["orb"]
 
 
 def test_configuration_is_rejected_when_export_settings_are_incomplete() -> None:
