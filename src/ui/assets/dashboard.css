@@ -1747,7 +1747,8 @@ body[data-view="chart"] .chart-panel { min-height: 74vh; }
 
   /* ── equity panel, without its plot ─────────────────── */
 
-  .chart-host { display: none; }
+  /* by id, not by class: the trade plot is a .chart-host too, and it stays */
+  #chart-host { display: none; }
 
   .chart-hero { flex-wrap: wrap; gap: 4px 10px; padding: 2px var(--pad) 0; }
   .chart-hero .big { font-size: 25px; }
@@ -1927,16 +1928,65 @@ body[data-view="chart"] .chart-panel { min-height: 74vh; }
   .rules-table td { display: block; padding: 0; }
   .rules-note { margin-bottom: 10px; }
 
-  /* ── trade page, without its chart ──────────────────── */
+  /* ── trade page, chart and all ──────────────────────── */
+
+  /* The one plot a phone keeps. It is the answer to why the bot took the
+     trade, and no figure beside it stands in for that, so it is drawn at
+     full size here and only its handling changes. */
 
   .trade-head { gap: 8px; }
   .trade-head h2 { font-size: 16px; }
   .trade-head .segmented { margin-left: 0; }
   .trade-facts { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 9px 14px; }
-  .trade-stage,
-  #tc-range,
-  .tc-hint,
-  .tc-note { display: none; }
+
+  .trade-stage { gap: 10px; padding: 0 var(--pad); }
+
+  /* Tall enough that a candle has a body worth reading, short enough that the
+     facts above it and the note below stay on the same screen as the plot. */
+  .trade-host { flex: none; height: min(56vh, 430px); min-height: 300px; margin: 0; }
+
+  /* A vertical swipe over the plot is the reader scrolling the page and must
+     stay that way; only a sideways drag is the chart's to take. Everything the
+     wheel and the pointer did is still reachable — pinch zooms, a tap reads a
+     bar out — so the gesture the page needs is the only one given up. */
+  .trade-host .plot-hit { touch-action: pan-y; }
+
+  /* Stretching the price scale is a vertical drag, which is the same stroke as
+     scrolling the page; rather than trap a thumb in the gutter, the scale is
+     left to fit itself, which it does on every pinch. */
+  .trade-host .axis-hit { touch-action: pan-y; cursor: default; }
+
+  /* The plot is what the reader came for, so it goes first and the overlays
+     follow it, the way a legend follows a chart rather than fencing it off. */
+  .trade-host { order: 1; }
+  .tc-rail { order: 2; gap: 6px 5px; }
+
+  /* The rail's two groups are block containers, which stacked one toggle per
+     line and pushed the plot off the screen. Here they run as chips: each is
+     a tap target in its own right, and the whole rail folds into three lines. */
+  #tc-smas, #tc-overlays { display: flex; flex-wrap: wrap; gap: 5px; }
+  .tc-toggle {
+    padding: 6px 10px;
+    font-size: 12px;
+    gap: 7px;
+    border: 1px solid var(--hairline-strong);
+    border-radius: 999px;
+  }
+  .tc-toggle.off { border-style: dashed; }
+  .tc-toggle input { width: 15px; height: 15px; }
+  .tc-rail-head { font-size: 9.5px; margin: 0; align-self: center; }
+  .tc-rail-note { flex-basis: 100%; }
+
+  /* the marks name themselves on the plot, and the plot is now a third as wide */
+  .tc-mark { padding: 3px 6px; }
+  .tc-mark .tc-k { font-size: 9px; }
+  .tc-mark .tc-v { font-size: 11.5px; }
+  .tc-mark .tc-s { font-size: 9.5px; }
+
+  .tc-note { margin-top: 12px; }
+
+  /* the mouse's instructions, replaced by the finger's in the note above it */
+  .tc-hint { display: none; }
 }
 
 /* A phone in landscape is wider than the breakpoint but no taller, so the
