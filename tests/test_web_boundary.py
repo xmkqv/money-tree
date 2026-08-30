@@ -99,6 +99,57 @@ def test_the_page_links_a_tab_icon_that_survives_a_dark_tab_strip() -> None:
     assert "prefers-color-scheme: dark" in icon.text
 
 
+def test_the_phone_breakpoint_is_the_same_width_in_both_the_sheet_and_the_script() -> None:
+    """The phone layout is split across two files and has to agree with itself.
+
+    The stylesheet stacks the page and hides the plots below one width; the
+    script stops drawing them below another. Let those two drift apart and a
+    phone gets either a plot drawn into a hidden box or a panel with a hole
+    where the figures should be, neither of which shows up in a unit test.
+    """
+    sheet = (ASSET_DIRECTORY / "dashboard.css").read_text()
+    script = (ASSET_DIRECTORY / "dashboard.js").read_text()
+
+    styled = re.search(r"@media \(max-width: (\d+)px\) \{\n\n  :root \{", sheet)
+    scripted = re.search(r'matchMedia\("\(max-width: (\d+)px\)"\)', script)
+
+    assert styled, "the stylesheet should carry a phone layer"
+    assert scripted, "the script should carry the same breakpoint"
+    assert styled.group(1) == scripted.group(1)
+
+
+def test_the_phone_layout_keeps_every_view_the_wide_one_offers() -> None:
+    """Stacking a page is allowed to move a control; it is not allowed to drop one.
+
+    The phone layer hides exactly the two plots and the reading aids that only
+    make sense beside them. Anything else disappearing from a phone is a
+    feature quietly lost, so the hidden set is named here rather than trusted.
+    """
+    sheet = (ASSET_DIRECTORY / "dashboard.css").read_text()
+    phone = re.sub(
+        r"/\*.*?\*/", "", sheet[sheet.index("/* \u2550\u2550\u2550 phone") :], flags=re.S
+    )
+    hidden = {
+        selector.strip()
+        for block in re.findall(r"([^{}]+)\{[^{}]*display: none[^{}]*\}", phone)
+        for selector in block.split(",")
+    }
+
+    assert hidden == {
+        ".chart-host",  # the equity plot
+        ".trade-stage",  # the trade plot and its overlay rail
+        "#tc-range",  # the bar size that only the trade plot reads
+        ".tc-hint",  # how to drag a plot that is not drawn
+        ".tc-note",  # what the marks on that plot mean
+        ".status::-webkit-scrollbar",
+        "table.trades thead",
+        ".table-scroll table.data thead",
+        "table.trades tbody td.key::before",
+        ".table-scroll table.data tbody td.key::before",
+        "table.trades tbody td.empty::before",
+    }
+
+
 def test_unknown_asset_is_not_served() -> None:
     with web_client() as client:
         authenticate(client)

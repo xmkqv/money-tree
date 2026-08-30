@@ -45,6 +45,18 @@ const DAY3 = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
 const REFRESH_MS = 30000;
 
+/* ══ phone ═══════════════════════════════════════════════
+
+   The one breakpoint the script shares with the stylesheet. Below it the
+   layout is a single scrolling column and neither plot is drawn: a chart
+   narrow enough to fit a phone cannot be read, and drawing one costs a
+   fetch and a repaint on every poll for a picture nobody can use. The
+   figures those plots carry are painted regardless, so no reading is lost
+   with the drawing. */
+
+const PHONE = window.matchMedia("(max-width: 720px)");
+const onPhone = () => PHONE.matches;
+
 const STRATEGY_COLOURS = {
   orb: "var(--s-orb5)",
   orb_momentum: "var(--s-orb10)",
@@ -413,15 +425,29 @@ function buildTable(table, headers, rows, rightFrom, rowClass) {
       const extra = rowClass(row, index);
       if (extra) tr.className = extra;
     }
-    for (const c of row) {
+    const cells = [];
+    for (const [i, c] of row.entries()) {
       const td = document.createElement("td");
       if (c.node) td.append(c.node);
       else td.textContent = c.t;
+      /* On a phone the header row is gone and each row is read as a card, so
+         every cell has to name itself. On a desktop the attribute is inert. */
+      td.dataset.label = headers[i];
       if (c.r) td.classList.add("r");
       if (c.cls) td.classList.add(c.cls);
       if (c.dim) td.classList.add("flat");
+      cells.push(td);
       tr.append(td);
     }
+    /* A card needs a subject and a result. The subject is the symbol wherever a
+       row has one — every trade table — and the first column otherwise. The
+       result is the money the row made, which is the last column in all but
+       the session table, where a percentage trails it. The rest fall in under
+       the two of them, paired to a line. */
+    const key = cells.find(td => td.querySelector(".sym")) || cells[0];
+    if (key) key.classList.add("key");
+    const lead = cells.find(td => /^(p&l|unreal)/i.test(td.dataset.label)) || cells[cells.length - 1];
+    if (lead && lead !== key) lead.classList.add("lead");
     tbody.append(tr);
   });
   /* Rebuilt in place on every poll, so clear first: appending would stack a
@@ -689,26 +715,59 @@ function niceStep(raw) {
   return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
 }
 
+/* The visible window, rebased on the point before it, independent of any
+   geometry — the hero reads it whether or not a plot is drawn. */
+function chartWindow() {
+  const s = chart.series;
+  if (!s || !s.length) return null;                    /* nothing fetched yet */
+  const N = s.length;
+  const lo = clamp(Math.floor(chart.i0), 0, N - 1);
+  const hi = clamp(Math.ceil(chart.i1), 0, N - 1);
+  const baseline = s[lo].before;
+  const visible = [];
+  for (let i = lo; i <= hi; i++) visible.push({ i, p: s[i], y: s[i].value - baseline });
+  return { s, N, lo, hi, baseline, visible, last: visible[visible.length - 1] };
+}
+
+/* hero reads the visible window, because that's what the chart is showing */
+function paintChartHero(w) {
+  const delta = w.last.y;
+  const equityAtStart = w.s.equityBase + w.baseline;
+
+  const big = document.getElementById("chart-big");
+  big.textContent = signedMoney(delta);
+  big.className = "big num " + tone(delta);
+
+  const d = document.getElementById("chart-delta");
+  d.textContent = signedPct((delta / equityAtStart) * 100) + " over view";
+  d.className = "delta " + tone(delta);
+
+  document.getElementById("chart-note").textContent =
+    w.visible[0].p.label + " – " + w.last.p.label + (chart.series === INTRADAY ? " · Fri 30 Jan" : "");
+
+  document.getElementById("chart-table").innerHTML =
+    "<table><caption>Cumulative profit and loss across the visible window</caption><tbody>" +
+    w.visible.map(v => "<tr><th scope='row'>" + v.p.long + "</th><td>" + signedMoney(v.y) + "</td></tr>").join("") +
+    "</tbody></table>";
+}
+
 function drawChart() {
+  const w = chartWindow();
+  if (!w) return;
+  paintChartHero(w);
+  if (onPhone()) return;            /* the figures stand alone; the plot does not */
+
   const host = document.getElementById("chart-host");
   const width = host.clientWidth;
   const height = host.clientHeight;
   if (width < 60 || height < 60) return;
-  if (!chart.series || !chart.series.length) return;   /* nothing fetched yet */
   readTheme();
 
-  const s = chart.series;
-  const N = s.length;
+  const { s, N, lo, hi, baseline, visible } = w;
   const plotW = width - PAD.l - PAD.r;
   const plotH = height - PAD.t - PAD.b;
 
   const i0 = chart.i0, i1 = chart.i1;
-  const lo = clamp(Math.floor(i0), 0, N - 1);
-  const hi = clamp(Math.ceil(i1), 0, N - 1);
-
-  const baseline = s[lo].before;
-  const visible = [];
-  for (let i = lo; i <= hi; i++) visible.push({ i, p: s[i], y: s[i].value - baseline });
 
   let yMin, yMax;
   if (chart.yManual) {
@@ -797,26 +856,6 @@ function drawChart() {
   Object.assign(document.getElementById("axis-hit").style, {
     left: (width - PAD.r) + "px", top: PAD.t + "px", width: PAD.r + "px", height: plotH + "px",
   });
-
-  /* hero reads the visible window, because that's what the chart is showing */
-  const delta = last.y;
-  const equityAtStart = s.equityBase + baseline;
-
-  const big = document.getElementById("chart-big");
-  big.textContent = signedMoney(delta);
-  big.className = "big num " + tone(delta);
-
-  const d = document.getElementById("chart-delta");
-  d.textContent = signedPct((delta / equityAtStart) * 100) + " over view";
-  d.className = "delta " + tone(delta);
-
-  document.getElementById("chart-note").textContent =
-    visible[0].p.label + " – " + last.p.label + (chart.series === INTRADAY ? " · Fri 30 Jan" : "");
-
-  document.getElementById("chart-table").innerHTML =
-    "<table><caption>Cumulative profit and loss across the visible window</caption><tbody>" +
-    visible.map(v => "<tr><th scope='row'>" + v.p.long + "</th><td>" + signedMoney(v.y) + "</td></tr>").join("") +
-    "</tbody></table>";
 }
 
 /* ── chart interaction ─────────────────────────────────── */
@@ -1529,8 +1568,11 @@ async function openTradeChart(trade, from) {
     TC_ORIGIN === "portfolio" ? "← Portfolio" : "← Trade log";
   switchView("chart");
   paintTradeFacts();
-  paintRail();
   paintStepper();
+  /* On a phone the page is the trade's own figures and nothing else, so the
+     two reads behind the plot — bars and reconstructed levels — are not made. */
+  if (onPhone()) return;
+  paintRail();
   loadTradeLevels();
   await loadTradeBars();
 }
@@ -2567,6 +2609,18 @@ new ResizeObserver(() => {
   clearTimeout(tradeResizeTimer);
   tradeResizeTimer = setTimeout(() => { if (currentView === "chart") drawTradeChart(); }, 80);
 }).observe(document.getElementById("tc-host"));
+
+/* Crossing the breakpoint changes what is drawn, not just how it is laid out,
+   so a rotation into landscape has to bring the plots back with it. */
+PHONE.addEventListener("change", () => {
+  if (onPhone()) return;
+  if (currentView === "dashboard") requestAnimationFrame(drawChart);
+  if (currentView === "chart" && TRADE && !TC_STATE.bars) {
+    paintRail();
+    loadTradeLevels();
+    loadTradeBars();
+  }
+});
 
 document.body.dataset.view = "dashboard";
 syncThemeButtons();

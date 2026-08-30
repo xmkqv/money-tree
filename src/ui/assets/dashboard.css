@@ -1040,6 +1040,9 @@ table.trades .sym { font-family: var(--font-ui); font-weight: 600; color: var(--
 
 .hidden { display: none !important; }
 
+/* the two stand-ins for the plots; only the phone layer shows them */
+.phone-note { display: none; }
+
 /* a view is the app's second grid row, so it must pass that height
    constraint down to the layout inside it */
 .view { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr); }
@@ -1127,7 +1130,9 @@ body[data-view="strategies"] .app { height: auto; min-height: 100%; }
   position: relative;
   display: grid;
   grid-auto-flow: column;
-  grid-auto-columns: 1fr;
+  /* a bare 1fr floors at min-content, so a long run of sessions would push
+     the strip past its panel rather than tightening the bars */
+  grid-auto-columns: minmax(0, 1fr);
   gap: 7px;
   align-items: end;
   height: 150px;
@@ -1559,3 +1564,385 @@ body[data-view="chart"] .chart-panel { min-height: 74vh; }
   border: 1px solid var(--hairline-strong);
 }
 .tc-open-note[hidden] { display: none; }
+
+
+/* ═══ phone ═══════════════════════════════════════════════
+
+   Everything above builds one screen that never scrolls, three columns
+   wide. A phone cannot honour that bargain, so below this width the
+   promise is inverted: the layout unstacks into a single column, the page
+   scrolls, and reading happens by thumb.
+
+   Three things change shape rather than size, because shrinking them would
+   have made them unreadable:
+
+     · navigation moves to a fixed bar at the bottom, where the thumb is;
+     · every trade table drops its header row and reads as a card — subject
+       on the left, result on the right, the rest in a two-column grid under
+       them, each cell naming itself from the header it lost;
+     · both plots drop out. A chart narrow enough to fit a phone cannot be
+       read, so the figures they carry are painted on their own instead.
+
+   Nothing else is dropped. Every view, control, filter and figure that the
+   wide layout offers is here, stacked and scrolled. This is the last layer
+   in the file, so it wins the cascade against the density tiers above. */
+
+@media (max-width: 720px) {
+
+  :root { --gap: 10px; --r-panel: 14px; --pad: 13px; }
+
+  body,
+  body[data-view] {
+    overflow: auto;
+    overscroll-behavior-y: none;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  .app,
+  body[data-view] .app {
+    height: auto;
+    min-height: 100%;
+    /* the bottom bar is fixed, so the column has to end above it */
+    padding: 0 10px calc(74px + env(safe-area-inset-bottom));
+    gap: var(--gap);
+    /* One hard column. Without it the implicit track floors at the widest
+       thing on the page — the status pill's unbroken line — and the whole
+       document slides sideways under the thumb. */
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .topbar, .view, .status, .panel, .panel-head, .panel-body { min-width: 0; }
+
+  /* ── header ─────────────────────────────────────────── */
+
+  /* Brand on the first line, bot status on the second. It stays put while
+     the page scrolls, because whether the bot is running is the one fact
+     worth reading at any point in the scroll. */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    flex-wrap: wrap;
+    gap: 7px;
+    margin: 0 -10px;
+    padding: calc(9px + env(safe-area-inset-top)) 10px 8px;
+    background: var(--canvas);
+    border-bottom: 1px solid var(--hairline);
+  }
+
+  .brand { width: 100%; gap: 8px; }
+  .brand h1 { font-size: 18px; margin-right: auto; }
+  .theme-toggle { margin-left: 0; }
+  .theme-toggle button { width: 30px; height: 26px; }
+
+  .status {
+    width: 100%;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 10px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .status::-webkit-scrollbar { display: none; }
+
+  /* ── bottom navigation ──────────────────────────────── */
+
+  .tabs {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 40;
+    display: flex;
+    gap: 2px;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+    border-radius: 0;
+    background: var(--surface);
+    border-top: 1px solid var(--hairline-strong);
+  }
+
+  .tabs button,
+  .tabs button.ghost {
+    flex: 1 1 0;
+    min-width: 0;
+    margin-left: 0;
+    padding: 9px 2px;
+    font-size: 10.5px;
+    letter-spacing: -0.01em;
+    border-radius: 9px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* the selected thumb is white on white in the light theme once the bar is
+     the surface itself, so the current view is marked with the recess */
+  .tabs button[aria-current="page"] {
+    background: var(--surface-3);
+    box-shadow: none;
+  }
+
+  /* ── one column ─────────────────────────────────────── */
+
+  .view { display: block; min-height: 0; }
+
+  .grid,
+  .rail,
+  .stage,
+  .stage-bottom,
+  .pf-stage,
+  .hist-two,
+  .rules-grid,
+  .history {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto;
+    gap: var(--gap);
+  }
+
+  /* panels size to their contents; the page scrolls, not the panel */
+  .panel,
+  .stage-bottom > .panel,
+  body[data-view="chart"] .chart-panel { height: auto; min-height: 0; }
+
+  .today-wrap,
+  .cal-wrap,
+  .log-wrap,
+  .table-scroll,
+  .panel.strategies .panel-body {
+    flex: none;
+    display: block;
+    overflow: visible;
+  }
+
+  .panel-head { flex-wrap: wrap; gap: 7px 10px; padding: 11px var(--pad) 8px; }
+  .panel-body { padding: 4px var(--pad) 13px; }
+  .today-sum { margin: 0 var(--pad) 8px; gap: 8px 14px; }
+  .today-wrap, .log-wrap { padding: 0 var(--pad) 12px; }
+  .filters { padding: 0 var(--pad) 12px; }
+  .cal-foot { padding: 8px var(--pad) 12px; flex-wrap: wrap; gap: 6px 14px; }
+
+  /* ── touch targets ──────────────────────────────────── */
+
+  .segmented button { padding: 7px 13px; font-size: 11.5px; }
+  .mini { padding: 5px 12px; }
+  .stepper button { width: 32px; height: 32px; font-size: 17px; }
+
+  /* ── account and performance ────────────────────────── */
+
+  .value-row .figure { font-size: 29px; }
+  .stat-grid { gap: 2px 14px; }
+  .winrate-top .v { font-size: 22px; }
+
+  .period-head { padding: 7px 8px 7px 11px; }
+  .period-cell { padding: 2px 2px 10px; }
+  .period-cell .k { font-size: 9.5px; }
+  .period-cell .v { font-size: 12.5px; }
+  .period-cell .bench { font-size: 9px; }
+
+  .panel.strategies table.data { font-size: 12px; height: auto; }
+  .panel.strategies table.data th:nth-child(2),
+  .panel.strategies table.data td:nth-child(2) { width: 32px; }
+  .panel.strategies table.data th:nth-child(3),
+  .panel.strategies table.data td:nth-child(3) { width: 106px; }
+  .panel.strategies table.data td { padding: 5px 0; }
+
+  /* ── equity panel, without its plot ─────────────────── */
+
+  .chart-host { display: none; }
+
+  .chart-hero { flex-wrap: wrap; gap: 4px 10px; padding: 2px var(--pad) 0; }
+  .chart-hero .big { font-size: 25px; }
+  .chart-hero .range-note { margin-left: 0; flex-basis: 100%; }
+
+  .phone-note {
+    display: block;
+    margin: 10px var(--pad) 0;
+    padding: 9px 11px;
+    border-radius: 9px;
+    background: var(--surface-2);
+    color: var(--ink-2);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+  .panel > .phone-note:last-child { margin-bottom: 13px; }
+
+  /* ── trade tables read as cards ─────────────────────── */
+
+  /* The header row is the first casualty of a narrow screen, so each cell
+     carries its own label instead. Subject and result take the first line;
+     everything else falls in beneath, two to a line. */
+  table.trades,
+  .table-scroll table.data {
+    display: block;
+    width: 100%;
+    height: auto;
+    font-size: 12.5px;
+  }
+
+  table.trades thead,
+  .table-scroll table.data thead { display: none; }
+
+  table.trades tbody,
+  .table-scroll table.data tbody { display: block; }
+
+  table.trades tbody tr,
+  .table-scroll table.data tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 3px 12px;
+    padding: 10px 0;
+    border-top: 1px solid var(--hairline);
+  }
+  table.trades tbody tr:first-child,
+  .table-scroll table.data tbody tr:first-child { border-top: 0; }
+
+  table.trades tbody td,
+  .table-scroll table.data tbody td {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+    padding: 0;
+    border: 0;
+    white-space: nowrap;
+  }
+
+  table.trades tbody td::before,
+  .table-scroll table.data tbody td::before {
+    content: attr(data-label);
+    flex: none;
+    font-family: var(--font-ui);
+    font-size: 9.5px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  /* the right-hand alignment that made a column of figures scan has no
+     column to scan on a phone, so it is dropped rather than kept as a jag */
+  table.trades tbody td.r,
+  .table-scroll table.data tbody td.r { text-align: left; padding-left: 0; }
+
+  table.trades tbody td.key,
+  .table-scroll table.data tbody td.key {
+    grid-column: 1;
+    grid-row: 1;
+    font-family: var(--font-ui);
+    font-size: 14.5px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+  table.trades tbody td.key::before,
+  .table-scroll table.data tbody td.key::before { display: none; }
+
+  table.trades tbody td.lead,
+  .table-scroll table.data tbody td.lead {
+    grid-column: 2;
+    grid-row: 1;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 0;
+    font-size: 14.5px;
+    font-weight: 600;
+  }
+  table.trades tbody td.lead::before,
+  .table-scroll table.data tbody td.lead::before { font-size: 9px; }
+
+  table.trades tbody td.empty,
+  .table-scroll table.data tbody td.empty {
+    display: block;
+    grid-column: 1 / -1;
+    padding: 26px 6px;
+    text-align: center;
+  }
+  table.trades tbody td.empty::before { display: none; }
+
+  /* banding and the week rule are read off whole cards now, not rows. Every
+     card carries the shaded one's inset so a session boundary moves the tint,
+     never the text. */
+  .trades.log tbody tr { padding-left: 8px; padding-right: 8px; }
+  .trades.log tbody tr.band td { background: none; }
+  .trades.log tbody tr.band { background: var(--surface-2); border-radius: 9px; }
+  .trades.log tbody tr.week-edge { border-top: 2px solid var(--week-rule); }
+  table.trades.log td { font-size: 12.5px; }
+
+  .tstrat { white-space: normal; }
+
+  /* ── calendar ───────────────────────────────────────── */
+
+  /* Six columns on a phone is the tightest thing on the page. The grid keeps
+     all of them — a week that lost its total would stop being a ledger — and
+     buys the room back from type, which scales with the viewport. */
+  .cal-title { gap: 6px; }
+  .cal-title .m { min-width: 0; font-size: 13px; }
+  .cal-summary { gap: 10px; padding: 5px 10px; flex-wrap: wrap; }
+  .cal-summary .k { font-size: 8.5px; letter-spacing: 0.05em; }
+  .cal-summary .v { font-size: 12px; }
+
+  .cal-wrap { padding: 2px 10px 0; overflow-x: auto; }
+  /* Six columns of currency need a floor no phone is wide enough to give, so
+     this is the one thing on the page that scrolls sideways — by a thumb's
+     width, inside its own panel. The alternative was clipping a four-figure
+     day, and a P&L that cannot be read in full is worse than a short swipe.
+     The week total carries a thousands comma the days usually do not, so the
+     six columns stop being equal here and the last one takes what it needs. */
+  .cal { min-width: 430px; height: auto; border-spacing: 3px; }
+  .cal th { font-size: 8.5px; letter-spacing: 0.02em; }
+  .cal th:last-child, .cal td:last-child { width: 21%; }
+  .cell { min-height: 46px; padding: 4px 5px 5px; border-radius: 8px; }
+  .cell .d { font-size: 8.5px; }
+  .cell .p { font-size: 9.5px; letter-spacing: -0.05em; }
+  .cell .q { font-size: 8px; }
+  .cell.idle .p { font-size: 9px; }
+  .closed-tag { font-size: 8.5px; }
+
+  /* ── portfolio and history ──────────────────────────── */
+
+  .tiles { grid-template-columns: repeat(auto-fit, minmax(102px, 1fr)); gap: 4px 14px; }
+  .tile .v { font-size: 16px; }
+  .ystrip { height: 128px; gap: 3px; }
+  /* One label per bar is unreadable once thirty sessions share a phone's
+     width, so the strip names about six of them — the same count the equity
+     plot puts on its own axis — and the bars carry the rest. */
+  .ystrip .ybar .lab { visibility: hidden; }
+  .ystrip .ybar:nth-child(5n + 1) .lab { visibility: visible; }
+  .ybar .lab { font-size: 8.5px; white-space: nowrap; }
+
+  .filters { display: grid; grid-template-columns: 1fr 1fr; align-items: end; gap: 9px; }
+  .field.grow { grid-column: 1 / -1; max-width: none; }
+  .filters .mini { grid-column: 1 / -1; justify-self: start; margin: 0; }
+  /* 16px is the threshold under which iOS zooms the page on focus */
+  .field select, .field input { width: 100%; min-width: 0; padding: 8px 10px; font-size: 16px; }
+
+  /* ── rule sheet ─────────────────────────────────────── */
+
+  /* A label column wide enough to read leaves nothing for the rule itself,
+     so the pair stacks: field above, value under it. */
+  .rules-table, .rules-table tbody, .rules-table caption { display: block; }
+  .rules-table tr { display: block; padding: 9px 0; border-top: 1px solid var(--hairline); }
+  .rules-table tr:first-child { border-top: 0; }
+  .rules-table tr + tr th, .rules-table tr + tr td { border-top: 0; }
+  .rules-table th[scope="row"],
+  #rules-portfolio th[scope="row"] { display: block; width: auto; padding: 0 0 3px; }
+  .rules-table td { display: block; padding: 0; }
+  .rules-note { margin-bottom: 10px; }
+
+  /* ── trade page, without its chart ──────────────────── */
+
+  .trade-head { gap: 8px; }
+  .trade-head h2 { font-size: 16px; }
+  .trade-head .segmented { margin-left: 0; }
+  .trade-facts { grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 9px 14px; }
+  .trade-stage,
+  #tc-range,
+  .tc-hint,
+  .tc-note { display: none; }
+}
+
+/* A phone in landscape is wider than the breakpoint but no taller, so the
+   density tiers above have already tightened it; all it needs is the plot
+   heights, which those tiers size for a screen that does not scroll. */
+@media (max-width: 1020px) and (max-height: 520px) {
+  .stage { grid-template-rows: 240px auto; }
+  .trade-host { min-height: 220px; }
+}
