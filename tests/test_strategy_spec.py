@@ -17,8 +17,9 @@ import pytest
 from bot.portfolio import DAILY_EXIT_NEEDS_BOTH as COMPOSER_EXIT_NEEDS_BOTH
 from bot.portfolio import ORB_CLOSE_DEADLINE
 from bot.portfolio import Strategy as PortfolioStrategy
-from bot.strategies import orb, orb_momentum, shared, sma, tfb_50
+from bot.strategies import orb, orb_base, orb_momentum, shared, sma, tfb_50
 from bot.strategies.daily import DailyStrategy
+from bot.strategies.shared import MIN_NOTIONAL_USD, entry_quantity
 from bot.types import TradingConfiguration
 from tests.test_ledger import _snapshot
 from ui.dashboard import (
@@ -34,10 +35,15 @@ from ui.ledger import TRADING_ZONE
 from ui.strategies import (
     DAILY_EXIT_NEEDS_BOTH,
     FIELDS,
+    ORB_HISTORY_SESSIONS,
     ORB_RISK_CEILING,
+    ORB_TRAIL_ATR_MULTIPLE,
+    ORB_TRAIL_BARS_MIN,
     POSITION_FRACTION_CEILING,
+    POSITION_NOTIONAL_MIN,
     POSITIONS_MAX,
     RISK_PER_TRADE_DEFAULT,
+    Row,
     entry_windows,
     strategy_spec,
 )
@@ -125,6 +131,173 @@ def test_the_standalone_orb_classes_still_agree_with_the_composer(
     assert module.Strategy.candle_minutes == minutes
     assert module.Strategy.volume_multiple == volume_multiple
     assert module.Strategy.uses_macd is uses_macd
+
+
+ORB_ENGINES = ["orb", "orb_momentum"]
+
+
+@pytest.mark.parametrize(("engine", "minutes"), [("orb", 5), ("orb_momentum", 10)])
+def test_the_opening_range_is_quoted_as_a_period_not_a_bar_stamp(engine: str, minutes: int) -> None:
+    """between_time bounds the candle by its stamp; the page must quote what it covers.
+
+    The candle stamped 09:30 covers the five minutes up to 09:35 — _completed proves
+    the stamp is the start, since it waits until stamp + minutes has passed. Selecting
+    it as "09:30" to "09:34" picks that one candle, but 09:34 is not when the range
+    ends, and the range ends exactly when the first scan runs.
+    """
+    variant = inspect.getsource(PortfolioStrategy._run_orb_variant)
+    label_end = "09:34" if minutes == 5 else "09:39"
+
+    assert 'between_time("09:30", "09:34" if minutes == 5 else "09:39")' in variant
+    assert "index) + timedelta(minutes=minutes) <= now" in inspect.getsource(
+        PortfolioStrategy._completed
+    )
+
+    opening_end = entry_windows()[engine]["from"]
+    rows = spec_rows(engine)
+    assert f"09:30 up to {opening_end}" in rows["Range"]
+    assert label_end not in rows["Range"], "a bar stamp is not the end of the period"
+    assert f"from {opening_end}, the moment the opening candle closes" in rows["Setup"]
+
+
+@pytest.mark.parametrize(("engine", "minutes"), [("orb", 5), ("orb_momentum", 10)])
+def test_the_order_is_sent_when_the_signal_candle_closes(engine: str, minutes: int) -> None:
+    """The register enters at the next candle's open; the composer sends the order there.
+
+    The scan runs on the candle boundary, reads the candle that has just closed, and
+    submits in the same pass — so the order reaches the market at the open of the next
+    candle. A signal candle must have closed at or after the opening candle did, which
+    keeps the opening candle from breaking its own range and puts the earliest possible
+    entry one candle beyond the range.
+    """
+    loop = inspect.getsource(PortfolioStrategy.on_trading_iteration)
+    variant = inspect.getsource(PortfolioStrategy._run_orb_variant)
+
+    assert "now.minute % 5 == 0" in loop
+    assert "self._run_orb(now)" in loop and "self._run_orb_momentum(now)" in loop
+    assert "or now.minute % minutes" in variant
+    assert "if opening.empty or frame_at.time() < opening_end:" in variant
+    assert "self._enter(" in variant, "the scan submits in the same pass"
+
+    opening_end = entry_windows()[engine]["from"]
+    hour, minute = (int(part) for part in opening_end.split(":"))
+    first_entry = f"{hour:02d}:{minute + minutes:02d}"
+
+    entry = spec_rows(engine)["Entry"]
+    assert f"open of the next {minutes}-minute candle" in entry
+    assert f"{first_entry} at the earliest" in entry
+    assert "cannot break its own range" in entry
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_the_fill_and_not_the_signal_price_sets_the_trade(engine: str) -> None:
+    """Sizing uses the last known price; everything after it is read off the fill."""
+    filled = inspect.getsource(PortfolioStrategy.on_filled_order)
+
+    assert "holding.entry = self._entry_price(order, price)" in filled
+    assert "holding.risk = abs(holding.entry - holding.stop)" in filled
+    assert "avg_fill_price" in inspect.getsource(PortfolioStrategy._entry_price)
+    assert "candidate.close," in inspect.getsource(PortfolioStrategy._run_orb_variant)
+
+    entry = spec_rows(engine)["Entry"]
+    assert "size is worked out from the breakout candle's close" in entry
+    assert "the fill then sets the entry" in entry
+    assert ("the risk and the targets" in entry) is (engine == "orb")
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_relative_volume_needs_a_full_history_to_confirm(engine: str) -> None:
+    """A short history is no confirmation, so the page must not promise an average."""
+    source = inspect.getsource(orb_base.relative_volume_ready)
+
+    assert f"if len(history) != {ORB_HISTORY_SESSIONS}" in source
+    assert f".tail({ORB_HISTORY_SESSIONS})" in source
+    assert "historical_daily_average >= 1_000_000" in source
+
+    confirmation = spec_rows(engine)["Confirmation"]
+    assert f"All {ORB_HISTORY_SESSIONS} earlier sessions" in confirmation
+    assert "no confirmation at all" in confirmation
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_a_traded_stock_is_off_limits_to_both_breakout_engines(engine: str) -> None:
+    """_orb_traded is keyed by day and symbol alone, so the ban crosses engines."""
+    variant = inspect.getsource(PortfolioStrategy._run_orb_variant)
+
+    assert "self._orb_scanned.add(key)" in variant
+    assert "(now.date(), symbol) in self._orb_traded" in variant
+    assert "key = (now.date(), engine, symbol)" in variant
+
+    setup = spec_rows(engine)["Setup"]
+    assert "at most once per stock per day" in setup
+    assert "Once either breakout engine has traded a stock" in setup
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_the_breakout_trail_matches_the_composer(engine: str) -> None:
+    manage = inspect.getsource(PortfolioStrategy._manage_orb)
+
+    assert f"trail = {ORB_TRAIL_ATR_MULTIPLE} * latest_atr(frame)" in manage
+    assert f"if len(frame) < {ORB_TRAIL_BARS_MIN}" in manage
+    assert "next_stop(holding.direction, holding.stop, candidate)" in manage
+
+    stop = spec_rows(engine)["Stop Loss"]
+    assert f"trails {ORB_TRAIL_ATR_MULTIPLE:g}x the 14-period ATR" in stop
+    assert f"{ORB_TRAIL_BARS_MIN} completed candles" in stop
+
+
+def spec_row(strategy_id: str, field: str) -> Row:
+    card = next(
+        card for card in strategy_spec(configuration())["strategies"] if card["id"] == strategy_id
+    )
+    return next(row for row in card["rows"] if row["field"] == field)
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_the_resting_stop_is_resent_when_it_stops_covering_the_position(engine: str) -> None:
+    """The stop lives at the broker, so the page may not describe it as a watched level."""
+    source = inspect.getsource(PortfolioStrategy._resync_stops)
+
+    assert "self._protect(holding, quantity)" in source
+    assert "resting[1] < quantity - STOP_COVERAGE_TOLERANCE" in source
+
+    stop = spec_row(engine, "Stop Loss")
+    assert "_resync_stops" in stop["source"]
+    assert "rests as a live order at the broker" in stop["value"]
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_a_position_below_the_minimum_notional_is_not_opened(engine: str) -> None:
+    assert MIN_NOTIONAL_USD == POSITION_NOTIONAL_MIN
+    assert "quantity * price < MIN_NOTIONAL_USD" in inspect.getsource(entry_quantity)
+
+    entry = spec_rows(engine)["Entry"]
+    assert f"less than ${POSITION_NOTIONAL_MIN}" in entry
+    assert "another engine already holds the stock" in entry
+
+
+def test_the_five_minute_targets_are_cut_from_the_fill() -> None:
+    """ORB5 re-reads its targets on the fill, so the page must not quote the signal price."""
+    filled = inspect.getsource(PortfolioStrategy.on_filled_order)
+
+    assert 'if holding.engine == "orb":' in filled
+    assert "for multiple in (1.5, 2.5, 4.0)" in filled
+
+    reward = spec_rows("orb")["Min. R:R"]
+    assert "re-cut from the filled price" in reward
+    assert "1.5x, 2.5x and 4x the risk actually taken" in reward
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_the_scale_out_fractions_match_the_composer(engine: str) -> None:
+    manage = inspect.getsource(PortfolioStrategy._manage_orb)
+
+    assert "holding.original_quantity * 0.5" in manage
+    assert "holding.original_quantity * 0.25" in manage
+
+    exit_rule = spec_rows(engine)["Exit Rule"]
+    assert "half the position as first filled" in exit_rule
+    assert "a quarter of it at the second" in exit_rule
 
 
 def test_the_five_minute_engine_states_its_own_risk_ceiling() -> None:
