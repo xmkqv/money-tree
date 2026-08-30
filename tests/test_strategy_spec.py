@@ -19,7 +19,7 @@ from bot.portfolio import ORB_CLOSE_DEADLINE
 from bot.portfolio import Strategy as PortfolioStrategy
 from bot.strategies import orb, orb_base, orb_momentum, shared, sma, tfb_50
 from bot.strategies.daily import DailyStrategy
-from bot.strategies.shared import MIN_NOTIONAL_USD, entry_quantity
+from bot.strategies.shared import MIN_NOTIONAL_USD, entry_quantity, fractional_allowed
 from bot.types import TradingConfiguration
 from tests.test_ledger import _snapshot
 from ui.dashboard import (
@@ -203,6 +203,41 @@ def test_the_fill_and_not_the_signal_price_sets_the_trade(engine: str) -> None:
     assert "size is worked out from the breakout candle's close" in entry
     assert "the fill then sets the entry" in entry
     assert ("the risk and the targets" in entry) is (engine == "orb")
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_a_short_is_quoted_as_settling_in_whole_shares(engine: str) -> None:
+    """Only the breakout engines can short, so only they carry the rounding rule."""
+    assert fractional_allowed(1, True) is True
+    assert fractional_allowed(-1, True) is False
+
+    rounds_down = 'fractional_allowed(direction, bool(self.parameters["fractional_orders"]))'
+    assert rounds_down in inspect.getsource(PortfolioStrategy._enter)
+    assert "fractional_allowed(holding.direction" in inspect.getsource(PortfolioStrategy._protect)
+    assert "fractional_allowed(holding.direction" in inspect.getsource(PortfolioStrategy._exit)
+
+    rows = spec_rows(engine)
+    assert "sized in whole shares" in rows["Direction"]
+    assert "rounded down to whole shares" in rows["Exit Rule"]
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_a_scale_out_below_one_share_is_skipped_before_the_stop_is_cancelled(engine: str) -> None:
+    """Sizing must happen before _cancel, or a skipped slice strips the stop."""
+    source = inspect.getsource(PortfolioStrategy._exit)
+    sized = source.index("size = quantity_value(")
+    cancelled = source.index("self._cancel(holding.asset)")
+
+    assert sized < cancelled, "the order is sized before anything is cancelled"
+    assert "if size <= 0:" in source
+
+    assert "skipped rather than sent" in spec_rows(engine)["Exit Rule"]
+
+
+def test_only_the_engines_that_can_short_state_the_rounding_rule() -> None:
+    for engine in ("sma", "tfb_50"):
+        assert "Long only." in spec_rows(engine)["Direction"]
+        assert "whole shares" not in spec_rows(engine)["Direction"]
 
 
 @pytest.mark.parametrize("engine", ORB_ENGINES)

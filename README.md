@@ -65,6 +65,8 @@ ATR(n) = average true range over n candles
 RSI(n) = relative strength index over n candles
 ADX = average directional index
 MACD = moving average convergence divergence
+whole shares only = every leg of the position rounds down to a whole number, because a
+    broker lends shares and not fractions of one; a slice worth less than one share is skipped
 none = the strategy does not use this rule
 not set = no rule was provided
 enabled = the strategy opens new positions and manages them
@@ -107,6 +109,7 @@ entry
 
 risk
     position size = 10% of account
+    short position size = whole shares only
     risk per trade = 10% of position value
     risk-to-reward ratio = not set
     R = absolute(entry price - initial stop)
@@ -161,6 +164,7 @@ entry
 
 risk
     position size = 10% of account
+    short position size = whole shares only
     risk per trade = not set
     risk-to-reward ratio = 1:2
     R = not set
