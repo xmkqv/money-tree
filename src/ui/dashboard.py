@@ -127,6 +127,47 @@ CHART_TTL_SECONDS = 120
 CHART_CACHE_MAX = 64
 
 
+# The exchange opens at 09:30, but Alpaca aligns intraday bars to midnight, so
+# an "hourly" bar runs 09:00 to 10:00 and straddles the open. Half-hour bars do
+# land on 09:30, so the session's hours are folded from those instead.
+SESSION_OPEN = dtime(9, 30)
+SESSION_CLOSE = dtime(16, 0)
+SESSION_SOURCE = "30Min"
+SESSION_SOURCE_LIMIT = 1000
+
+
+def session_hour_bars(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fold half-hour bars into hours counted from the opening bell.
+
+    Regular trading only: the pre- and post-market bars Alpaca returns alongside
+    would put an 08:00 candle on a chart of the session. The last bucket is the
+    half hour to the close, since the session is six and a half hours long.
+    """
+    buckets: dict[datetime, list[dict[str, Any]]] = {}
+    for bar in bars:
+        at = datetime.fromisoformat(str(bar["t"]).replace("Z", "+00:00")).astimezone(TRADING_ZONE)
+        if not (SESSION_OPEN <= at.time() < SESSION_CLOSE):
+            continue
+        opens = datetime.combine(at.date(), SESSION_OPEN, TRADING_ZONE)
+        elapsed = int((at - opens).total_seconds() // 3600)
+        buckets.setdefault(opens + timedelta(hours=elapsed), []).append(bar)
+
+    folded: list[dict[str, Any]] = []
+    for start in sorted(buckets):
+        group = sorted(buckets[start], key=lambda bar: str(bar["t"]))
+        folded.append(
+            {
+                "t": start.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                "o": float(group[0]["o"]),
+                "h": max(float(bar["h"]) for bar in group),
+                "l": min(float(bar["l"]) for bar in group),
+                "c": float(group[-1]["c"]),
+                "v": sum(float(bar.get("v") or 0) for bar in group),
+            }
+        )
+    return folded
+
+
 class BarCache:
     """Keyed by symbol, timeframe and window, so revisiting a trade is free.
 
@@ -547,12 +588,22 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
             async with bar_cache.lock:
                 cached = bar_cache.fresh(key)
                 if cached is None:
-                    cached = await market(request).bars(
-                        symbol,
-                        str(CHART_TIMEFRAMES[timeframe]["bar"]),
-                        start.isoformat(),
-                        end.isoformat(),
-                    )
+                    if timeframe == "1Hour":
+                        half = await market(request).bars_paged(
+                            symbol,
+                            SESSION_SOURCE,
+                            start.isoformat(),
+                            end.isoformat(),
+                            limit=SESSION_SOURCE_LIMIT,
+                        )
+                        cached = session_hour_bars(half)
+                    else:
+                        cached = await market(request).bars(
+                            symbol,
+                            str(CHART_TIMEFRAMES[timeframe]["bar"]),
+                            start.isoformat(),
+                            end.isoformat(),
+                        )
                     bar_cache.store(key, cached)
         return read_response(
             {
