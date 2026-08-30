@@ -155,8 +155,11 @@ def _orb(
         ),
         Row(
             field="Direction",
-            value="Long and short. A short is skipped when the broker will not lend the stock.",
-            source="portfolio.py · _enter",
+            value="Long and short. A short is skipped when the broker will not lend the stock, "
+            "and is sized in whole shares — a broker lends shares, not fractions of one, so "
+            "every order on a short leg is rounded down to a whole number. Longs use "
+            "fractional quantities when the account allows them.",
+            source="portfolio.py · _enter, _protect, _exit",
         ),
         Row(
             field="Range",
@@ -234,8 +237,11 @@ def _orb(
         Row(
             field="Exit Rule",
             value="Scaled out in three: half the position as first filled at the first target, "
-            "a quarter of it at the second, the remainder at the third. The trailing stop "
-            "takes whatever is left if price turns first.",
+            "a quarter of it at the second, the remainder at the third. On a short each slice "
+            "is rounded down to whole shares, and one worth less than a single share is "
+            "skipped rather than sent — the resting stop still covers the position, and the "
+            "next target or the closing deadline takes it. The trailing stop takes whatever "
+            "is left if price turns first.",
             source="portfolio.py · _manage_orb",
         ),
         Row(

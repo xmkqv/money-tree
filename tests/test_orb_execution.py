@@ -1,12 +1,13 @@
 import inspect
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 import pytest
 
 from bot.portfolio import Holding, Strategy
+from bot.strategies.shared import entry_quantity, fractional_allowed
 
 
 @dataclass
@@ -88,6 +89,82 @@ def holding_for(asset: str = "BBD") -> Holding:
         original_quantity=1000.0,
         lowest=10.0,
     )
+
+
+# --- shorts settle in whole shares ----------------------------------------
+
+
+def short_holding(asset: str = "BBD", original: float = 23.0) -> Holding:
+    return Holding(
+        "orb",
+        asset,
+        asset,
+        10.0,
+        10.5,
+        0.5,
+        10.0,
+        datetime(2026, 8, 26, 13, 47, tzinfo=UTC),
+        direction=-1,
+        original_quantity=original,
+        lowest=10.0,
+    )
+
+
+def test_fractional_allowed_only_ever_applies_to_a_long() -> None:
+    assert fractional_allowed(1, True) is True
+    assert fractional_allowed(1, False) is False
+    assert fractional_allowed(-1, True) is False, "a broker lends shares, not fractions"
+    assert fractional_allowed(-1, False) is False
+
+
+def test_a_short_entry_is_sized_in_whole_shares() -> None:
+    """Same equity and stop, opposite directions: only the long keeps a fraction."""
+    arguments = (100_000.0, 425.80, 5.0, 0.10, 0.01)
+
+    long_size = entry_quantity(*arguments, fractional_allowed(1, True))
+    short_size = entry_quantity(*arguments, fractional_allowed(-1, True))
+
+    assert long_size != long_size.to_integral_value(), "the long may hold a fraction"
+    assert short_size == short_size.to_integral_value(), "the short may not"
+    assert short_size == long_size.to_integral_value(rounding=ROUND_DOWN)
+
+
+def test_a_short_stop_order_covers_whole_shares() -> None:
+    strategy = CancelStrategy([])
+    strategy.position = 23.4802
+    strategy.parameters = {"fractional_orders": True}
+
+    strategy._protect(short_holding(), 23.4802)
+
+    quantity = Decimal(str(strategy.submitted[-1].quantity))
+    assert strategy.submitted[-1].side == "buy", "a short is protected by a buy stop"
+    assert quantity == Decimal(23)
+
+
+def test_a_short_scale_out_rounds_down_and_never_strips_the_stop() -> None:
+    """A scale-out worth under a whole share is skipped, stop left in place."""
+    stop = FakeOrder(
+        FakeAsset("BBD"), "buy", 3.0, client_order_id="mt-o-s-BBD-11672-bbbbbbbb", stop_price=10.5
+    )
+    strategy = CancelStrategy([stop])
+    strategy.position = 3.0
+    strategy.parameters = {"fractional_orders": True}
+
+    # A quarter of a three-share short is 0.75 — less than one whole share.
+    strategy._exit(short_holding(original=3.0), 0.75)
+
+    assert not strategy.submitted, "no zero-quantity order may be sent"
+    assert stop.active, "the resting stop must survive a skipped scale-out"
+
+
+def test_a_long_scale_out_keeps_its_fraction() -> None:
+    strategy = CancelStrategy([])
+    strategy.position = 1000.0
+    strategy.parameters = {"fractional_orders": True}
+
+    strategy._exit(holding_for(), 500.5)
+
+    assert Decimal(str(strategy.submitted[-1].quantity)) == Decimal("500.5")
 
 
 # --- C4: _protect must not cancel a still-working entry order -------------

@@ -27,6 +27,7 @@ from bot.strategies.shared import (
     earnings_blocked,
     earnings_exit_due,
     entry_quantity,
+    fractional_allowed,
     latest_atr,
     latest_dollar_volume,
     market_is_rising,
@@ -910,7 +911,7 @@ class Strategy(StrategyBase):
             abs(price - stop),
             min(0.10, float(self.parameters["position_fraction_max"])),
             risk_fraction,
-            bool(self.parameters["fractional_orders"]),
+            fractional_allowed(direction, bool(self.parameters["fractional_orders"])),
         )
         notional = float(quantity) * price
         if quantity <= 0 or gross + notional > equity:
@@ -964,7 +965,10 @@ class Strategy(StrategyBase):
         ):
             self._exit(holding)
             return
-        size = quantity_value(amount, bool(self.parameters["fractional_orders"]))
+        size = quantity_value(
+            amount,
+            fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"])),
+        )
         if size <= 0:
             return
         if self._stops.get(holding.asset) == (stop, float(size)):
@@ -993,10 +997,20 @@ class Strategy(StrategyBase):
         if amount <= 0:
             self._release(holding.asset)
             return
+        size = quantity_value(
+            amount,
+            fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"])),
+        )
+        if size <= 0:
+            # A scale-out worth less than a whole share of a short rounds away.
+            # Skipping it leaves the position covered by its resting stop; the
+            # next target or the closing deadline takes what is left. Cancelling
+            # first and then not replacing the stop would strip that protection.
+            return
         self._cancel(holding.asset)
         order = self.create_order(
             holding.asset,
-            quantity_value(amount, bool(self.parameters["fractional_orders"])),
+            size,
             "sell" if holding.direction == 1 else "buy",
             time_in_force="day",
             custom_params={
