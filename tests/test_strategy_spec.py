@@ -16,6 +16,7 @@ import pytest
 
 from bot.portfolio import DAILY_EXIT_NEEDS_BOTH as COMPOSER_EXIT_NEEDS_BOTH
 from bot.portfolio import ORB_CLOSE_DEADLINE
+from bot.portfolio import ORB_SIGNAL_CANDLES_MAX as COMPOSER_SIGNAL_CANDLES_MAX
 from bot.portfolio import ORB_TARGET_MULTIPLES as COMPOSER_TARGET_MULTIPLES
 from bot.portfolio import Strategy as PortfolioStrategy
 from bot.strategies import orb, orb_base, orb_momentum, shared, sma, tfb_50
@@ -47,6 +48,9 @@ from ui.strategies import (
     Row,
     entry_windows,
     strategy_spec,
+)
+from ui.strategies import (
+    ORB_SIGNAL_CANDLES_MAX as PAGE_SIGNAL_CANDLES_MAX,
 )
 
 
@@ -794,7 +798,23 @@ def test_the_breakout_is_confirmed_as_of_the_signal_candle(engine: str) -> None:
     setup = spec_rows(engine)["Setup"]
     assert "The first completed" in setup
     assert "re-read on every pass rather than only its newest candle" in setup
-    assert "further back than the previous candle has run, and is passed over" in setup
+    assert "has already run, and is passed over rather than chased" in setup
 
     entry = spec_rows(engine)["Entry"]
     assert "filling at the next executable price" in entry
+
+
+@pytest.mark.parametrize(("engine", "minutes"), [("orb", 5), ("orb_momentum", 10)])
+def test_each_engine_quotes_its_own_signal_age_bound(engine: str, minutes: int) -> None:
+    """A bound moved in the bot must move on the page: the unit is that engine's candle."""
+    bound = COMPOSER_SIGNAL_CANDLES_MAX[engine]
+    module = orb if engine == "orb" else orb_momentum
+
+    assert PAGE_SIGNAL_CANDLES_MAX[engine] == bound, "the page must quote the composer's bound"
+    assert module.Strategy.signal_candles_max == bound, "the backtest class must agree"
+    assert set(PAGE_SIGNAL_CANDLES_MAX) == set(COMPOSER_SIGNAL_CANDLES_MAX)
+    assert "self.signal_candles_max" in inspect.getsource(orb_base.OrbStrategy._scan)
+
+    setup = spec_rows(engine)["Setup"]
+    assert f"one of the last {bound} completed candles" in setup
+    assert f"{bound * minutes} minutes of the move" in setup

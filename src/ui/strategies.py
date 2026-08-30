@@ -52,6 +52,11 @@ ORB_TRAIL_ATR_MULTIPLE = 1.5
 ORB_TRAIL_BARS_MIN = 15
 POSITION_NOTIONAL_MIN = 1
 
+# How many completed candles back a breakout close may sit and still be entered,
+# from portfolio.py ORB_SIGNAL_CANDLES_MAX. Per engine, because the unit is that
+# engine's own candle.
+ORB_SIGNAL_CANDLES_MAX = {"orb": 2, "orb_momentum": 2}
+
 # Engines whose register sets no per-trade risk limit, so position size comes
 # from the notional cap alone.
 UNCAPPED_RISK_ENGINES = frozenset({"sma"})
@@ -106,7 +111,12 @@ def _pct(fraction: float) -> str:
 
 
 def _orb(
-    minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float, ranked: bool
+    minutes: int,
+    volume_multiple: float,
+    uses_macd: bool,
+    per_trade: float,
+    ranked: bool,
+    signal_candles_max: int,
 ) -> list[Row]:
     # The opening candle closes at the same instant the first scan runs: the candle
     # stamped 09:30 covers the five minutes up to 09:35, and 09:35 is when it can
@@ -181,7 +191,9 @@ def _orb(
             "candle closes, to 10:30, at most once per stock per day. The whole session since the "
             "range is re-read on every pass rather than only its newest candle, so a breakout "
             "whose bars reached the scan late is still the candle the signal is taken from — but "
-            f"a close further back than the previous candle has run, and is passed over. "
+            f"only while it is one of the last {signal_candles_max} completed candles, "
+            f"{signal_candles_max * minutes} minutes of the move. A close further back than that "
+            "has already run, and is passed over rather than chased. "
             "Once either breakout engine has traded a stock, both leave it alone for the rest "
             "of the session.",
             source="portfolio.py · _run_orb_variant",
@@ -411,14 +423,14 @@ def strategy_spec(configuration: TradingConfiguration | None) -> dict[str, Any]:
             short="ORB5",
             label=STRATEGY_LABELS["orb"],
             kind="Intraday breakout",
-            rows=_orb(5, 1.3, False, per_trade, True),
+            rows=_orb(5, 1.3, False, per_trade, True, ORB_SIGNAL_CANDLES_MAX["orb"]),
         ),
         StrategyCard(
             id="orb_momentum",
             short="ORB10",
             label=STRATEGY_LABELS["orb_momentum"],
             kind="Intraday breakout",
-            rows=_orb(10, 1.5, True, per_trade, False),
+            rows=_orb(10, 1.5, True, per_trade, False, ORB_SIGNAL_CANDLES_MAX["orb_momentum"]),
         ),
         StrategyCard(
             id="sma",

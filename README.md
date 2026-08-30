@@ -103,7 +103,7 @@ entry
     window = 09:35-10:30 ET
     long signal = first candle close above the opening range high
     short signal = first candle close below the opening range low
-    signal candle = the first such candle since the range, and no older than one candle
+    signal candle = the first such candle since the range, within the last 2 completed candles
     order = next 5-minute candle open, directly after the signal candle
     earnings block = none
     open positions may remain after the entry window
@@ -159,7 +159,7 @@ entry
     window = 09:40-10:30 ET
     long signal = first candle close above the opening range high
     short signal = first candle close below the opening range low
-    signal candle = the first such candle since the range, and no older than one candle
+    signal candle = the first such candle since the range, within the last 2 completed candles
     order = next 10-minute candle open, directly after the signal candle
     earnings block = none
     open positions may remain after the entry window

@@ -69,7 +69,10 @@ ORB_TARGET_MULTIPLES: dict[StrategyName, tuple[float, float, float]] = {
 # candles ending at the newest completed one. 1 is the candle that has just
 # closed; 2 allows the scan one pass to recover a candle whose bars had not been
 # published yet. Beyond that the level is gone and the entry would be a chase.
-ORB_SIGNAL_CANDLES_MAX = 2
+# Stated per engine because the unit is that engine's own candle: two candles is
+# ten minutes of a move for ORB-5m and twenty for ORB-10m, so a bound that suits
+# one need not suit the other.
+ORB_SIGNAL_CANDLES_MAX: dict[StrategyName, int] = {"orb": 2, "orb_momentum": 2}
 
 
 @dataclass(slots=True)
@@ -706,7 +709,7 @@ class Strategy(StrategyBase):
                 continue
             position, direction, close = signal
             self._orb_scanned.add(key)
-            if len(after) - position > ORB_SIGNAL_CANDLES_MAX:
+            if len(after) - position > ORB_SIGNAL_CANDLES_MAX[engine]:
                 continue
             candidates.append(
                 OrbCandidate(

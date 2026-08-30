@@ -462,27 +462,38 @@ def test_the_side_is_taken_from_the_signal_candle_not_a_later_reversal() -> None
     assert signal is not None and signal[1] == -1
 
 
-def test_a_breakout_older_than_one_candle_is_passed_over_rather_than_chased() -> None:
-    """The rule buys the open after the signal candle; three candles on it is a chase."""
+@pytest.mark.parametrize("engine", ["orb", "orb_momentum"])
+def test_a_breakout_past_the_engines_bound_is_passed_over_rather_than_chased(engine: str) -> None:
+    """The rule buys the open after the signal candle; further on it is a chase."""
+    bound = ORB_SIGNAL_CANDLES_MAX[engine]
     fresh = session([12.90, 13.05])
-    stale = session([13.05, 13.20, 13.35, 13.42])
+    stale = session([13.05] + [13.20] * bound)
     strategy = TradedStrategy()
 
     fresh_signal = strategy._orb_signal(fresh, BREAKOUT_HIGH, BREAKOUT_LOW)
     stale_signal = strategy._orb_signal(stale, BREAKOUT_HIGH, BREAKOUT_LOW)
 
-    assert fresh_signal is not None and len(fresh) - fresh_signal[0] <= ORB_SIGNAL_CANDLES_MAX
-    assert stale_signal is not None and len(stale) - stale_signal[0] > ORB_SIGNAL_CANDLES_MAX
+    assert fresh_signal is not None and len(fresh) - fresh_signal[0] <= bound
+    assert stale_signal is not None and len(stale) - stale_signal[0] > bound
 
 
-def test_one_missed_pass_is_still_recovered() -> None:
-    """The scan that follows a late bar may still take it — one candle, no more."""
+@pytest.mark.parametrize("engine", ["orb", "orb_momentum"])
+def test_one_missed_pass_is_still_recovered(engine: str) -> None:
+    """The scan that follows a late bar may still take it, up to the engine's bound."""
     strategy = TradedStrategy()
-    recovered = session([13.05, 13.42])
+    recovered = session([13.05] + [13.42] * (ORB_SIGNAL_CANDLES_MAX[engine] - 1))
 
     signal = strategy._orb_signal(recovered, BREAKOUT_HIGH, BREAKOUT_LOW)
 
-    assert signal is not None and len(recovered) - signal[0] == ORB_SIGNAL_CANDLES_MAX
+    assert signal is not None
+    assert len(recovered) - signal[0] == ORB_SIGNAL_CANDLES_MAX[engine]
+
+
+def test_each_breakout_engine_states_its_own_bound() -> None:
+    """The unit is the engine's own candle, so the two need not agree."""
+    assert set(ORB_SIGNAL_CANDLES_MAX) == {"orb", "orb_momentum"}
+    assert "ORB_SIGNAL_CANDLES_MAX[engine]" in inspect.getsource(Strategy._run_orb_variant)
+    assert all(bound >= 1 for bound in ORB_SIGNAL_CANDLES_MAX.values())
 
 
 # --- targets are cut from the fill, so none of them starts behind it ------

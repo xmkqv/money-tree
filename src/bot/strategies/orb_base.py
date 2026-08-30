@@ -38,11 +38,6 @@ class OrbPending:
     stop: float
 
 
-# How far back a breakout close may sit and still be worth taking, counted in
-# candles ending at the newest completed one. See portfolio.ORB_SIGNAL_CANDLES_MAX.
-SIGNAL_CANDLES_MAX = 2
-
-
 def relative_volume_ready(
     frame: DataFrame,
     day: date,
@@ -106,6 +101,7 @@ class OrbStrategy(StrategyBase):
     uses_macd: ClassVar[bool]
     risk_fraction_max: ClassVar[float | None]
     target_multiples: ClassVar[tuple[float, float, float]]
+    signal_candles_max: ClassVar[int]
 
     _baseline_equity: float
     _day: date | None
@@ -286,9 +282,10 @@ class OrbStrategy(StrategyBase):
         position, direction, close = signal
         self._signaled.add(key)
         # The breakout is taken at the open of the candle after the one that closed
-        # outside the range. A close found further back than that has already run,
-        # and buying it now would be a chase rather than the entry the rule names.
-        if len(after) - position > SIGNAL_CANDLES_MAX:
+        # outside the range. A close found further back than this engine's own bound
+        # has already run, and buying it now would be a chase rather than the entry
+        # the rule names.
+        if len(after) - position > self.signal_candles_max:
             return
         # Both gates read the market as it stood when the signal candle closed, not
         # as it stands now: they confirm that breakout, and on a signal recovered a
