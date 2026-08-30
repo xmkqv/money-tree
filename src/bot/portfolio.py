@@ -607,10 +607,30 @@ class Strategy(StrategyBase):
             self._enter("tfb_50", symbol, symbol, last, last - 2.0 * latest_atr(frame), now)
 
     def _run_orb(self, now: datetime) -> None:
-        self._run_orb_variant("orb", now, 5, 1.3, False)
+        self._run_orb_variant("orb", now, 5, 1.3, False, True)
 
     def _run_orb_momentum(self, now: datetime) -> None:
-        self._run_orb_variant("orb_momentum", now, 10, 1.5, True)
+        self._run_orb_variant("orb_momentum", now, 10, 1.5, True, False)
+
+    def _rank_candidates(self, candidates: list[OrbCandidate], now: datetime) -> list[OrbCandidate]:
+        """Breakouts by the value traded in their last completed daily session.
+
+        The relative-volume gate has already asked whether each stock is busy
+        against its own history. This asks a different question — which of the
+        survivors trades the most money — because the cap they are competing
+        for is a money cap.
+        """
+        ranked: list[tuple[float, str, OrbCandidate]] = []
+        for candidate in candidates:
+            daily_frame = self._daily_frames.get(candidate.symbol)
+            traded = (
+                0.0
+                if daily_frame is None
+                else latest_dollar_volume(self._completed(daily_frame, now))
+            )
+            ranked.append((traded, candidate.symbol, candidate))
+        ranked.sort(key=lambda row: (-row[0], row[1]))
+        return [candidate for _, _, candidate in ranked]
 
     def _run_orb_variant(
         self,
@@ -619,6 +639,7 @@ class Strategy(StrategyBase):
         minutes: int,
         volume_multiple: float,
         uses_macd: bool,
+        ranks_candidates: bool,
     ) -> None:
         opening_end = time(9, 35) if minutes == 5 else time(9, 40)
         if (
@@ -661,6 +682,8 @@ class Strategy(StrategyBase):
             candidates.append(OrbCandidate(symbol, direction, high, low, close))
         if not candidates:
             return
+        if ranks_candidates:
+            candidates = self._rank_candidates(candidates, now)
         timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
         histories = self._frames(
             [candidate.symbol for candidate in candidates],

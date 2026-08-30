@@ -89,14 +89,20 @@ def test_every_strategy_answers_every_category() -> None:
 
 
 @pytest.mark.parametrize(
-    ("engine", "minutes", "volume_multiple", "uses_macd"),
-    [("orb", 5, 1.3, False), ("orb_momentum", 10, 1.5, True)],
+    ("engine", "minutes", "volume_multiple", "uses_macd", "ranked"),
+    [("orb", 5, 1.3, False, True), ("orb_momentum", 10, 1.5, True, False)],
 )
 def test_orb_numbers_match_the_composer(
-    engine: str, minutes: int, volume_multiple: float, uses_macd: bool
+    engine: str, minutes: int, volume_multiple: float, uses_macd: bool, ranked: bool
 ) -> None:
     """portfolio.py hard-codes these per variant; the page must quote the same."""
-    assert orb_variant_arguments()[engine] == (engine, minutes, volume_multiple, uses_macd)
+    assert orb_variant_arguments()[engine] == (
+        engine,
+        minutes,
+        volume_multiple,
+        uses_macd,
+        ranked,
+    )
 
     rows = spec_rows(engine)
     assert f"{minutes}-minute" in rows["Range"]
@@ -256,8 +262,12 @@ def test_daily_candidates_compete_on_traded_value_in_both_paths() -> None:
             row["source"] for row in spec_rows_full(engine) if row["field"] == "Sorting"
         )
 
-    for engine in ("orb", "orb_momentum"):
-        assert "Not ranked" in spec_rows(engine)["Sorting"], "the ORB scan is still symbol order"
+    orb_sorting = spec_rows("orb")["Sorting"]
+    assert "close times" in orb_sorting and "share volume" in orb_sorting
+    assert "_rank_candidates" in next(
+        row["source"] for row in spec_rows_full("orb") if row["field"] == "Sorting"
+    )
+    assert "Not ranked" in spec_rows("orb_momentum")["Sorting"], "the 10-minute scan is unranked"
 
 
 def test_an_empty_earnings_calendar_does_not_hold_an_entry_back() -> None:

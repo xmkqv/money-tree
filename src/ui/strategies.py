@@ -92,7 +92,9 @@ def _pct(fraction: float) -> str:
     return f"{text}%"
 
 
-def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float) -> list[Row]:
+def _orb(
+    minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float, ranked: bool
+) -> list[Row]:
     opening_end = "09:34" if minutes == 5 else "09:39"
     first_scan = "09:35" if minutes == 5 else "09:40"
     risk_cap = ORB_RISK_CEILING if minutes == 5 else per_trade
@@ -143,9 +145,20 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
         Row(field="Confirmation", value=confirmation, source="portfolio.py · _orb_confirm"),
         Row(
             field="Sorting",
-            value="Not ranked. Breakouts are taken in symbol order as the scan meets them, so "
-            "when more fire than the position cap allows, the earlier symbol wins the slot.",
-            source="portfolio.py · _run_orb_variant",
+            value=(
+                "Ranked by the value traded in the last completed daily session — its close "
+                "times its share volume — highest first. When more breakouts fire than there "
+                "is room to hold, the busiest take the slots. This is a different question "
+                "from the confirmation above, which measures each stock against its own "
+                "history rather than against other stocks."
+                if ranked
+                else "Not ranked. Breakouts are taken in symbol order as the scan meets them, "
+                "so when more fire than the position cap allows, the earlier symbol wins "
+                "the slot."
+            ),
+            source="portfolio.py · _rank_candidates"
+            if ranked
+            else "portfolio.py · _run_orb_variant",
         ),
         Row(
             field="Entry",
@@ -331,14 +344,14 @@ def strategy_spec(configuration: TradingConfiguration | None) -> dict[str, Any]:
             short="ORB5",
             label=STRATEGY_LABELS["orb"],
             kind="Intraday breakout",
-            rows=_orb(5, 1.3, False, per_trade),
+            rows=_orb(5, 1.3, False, per_trade, True),
         ),
         StrategyCard(
             id="orb_momentum",
             short="ORB10",
             label=STRATEGY_LABELS["orb_momentum"],
             kind="Intraday breakout",
-            rows=_orb(10, 1.5, True, per_trade),
+            rows=_orb(10, 1.5, True, per_trade, False),
         ),
         StrategyCard(
             id="sma",

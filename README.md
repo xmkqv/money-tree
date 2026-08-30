@@ -94,7 +94,8 @@ setup
     other filters = none
 
 sorting
-    rank = none, breakouts are taken in symbol order as the scan meets them
+    rank = last completed daily session close * volume, highest first
+    applies when more breakouts fire than there is room to hold
 
 entry
     window = 09:35-10:30 ET

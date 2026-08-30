@@ -11,7 +11,7 @@ import pytest
 from pandas import DataFrame, DatetimeIndex
 
 from bot import portfolio
-from bot.portfolio import Holding, Strategy
+from bot.portfolio import Holding, OrbCandidate, Strategy
 from bot.strategies.shared import TRADING_ZONE, normalize_ohlcv
 
 
@@ -170,3 +170,30 @@ def test_ranking_breaks_ties_on_the_symbol_so_the_order_is_stable() -> None:
     order = ranked({name: session_frame(3_000_000.0) for name in ("ZZZ", "AAA", "MMM")})
 
     assert order == ["AAA", "MMM", "ZZZ"]
+
+
+def candidate(symbol: str) -> OrbCandidate:
+    return OrbCandidate(symbol=symbol, direction=1, high=10.0, low=9.0, close=10.5)
+
+
+def test_orb_breakouts_are_ranked_on_the_same_traded_value_key() -> None:
+    """The relative-volume gate says who breaks out; this says who gets the slot."""
+    strategy = FakeStrategy(price_history())
+    strategy._daily_frames = {
+        "AAA": session_frame(5_000_000.0, price_scale=0.1),
+        "MMM": session_frame(1_000_000.0),
+        "ZZZ": session_frame(2_000_000.0),
+    }
+
+    ordered = strategy._rank_candidates([candidate(name) for name in ("AAA", "MMM", "ZZZ")], NOW)
+
+    assert [entry.symbol for entry in ordered] == ["ZZZ", "MMM", "AAA"]
+
+
+def test_an_orb_breakout_without_a_daily_frame_ranks_last() -> None:
+    strategy = FakeStrategy(price_history())
+    strategy._daily_frames = {"ZZZ": session_frame(1_000_000.0)}
+
+    ordered = strategy._rank_candidates([candidate("AAA"), candidate("ZZZ")], NOW)
+
+    assert [entry.symbol for entry in ordered] == ["ZZZ", "AAA"]
