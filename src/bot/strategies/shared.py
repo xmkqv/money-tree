@@ -202,8 +202,8 @@ def momentum_entry(frame: DataFrame) -> bool:
         bool(latest_cross)
         and latest > previous
         and trend
-        and 50.0 <= latest_strength <= 70.0
-        and latest_directional > 25.0
+        and latest_strength >= 50.0
+        and latest_directional >= 25.0
     )
 
 
@@ -243,17 +243,12 @@ def tfb_entry(frame: DataFrame) -> bool:
     )
 
 
-def signal_exit(frame: DataFrame, length: int = 20) -> bool:
-    """Momentum has given out: the close is under its average and RSI is weak.
-
-    The average length is the caller's, because the daily engines disagree on
-    it. Momentum (SMA) exits against the 50-day average, TFB-50 against the
-    20-day one it entered on.
-    """
+def signal_exit(frame: DataFrame) -> bool:
+    """Momentum has given out: the close is under its average and RSI is weak."""
     close = cast(Series, frame["close"])
-    if close.count() < length:
+    if close.count() < 20:
         return False
-    average = ta_sma(close, length=length, talib=False)
+    average = ta_sma(close, length=20, talib=False)
     strength = ta_rsi(close, length=PERIOD, talib=False)
     strength_values = _indicator_series(strength, f"RSI_{PERIOD}", 1)
     if not isinstance(average, Series) or strength_values is None:

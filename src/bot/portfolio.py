@@ -47,9 +47,6 @@ STOP_COVERAGE_TOLERANCE = 1e-6
 # The register closes intraday positions *before* 15:55 ET. The exit is a market
 # order, so it is submitted a minute early to leave room for the fill.
 ORB_CLOSE_DEADLINE = time(15, 54)
-# The average each daily engine's signal exit is measured against. They differ:
-# Momentum (SMA) gives up on the 50-day average, TFB-50 on the 20-day one.
-DAILY_EXIT_AVERAGE: dict[StrategyName, int] = {"sma": 50, "tfb_50": 20}
 
 
 @dataclass(slots=True)
@@ -775,7 +772,7 @@ class Strategy(StrategyBase):
             holding.highest = max(holding.highest, float(cast(Any, since["close"]).max()))
         multiple = 1.5 if holding.engine == "sma" else 2.0
         holding.stop = max(holding.stop, holding.highest - multiple * latest_atr(frame))
-        if last < holding.stop or signal_exit(frame, DAILY_EXIT_AVERAGE[holding.engine]):
+        if last < holding.stop or signal_exit(frame):
             self._exit(holding)
 
     def _manage_orb(self, holding: Holding, now: datetime) -> None:

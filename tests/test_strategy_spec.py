@@ -14,10 +14,10 @@ from typing import Any
 
 import pytest
 
-from bot.portfolio import DAILY_EXIT_AVERAGE as COMPOSER_EXIT_AVERAGE
 from bot.portfolio import ORB_CLOSE_DEADLINE
 from bot.portfolio import Strategy as PortfolioStrategy
-from bot.strategies import orb, orb_momentum, sma, tfb_50
+from bot.strategies import orb, orb_momentum, shared, sma, tfb_50
+from bot.strategies.daily import DailyStrategy
 from bot.types import TradingConfiguration
 from tests.test_ledger import _snapshot
 from ui.dashboard import (
@@ -30,7 +30,6 @@ from ui.dashboard import (
 )
 from ui.ledger import TRADING_ZONE
 from ui.strategies import (
-    DAILY_EXIT_AVERAGE,
     FIELDS,
     ORB_RISK_CEILING,
     POSITION_FRACTION_CEILING,
@@ -213,14 +212,20 @@ def test_the_momentum_engine_sets_no_per_trade_risk_limit() -> None:
     assert f"{POSITION_FRACTION_CEILING:.0%} of equity" in risk
 
 
-def test_daily_exit_averages_match_the_composer() -> None:
-    """The two daily engines give up on different averages."""
-    assert DAILY_EXIT_AVERAGE == COMPOSER_EXIT_AVERAGE
+def test_the_daily_engines_give_up_on_the_twenty_day_average() -> None:
+    assert "length=20" in inspect.getsource(shared.signal_exit)
 
-    for engine, length in COMPOSER_EXIT_AVERAGE.items():
-        module = sma if engine == "sma" else tfb_50
-        assert module.Strategy.exit_average_length == length
-        assert f"{length}-day average" in spec_rows(engine)["Exit Rule"]
+    for engine in ("sma", "tfb_50"):
+        assert "20-day average" in spec_rows(engine)["Exit Rule"]
+
+
+def test_an_unreadable_earnings_calendar_does_not_force_an_exit() -> None:
+    """The register only exits on earnings it can actually see."""
+    assert "return False" in inspect.getsource(DailyStrategy._earnings_exit_due)
+    assert "exit_for_earnings = False" in inspect.getsource(PortfolioStrategy._manage_daily)
+
+    for engine in ("sma", "tfb_50"):
+        assert "cannot be read" in spec_rows(engine)["Emergency Exit"]
 
 
 def test_the_daily_stop_only_trails_closes_made_since_entry() -> None:

@@ -160,15 +160,18 @@ def test_momentum_entry_fails_when_history_is_insufficient() -> None:
 
 
 @pytest.mark.parametrize(
-    ("last_close", "directional", "expected"),
+    ("last_close", "strength", "directional", "expected"),
     [
-        (260.0, 30.0, True),
-        (240.0, 30.0, False),  # day 2 closes below day 1: the reclaim is the average drifting
-        (251.0, 25.0, False),  # ADX has to clear 25, not merely reach it
+        (260.0, 60.0, 30.0, True),
+        (240.0, 60.0, 30.0, False),  # day 2 closes below day 1: only the average drifted
+        (260.0, 50.0, 25.0, True),  # both floors are inclusive
+        (260.0, 49.0, 30.0, False),  # RSI under the floor
+        (260.0, 85.0, 30.0, True),  # no upper bound: an extended RSI still qualifies
+        (260.0, 60.0, 24.0, False),  # ADX under the floor
     ],
 )
-def test_momentum_entry_reads_the_second_day_close_and_the_adx_floor(
-    last_close: float, directional: float, expected: bool
+def test_momentum_entry_reads_the_second_day_close_and_both_floors(
+    last_close: float, strength: float, directional: float, expected: bool
 ) -> None:
     frame = market_frame(200)
     close_column = frame.columns.get_loc("close")
@@ -184,7 +187,7 @@ def test_momentum_entry_reads_the_second_day_close_and_the_adx_floor(
         monkeypatch.setattr(
             shared,
             "ta_rsi",
-            lambda close, length, talib: Series(60.0, index=close.index, name="RSI_14"),
+            lambda close, length, talib: Series(strength, index=close.index, name="RSI_14"),
         )
         monkeypatch.setattr(
             shared,
@@ -202,13 +205,13 @@ def test_momentum_entry_reads_the_second_day_close_and_the_adx_floor(
         assert momentum_entry(frame) is expected
 
 
-def test_signal_exit_reads_the_average_the_caller_asks_for() -> None:
-    """Momentum (SMA) gives up on the 50-day average, TFB-50 on the 20-day one."""
+def test_signal_exit_reads_the_twenty_day_average() -> None:
     frame = market_frame(60)
     frame.iloc[-1, frame.columns.get_loc("close")] = 120.0
 
     def average(close: Series, length: int, talib: bool) -> Series:
-        return Series(110.0 if length == 20 else 130.0, index=close.index)
+        assert length == 20
+        return Series(130.0, index=close.index)
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(shared, "ta_sma", average)
@@ -218,12 +221,7 @@ def test_signal_exit_reads_the_average_the_caller_asks_for() -> None:
             lambda close, length, talib: Series(40.0, index=close.index, name="RSI_14"),
         )
 
-        assert signal_exit(frame, 20) is False
-        assert signal_exit(frame, 50) is True
-
-
-def test_signal_exit_fails_when_history_is_shorter_than_its_average() -> None:
-    assert signal_exit(market_frame(30), 50) is False
+        assert signal_exit(frame) is True
 
 
 def test_relative_volume_passes_when_current_session_exceeds_threshold() -> None:

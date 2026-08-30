@@ -42,11 +42,6 @@ POSITION_FRACTION_CEILING = 0.10
 POSITIONS_MAX = 10
 ORB_RISK_CEILING = 0.01
 
-# The average each daily engine's signal exit is measured against, from
-# portfolio.py DAILY_EXIT_AVERAGE. The two engines disagree, so the wording
-# below cannot quote a single length.
-DAILY_EXIT_AVERAGE = {"sma": 50, "tfb_50": 20}
-
 # Engines whose register sets no per-trade risk limit, so position size comes
 # from the notional cap alone.
 UNCAPPED_RISK_ENGINES = frozenset({"sma"})
@@ -190,13 +185,12 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
 
 
 def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
-    exit_average = DAILY_EXIT_AVERAGE[engine]
     if engine == "sma":
         setup = (
             "The closing price crosses back above its 20-day average while already above "
             "both the 50-day and 200-day averages. Needs 200 sessions of history."
         )
-        confirmation = "RSI (14) between 50 and 70, and ADX (14) above 25."
+        confirmation = "RSI (14) at 50 or above, and ADX (14) at 25 or above."
         entry = (
             "A three-day structure: one session closes below the 20-day average, the next "
             "closes back above it and higher than that first close, and the buy goes in at "
@@ -261,14 +255,15 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         Row(
             field="Exit Rule",
             value="Closed when the price falls through the trailing stop, or when the close "
-            f"drops below its {exit_average}-day average with RSI (14) under 50.",
+            "drops below its 20-day average with RSI (14) under 50.",
             source="strategies/shared.py · signal_exit",
         ),
         Row(
             field="Emergency Exit",
-            value="Closed at 15:50 on the session before the company reports earnings. The "
-            "daily loss limit closes all positions and stops new entries for the rest of "
-            "the day.",
+            value="Closed at 15:50 on the session before the company reports earnings, "
+            "unless that calendar cannot be read, in which case the position is left "
+            "alone. The daily loss limit closes all positions and stops new entries for "
+            "the rest of the day.",
             source="portfolio.py · _manage_daily, _daily_loss_reached",
         ),
     ]

@@ -23,7 +23,6 @@ class DailyStrategy(StrategyBase):
     stop_multiple: ClassVar[float]
     blocks_entries_before_earnings: ClassVar[bool]
     caps_risk_per_trade: ClassVar[bool]
-    exit_average_length: ClassVar[int]
 
     _baseline_equity: float
     _day: date | None
@@ -86,6 +85,13 @@ class DailyStrategy(StrategyBase):
         if orders and not self.is_backtesting:
             self.sleep(1)
 
+    def _earnings_exit_due(self, symbol: str, day: date) -> bool:
+        """Whether earnings force an exit, ignoring a calendar that cannot be read."""
+        try:
+            return earnings_exit_due(symbol, day)
+        except Exception:
+            return False
+
     def _flatten(self, day: date) -> None:
         self.sell_all()
         self._locked_on = day
@@ -139,11 +145,7 @@ class DailyStrategy(StrategyBase):
         self._highest[symbol] = highest
         stop = max(self._stops.get(symbol, 0.0), highest - self.stop_multiple * latest_atr(frame))
         self._stops[symbol] = stop
-        if (
-            last >= stop
-            and not signal_exit(frame, self.exit_average_length)
-            and not earnings_exit_due(symbol, day)
-        ):
+        if last >= stop and not signal_exit(frame) and not self._earnings_exit_due(symbol, day):
             return
         self._cancel_symbol_orders(symbol)
         self.submit_order(self.create_order(symbol, held, "sell", time_in_force="day"))
