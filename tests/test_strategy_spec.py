@@ -818,3 +818,55 @@ def test_each_engine_quotes_its_own_signal_age_bound(engine: str, minutes: int) 
     setup = spec_rows(engine)["Setup"]
     assert f"one of the last {bound} completed candles" in setup
     assert f"{bound * minutes} minutes of the move" in setup
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_a_stop_the_market_has_reached_is_quoted_as_a_market_exit(engine: str) -> None:
+    """A stop at or past the last price cannot rest, so the position leaves at market.
+
+    This is a real exit path, not a detail: it is how a trade back at breakeven
+    after its first scale-out actually closes, and the page described only the
+    resting order until now.
+    """
+    protect = inspect.getsource(PortfolioStrategy._protect)
+
+    assert "holding.direction == 1 and stop >= price" in protect
+    assert "holding.direction == -1 and stop <= price" in protect
+    assert "self._exit(holding)" in protect
+
+    stop = spec_rows_full(engine)
+    stop_row = next(row for row in stop if row["field"] == "Stop Loss")
+    assert "cannot rest as an order" in stop_row["value"]
+    assert "closed at market there and then" in stop_row["value"]
+    assert "_protect" in stop_row["source"]
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_an_entry_already_through_its_stop_is_quoted_as_refused(engine: str) -> None:
+    """Sizing on the live quote is what gives this guard teeth.
+
+    Against the breakout candle's close it could never fire — that close is outside
+    the range by construction and the stop sits inside it, for a long and a short
+    alike. Against the live quote the market can have run back through the level
+    before the order goes in, and then there is no position to open.
+    """
+    assert "direction * (price - stop) <= 0" in inspect.getsource(PortfolioStrategy._enter)
+    assert "self._orb_price(candidate)" in inspect.getsource(PortfolioStrategy._run_orb_variant)
+
+    entry = spec_rows(engine)["Entry"]
+    assert "already run back through the stop" in entry
+    assert "cannot be opened already past its own exit" in entry
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_confirmation_is_quoted_as_of_the_signal_candle(engine: str) -> None:
+    """The gates confirm the breakout, so they read the moment that made it."""
+    variant = inspect.getsource(PortfolioStrategy._run_orb_variant)
+    confirm = inspect.getsource(PortfolioStrategy._orb_confirm)
+
+    assert "completed[cast(Any, completed.index) <= candidate.at]" in variant
+    assert "cast(Timestamp, frame.index[-1]).time()" in confirm
+
+    confirmation = spec_rows(engine)["Confirmation"]
+    assert "up to the signal candle's close" in confirmation
+    assert "rather than as the scan runs" in confirmation

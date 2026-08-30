@@ -133,11 +133,13 @@ def _orb(
     risk_cap = ORB_RISK_CEILING if minutes == 5 else per_trade
 
     confirmation = (
-        f"Volume traded so far today is at least {volume_multiple:g}x the "
+        f"Volume traded up to the signal candle's close is at least {volume_multiple:g}x the "
         f"{ORB_HISTORY_SESSIONS}-session average at the same time of day, and that average "
         f"session turns over at least 1M shares. All {ORB_HISTORY_SESSIONS} earlier sessions "
         "must be there to compare against — a shorter history is not a weaker signal, it is "
-        "no confirmation at all, and the breakout is passed over."
+        "no confirmation at all, and the breakout is passed over. The reading is taken as the "
+        "signal candle closed rather than as the scan runs, so a breakout read a pass late is "
+        "still confirmed on the moment that made it."
     )
     if uses_macd:
         confirmation += " MACD (12/26/9) must also be rising for a long, falling for a short."
@@ -226,8 +228,10 @@ def _orb(
             "size is worked out from the live quote, falling back to the breakout candle's "
             f"close, and the fill then sets {fill_sets}. It is passed "
             "over if another engine already holds the stock, if the account is at its position "
-            "cap or fully invested, or if the size that fits the risk limits comes to less than "
-            f"${POSITION_NOTIONAL_MIN}.",
+            "cap or fully invested, if the size that fits the risk limits comes to less than "
+            f"${POSITION_NOTIONAL_MIN}, or if that live quote has already run back through the "
+            "stop the breakout would have been given — a position cannot be opened already "
+            "past its own exit.",
             source="portfolio.py · on_trading_iteration, _run_orb_variant, _enter",
         ),
         Row(
@@ -239,8 +243,12 @@ def _orb(
             f"past the entry price. The trail needs {ORB_TRAIL_BARS_MIN} completed candles to read "
             "that ATR, and holds where it is until they exist. The level rests as a live order at "
             "the broker, replaced whenever it moves and re-sent if it ever stops covering the "
-            "whole position.",
-            source="portfolio.py · _run_orb_variant, _manage_orb, _resync_stops",
+            "whole position. A level the market has already reached cannot rest as an order, so "
+            "when the stop lands at or beyond the last price the whole position is closed at "
+            "market there and then instead. The move to breakeven after the first target is the "
+            "usual way this happens: price back at the entry is the stop being hit, and the "
+            "position leaves at market rather than waiting for an order that could not be placed.",
+            source="portfolio.py · _run_orb_variant, _manage_orb, _protect, _resync_stops",
         ),
         Row(
             field="Max Risk",

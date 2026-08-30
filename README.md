@@ -93,6 +93,7 @@ setup
     opening range = 09:30-09:35 ET
     marks = opening range high, midpoint, and low
     volume = cumulative volume >= 1.3 * 20-day average cumulative volume at the same time
+    volume is read as of the signal candle's close
     other filters = none
 
 sorting
@@ -105,6 +106,7 @@ entry
     short signal = first candle close below the opening range low
     signal candle = the first such candle since the range, within the last 2 completed candles
     order = next 5-minute candle open, directly after the signal candle
+    entry block = live quote already through the initial stop
     earnings block = none
     open positions may remain after the entry window
 
@@ -119,6 +121,7 @@ risk
     at +1.5R set stop = breakeven
     at +1.5R enable trailing stop = 1.5 * ATR(14) on 5-minute candles
     active stop cannot move past breakeven into a loss
+    stop at or beyond the last price = close the position at market
 
 exit
     at +1.5R close = 50% of original position
@@ -148,6 +151,7 @@ setup
     opening range = 09:30-09:40 ET
     marks = opening range high, midpoint, and low
     volume = cumulative volume >= 1.5 * 20-day average cumulative volume at the same time
+    volume and MACD are read as of the signal candle's close
     long MACD = increasing
     short MACD = decreasing
     remove the MACD filter if it reduces trade count without raising average return
@@ -161,6 +165,7 @@ entry
     short signal = first candle close below the opening range low
     signal candle = the first such candle since the range, within the last 2 completed candles
     order = next 10-minute candle open, directly after the signal candle
+    entry block = live quote already through the initial stop
     earnings block = none
     open positions may remain after the entry window
 
@@ -175,6 +180,7 @@ risk
     at +2R set stop = breakeven
     at +2R enable trailing stop = 1.5 * ATR(14) on 10-minute candles
     active stop cannot move past breakeven into a loss
+    stop at or beyond the last price = close the position at market
 
 exit
     at +2R close = 50% of original position
