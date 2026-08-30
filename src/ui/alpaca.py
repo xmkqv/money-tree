@@ -191,7 +191,42 @@ class AlpacaMarketDataClient:
         }
         if end is not None:
             params["end"] = end
-        response = await self._client.get(f"/v2/stocks/{symbol}/bars", params=params)
-        response.raise_for_status()
-        payload: Any = response.json()
-        return list(payload.get("bars") or [])
+        return await self._page(symbol, params, pages_max=1)
+
+    async def bars_paged(
+        self,
+        symbol: str,
+        timeframe: str,
+        start: str,
+        end: str,
+        limit: int = 1000,
+        pages_max: int = 6,
+    ) -> list[JsonRow]:
+        """Bars across however many pages the window spans.
+
+        Alpaca answers at most a page at a time whatever limit is asked for, so
+        a window wider than one page comes back silently short — which on a
+        chart reads as the data simply stopping partway.
+        """
+        params = {
+            "timeframe": timeframe,
+            "start": start,
+            "end": end,
+            "limit": str(limit),
+            "feed": "iex",
+        }
+        return await self._page(symbol, params, pages_max=pages_max)
+
+    async def _page(self, symbol: str, params: dict[str, str], pages_max: int) -> list[JsonRow]:
+        rows: list[JsonRow] = []
+        query = dict(params)
+        for _ in range(pages_max):
+            response = await self._client.get(f"/v2/stocks/{symbol}/bars", params=query)
+            response.raise_for_status()
+            payload = cast(dict[str, Any], response.json())
+            rows.extend(cast(list[JsonRow], payload.get("bars") or []))
+            token = payload.get("next_page_token")
+            if not token:
+                break
+            query = {**params, "page_token": str(token)}
+        return rows

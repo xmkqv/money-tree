@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- A broad, spreading canopy over a trunk that flares into its roots. The
+       width is the point: a narrow crown reads as a lollipop or a clover at
+       the 16 pixels a tab gives it, and only the spread says broadleaf tree.
+       Individual leaves and branches cannot survive that size, so the leaf
+       clusters are carried by the scalloped edge of the crown instead.
+
+       Black, as a tab icon on a light strip should be. A dark tab strip puts
+       black at about 1.4:1 against its own background, which is no icon at
+       all, so the silhouette inverts there rather than disappearing. -->
+  <style>
+    .ink { fill: #000; }
+    @media (prefers-color-scheme: dark) { .ink { fill: #f2f2f2; } }
+  </style>
+  <g class="ink">
+    <circle cx="16" cy="8" r="6.6"/>
+    <circle cx="8.8" cy="11" r="5.8"/>
+    <circle cx="23.2" cy="11" r="5.8"/>
+    <circle cx="4.4" cy="14.2" r="4.2"/>
+    <circle cx="27.6" cy="14.2" r="4.2"/>
+    <ellipse cx="16" cy="13.4" rx="9.4" ry="5.4"/>
+    <path d="M14.5 15h3v9.6c0 2.1 1.9 3.9 5.6 5.4H8.9c3.7-1.5 5.6-3.3 5.6-5.4Z"/>
+  </g>
+</svg>

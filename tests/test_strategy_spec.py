@@ -8,7 +8,7 @@ threshold in the bot fails a test instead of leaving the page confidently wrong.
 
 import ast
 import inspect
-from datetime import date, time
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +27,7 @@ from ui.dashboard import (
     chart_window,
     opening_range,
     orb_levels,
+    session_hour_bars,
     wilder_atr,
 )
 from ui.ledger import TRADING_ZONE
@@ -442,3 +443,85 @@ def test_the_opening_range_is_the_first_candle_of_its_length() -> None:
     # the ten-minute engine takes both of the first two candles
     assert opening_range(bars, date(2026, 8, 27), 10) == (11.0, 9.5)
     assert opening_range([], date(2026, 8, 27), 5) is None
+
+
+def _half_hours(day: str, times: list[str]) -> list[dict[str, Any]]:
+    """Half-hour bars at the given New York times, expressed the way Alpaca does."""
+    bars = []
+    for n, clock in enumerate(times, start=1):
+        at = datetime.fromisoformat(f"{day}T{clock}:00").replace(tzinfo=TRADING_ZONE)
+        bars.append(
+            {
+                "t": at.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+                "o": float(n),
+                "h": float(n) + 1,
+                "l": float(n) - 1,
+                "c": float(n) + 0.5,
+                "v": 100.0 * n,
+            }
+        )
+    return bars
+
+
+def _clocks(bars: list[dict[str, Any]]) -> list[str]:
+    return [
+        datetime.fromisoformat(str(bar["t"]).replace("Z", "+00:00"))
+        .astimezone(TRADING_ZONE)
+        .strftime("%H:%M")
+        for bar in bars
+    ]
+
+
+def test_hourly_bars_are_counted_from_the_opening_bell() -> None:
+    """Alpaca's own hours start at midnight, which puts 09:00 on a session chart."""
+    full = ["09:30", "10:00", "10:30", "11:00", "11:30", "12:00", "12:30", "13:00"]
+
+    assert _clocks(session_hour_bars(_half_hours("2026-08-27", full))) == [
+        "09:30",
+        "10:30",
+        "11:30",
+        "12:30",
+    ]
+
+
+def test_hourly_bars_leave_out_trading_outside_the_session() -> None:
+    """The pre- and post-market bars come back alongside and are not the session."""
+    around = ["04:00", "08:00", "09:00", "09:30", "15:30", "16:00", "19:30"]
+
+    assert _clocks(session_hour_bars(_half_hours("2026-08-27", around))) == ["09:30", "15:30"]
+
+
+def test_the_last_hourly_bar_is_the_half_hour_to_the_close() -> None:
+    """A session is six and a half hours, so its seventh bar is a short one."""
+    session = [
+        f"{hour:02d}:{minute:02d}"
+        for hour in range(9, 16)
+        for minute in (0, 30)
+        if hour > 9 or minute
+    ]
+    folded = session_hour_bars(_half_hours("2026-08-27", session))
+
+    assert len(folded) == 7
+    assert _clocks(folded)[-1] == "15:30"
+
+
+def test_a_folded_hour_carries_the_whole_hour_it_covers() -> None:
+    """Open from the first half, close from the last, extremes and volume across both."""
+    (folded,) = session_hour_bars(_half_hours("2026-08-27", ["09:30", "10:00"]))
+
+    assert folded["o"] == 1.0  # the 09:30 half-hour's open
+    assert folded["c"] == 2.5  # the 10:00 half-hour's close
+    assert folded["h"] == 3.0
+    assert folded["l"] == 0.0
+    assert folded["v"] == 300.0
+
+
+def test_folding_keeps_sessions_apart() -> None:
+    """Two days of half-hours must not collapse into one run of hours."""
+    bars = _half_hours("2026-08-27", ["09:30", "10:00"]) + _half_hours(
+        "2026-08-28", ["09:30", "10:00"]
+    )
+    folded = session_hour_bars(bars)
+
+    assert len(folded) == 2
+    assert _clocks(folded) == ["09:30", "09:30"]

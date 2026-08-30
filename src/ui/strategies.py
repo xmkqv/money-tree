@@ -365,7 +365,7 @@ def strategy_spec(configuration: TradingConfiguration | None) -> dict[str, Any]:
         ),
         StrategyCard(
             id="sma",
-            short="Momentum",
+            short="Momentum SMA",
             label=STRATEGY_LABELS["sma"],
             kind="Daily trend",
             rows=_daily("sma", 1.5, per_trade),
