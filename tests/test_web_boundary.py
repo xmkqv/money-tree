@@ -118,17 +118,21 @@ def test_the_phone_breakpoint_is_the_same_width_in_both_the_sheet_and_the_script
     assert styled.group(1) == scripted.group(1)
 
 
+def _phone_layer() -> str:
+    """The phone media query with its commentary stripped out."""
+    sheet = (ASSET_DIRECTORY / "dashboard.css").read_text()
+    return re.sub(r"/\*.*?\*/", "", sheet[sheet.index("/* \u2550\u2550\u2550 phone") :], flags=re.S)
+
+
 def test_the_phone_layout_keeps_every_view_the_wide_one_offers() -> None:
     """Stacking a page is allowed to move a control; it is not allowed to drop one.
 
-    The phone layer hides exactly the two plots and the reading aids that only
-    make sense beside them. Anything else disappearing from a phone is a
-    feature quietly lost, so the hidden set is named here rather than trusted.
+    The phone layer hides the equity plot, whose figure the panel states in
+    words beside it, and the mouse's instructions, which the touch note above
+    them replaces. Anything else disappearing from a phone is a feature quietly
+    lost, so the hidden set is named here rather than trusted.
     """
-    sheet = (ASSET_DIRECTORY / "dashboard.css").read_text()
-    phone = re.sub(
-        r"/\*.*?\*/", "", sheet[sheet.index("/* \u2550\u2550\u2550 phone") :], flags=re.S
-    )
+    phone = _phone_layer()
     hidden = {
         selector.strip()
         for block in re.findall(r"([^{}]+)\{[^{}]*display: none[^{}]*\}", phone)
@@ -136,11 +140,8 @@ def test_the_phone_layout_keeps_every_view_the_wide_one_offers() -> None:
     }
 
     assert hidden == {
-        ".chart-host",  # the equity plot
-        ".trade-stage",  # the trade plot and its overlay rail
-        "#tc-range",  # the bar size that only the trade plot reads
-        ".tc-hint",  # how to drag a plot that is not drawn
-        ".tc-note",  # what the marks on that plot mean
+        "#chart-host",  # the equity plot; its figures are painted regardless
+        ".tc-hint",  # drag and scroll, written for a mouse
         ".status::-webkit-scrollbar",
         "table.trades thead",
         ".table-scroll table.data thead",
@@ -148,6 +149,26 @@ def test_the_phone_layout_keeps_every_view_the_wide_one_offers() -> None:
         ".table-scroll table.data tbody td.key::before",
         "table.trades tbody td.empty::before",
     }
+
+
+def test_the_phone_hides_the_equity_plot_by_id_so_the_trade_plot_survives() -> None:
+    """The trade chart is a .chart-host too, and it is the one plot a phone keeps.
+
+    Hiding the equity plot by its class took the trade chart with it, silently:
+    the panel still laid out, the script still fetched bars, and the host simply
+    measured zero, which every guard in the drawing code reads as "too early to
+    draw". Only the id may be hidden here.
+    """
+    page = (ASSET_DIRECTORY / "dashboard.html").read_text()
+    assert 'class="chart-host trade-host" id="tc-host"' in page, (
+        "the trade plot should still share the chart-host class this test guards"
+    )
+
+    for rule in re.findall(r"([^{}]+)\{[^{}]*display: none[^{}]*\}", _phone_layer()):
+        for selector in rule.split(","):
+            assert ".chart-host" not in selector, (
+                f"{selector.strip()!r} would hide the trade chart as well"
+            )
 
 
 def test_unknown_asset_is_not_served() -> None:

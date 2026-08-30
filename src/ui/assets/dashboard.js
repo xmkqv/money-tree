@@ -48,11 +48,16 @@ const REFRESH_MS = 30000;
 /* ══ phone ═══════════════════════════════════════════════
 
    The one breakpoint the script shares with the stylesheet. Below it the
-   layout is a single scrolling column and neither plot is drawn: a chart
-   narrow enough to fit a phone cannot be read, and drawing one costs a
-   fetch and a repaint on every poll for a picture nobody can use. The
-   figures those plots carry are painted regardless, so no reading is lost
-   with the drawing. */
+   layout is a single scrolling column and the equity plot is not drawn:
+   it is a background reading of a figure the panel already states, and
+   repainting it on every poll costs more than it says. That figure is
+   painted regardless, so nothing is lost with the drawing.
+
+   The trade chart is the opposite case and is drawn on a phone in full.
+   It is not decoration on a number — it is the whole answer to why the
+   bot took the trade, and there is no figure that stands in for it. What
+   it loses on a phone is a wheel to zoom with and a pointer to hover
+   with, so pinch and tap take their place. */
 
 const PHONE = window.matchMedia("(max-width: 720px)");
 const onPhone = () => PHONE.matches;
@@ -1568,11 +1573,8 @@ async function openTradeChart(trade, from) {
     TC_ORIGIN === "portfolio" ? "← Portfolio" : "← Trade log";
   switchView("chart");
   paintTradeFacts();
-  paintStepper();
-  /* On a phone the page is the trade's own figures and nothing else, so the
-     two reads behind the plot — bars and reconstructed levels — are not made. */
-  if (onPhone()) return;
   paintRail();
+  paintStepper();
   loadTradeLevels();
   await loadTradeBars();
 }
@@ -1765,12 +1767,19 @@ async function loadTradeBars() {
   drawTradeChart();
 }
 
-const TC_PAD = { l: 10, r: 62, t: 16, b: 40 };
+/* The right gutter carries the price axis. A desktop spends 62px on it without
+   noticing; on a phone that is a fifth of the plot, so the phone reads the same
+   prices in less room and hands the difference back to the candles. */
+const TC_PADS = {
+  wide:  { l: 10, r: 62, t: 16, b: 40 },
+  phone: { l: 6,  r: 50, t: 12, b: 38 },
+};
 
 function drawTradeChart() {
   const host = document.getElementById("tc-host");
   const bars = TC_STATE.bars;
   if (!bars || !bars.length) return;
+  const TC_PAD = onPhone() ? TC_PADS.phone : TC_PADS.wide;
   const width = host.clientWidth, height = host.clientHeight;
   if (width < 80 || height < 80) return;
   readTheme();
@@ -2204,23 +2213,61 @@ function wireTradeChart() {
 
   /* zoom time around whatever the pointer is over, so the bar under the cursor
      stays under it */
-  hit.addEventListener("wheel", event => {
-    event.preventDefault();
+  const zoomAbout = (span, clientX) => {
     const geo = TC_STATE.geo;
     if (!geo) return;
-    const anchor = geo.indexAt(event.clientX);
-    const span = TC_VIEW.i1 - TC_VIEW.i0;
-    const next = clamp(span * (event.deltaY > 0 ? 1.14 : 1 / 1.14), 4, geo.count);
-    TC_VIEW.i0 = anchor - (anchor - TC_VIEW.i0) * (next / span);
+    const anchor = geo.indexAt(clientX);
+    const current = TC_VIEW.i1 - TC_VIEW.i0;
+    const next = clamp(span, 4, geo.count);
+    TC_VIEW.i0 = anchor - (anchor - TC_VIEW.i0) * (next / current);
     TC_VIEW.i1 = TC_VIEW.i0 + next;
     clampWindow();
     redraw();
+  };
+
+  hit.addEventListener("wheel", event => {
+    event.preventDefault();
+    const span = TC_VIEW.i1 - TC_VIEW.i0;
+    zoomAbout(span * (event.deltaY > 0 ? 1.14 : 1 / 1.14), event.clientX);
   }, { passive: false });
 
+  /* ── touch ────────────────────────────────────────────
+     A finger has no wheel to zoom with and no hover to read with, so the two
+     gestures it does have stand in for both: pinch scales time about the point
+     between the fingers, and a tap that goes nowhere reads out the bar under
+     it. The plot keeps `pan-y` on a phone, so a swipe up the page is still a
+     swipe up the page — the browser claims it and this handler hears it as a
+     cancelled pointer, never as a pan. */
+  const touches = new Map();
+  let pinch = null;
+
+  const twoFingers = () => [...touches.values()].slice(0, 2);
+  const spreadOf = () => {
+    const [a, b] = twoFingers();
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  };
+  const midpointOf = () => {
+    const [a, b] = twoFingers();
+    return (a.x + b.x) / 2;
+  };
+
   hit.addEventListener("pointerdown", event => {
+    if (event.pointerType === "touch") {
+      touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (touches.size === 2) {
+        /* the second finger ends the pan the first one started, so a pinch
+           never scrolls the window sideways as it scales */
+        pinch = { spread: spreadOf(), span: TC_VIEW.i1 - TC_VIEW.i0 };
+        drag = null;
+        hit.classList.remove("dragging");
+        document.getElementById("tc-tip").classList.remove("on");
+        return;
+      }
+      if (touches.size > 2) return;
+    }
     hit.setPointerCapture(event.pointerId);
     hit.classList.add("dragging");
-    drag = { x: event.clientX, y: event.clientY, mode: "pan" };
+    drag = { x: event.clientX, y: event.clientY, mode: "pan", travel: 0 };
   });
 
   axis.addEventListener("pointerdown", event => {
@@ -2231,7 +2278,12 @@ function wireTradeChart() {
   });
 
   const endDrag = event => {
+    touches.delete(event.pointerId);
+    if (touches.size < 2) pinch = null;
     if (!drag) return;
+    /* a finger that lifted where it landed asked a question rather than moved
+       the view, and the answer is the bar it landed on */
+    if (event.type === "pointerup" && event.pointerType === "touch" && drag.travel < 8) tradeHover(event);
     drag = null;
     hit.classList.remove("dragging");
     if (hit.hasPointerCapture?.(event.pointerId)) hit.releasePointerCapture(event.pointerId);
@@ -2249,10 +2301,17 @@ function wireTradeChart() {
   hit.addEventListener("pointermove", event => {
     const geo = TC_STATE.geo;
     if (!geo) return;
+    if (touches.has(event.pointerId)) touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pinch && touches.size >= 2) {
+      const spread = spreadOf();
+      if (spread > 0) zoomAbout(pinch.span * (pinch.spread / spread), midpointOf());
+      return;
+    }
     if (!drag) { tradeHover(event); return; }
 
     const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
     drag.x = event.clientX; drag.y = event.clientY;
+    drag.travel += Math.abs(dx) + Math.abs(dy);
     const span = TC_VIEW.i1 - TC_VIEW.i0;
     const move = -dx * (span / geo.plotW);
     TC_VIEW.i0 += move; TC_VIEW.i1 += move;
@@ -2278,8 +2337,13 @@ function wireTradeChart() {
     redraw();
   });
 
-  hit.addEventListener("pointerleave", () =>
-    document.getElementById("tc-tip").classList.remove("on"));
+  /* A finger that lifts also leaves, so honouring this for touch would wipe the
+     readout a tap just asked for. A tap's answer stays up until the next tap
+     moves it or a pan clears it; a mouse still takes its tooltip with it. */
+  hit.addEventListener("pointerleave", event => {
+    if (event.pointerType === "touch") return;
+    document.getElementById("tc-tip").classList.remove("on");
+  });
 }
 
 /* ══ views ═══════════════════════════════════════════════ */
@@ -2611,15 +2675,11 @@ new ResizeObserver(() => {
 }).observe(document.getElementById("tc-host"));
 
 /* Crossing the breakpoint changes what is drawn, not just how it is laid out,
-   so a rotation into landscape has to bring the plots back with it. */
+   so a rotation into landscape has to bring the equity plot back with it. The
+   trade chart needs no such rescue — it is drawn at both widths, and its own
+   observer redraws it at whatever size the rotation left it. */
 PHONE.addEventListener("change", () => {
-  if (onPhone()) return;
-  if (currentView === "dashboard") requestAnimationFrame(drawChart);
-  if (currentView === "chart" && TRADE && !TC_STATE.bars) {
-    paintRail();
-    loadTradeLevels();
-    loadTradeBars();
-  }
+  if (!onPhone() && currentView === "dashboard") requestAnimationFrame(drawChart);
 });
 
 document.body.dataset.view = "dashboard";
