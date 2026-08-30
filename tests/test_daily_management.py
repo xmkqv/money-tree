@@ -55,6 +55,7 @@ class FakeStrategy(Strategy):
 
     def __init__(self, frame: DataFrame) -> None:  # noqa: D107 - bypasses StrategyBase.__init__
         self._daily_frames = {"AAA": frame}
+        self._eligible_symbols = ["AAA"]
         self._events = set()
         self.exporter = None
         self.exited: list[Holding] = []
@@ -114,3 +115,46 @@ def test_a_close_below_the_trailing_stop_exits() -> None:
     strategy._manage_daily(held, NOW)
 
     assert strategy.exited == [held]
+
+
+def volume_frame(volume: float) -> DataFrame:
+    """One symbol's history, whose last completed session traded `volume`."""
+    frame = price_history().copy(deep=True)
+    frame.iloc[-1, frame.columns.get_loc("volume")] = volume
+    return frame
+
+
+def test_candidates_are_taken_by_last_session_volume_not_alphabetically() -> None:
+    """The position cap decides who misses out, so the order has to mean something."""
+    strategy = FakeStrategy(price_history())
+    strategy._daily_frames = {
+        "AAA": volume_frame(1_000_000.0),
+        "MMM": volume_frame(9_000_000.0),
+        "ZZZ": volume_frame(4_000_000.0),
+    }
+    strategy._eligible_symbols = ["AAA", "MMM", "ZZZ"]
+
+    ordered = [symbol for symbol, _ in strategy._ranked(NOW)]
+
+    assert ordered == ["MMM", "ZZZ", "AAA"]
+
+
+def test_a_symbol_with_unreadable_volume_ranks_last_but_still_trades() -> None:
+    strategy = FakeStrategy(price_history())
+    blank = price_history().drop(columns=["volume"])
+    strategy._daily_frames = {"AAA": blank, "ZZZ": volume_frame(2_000_000.0)}
+    strategy._eligible_symbols = ["AAA", "ZZZ"]
+
+    ordered = [symbol for symbol, _ in strategy._ranked(NOW)]
+
+    assert ordered == ["ZZZ", "AAA"]
+
+
+def test_ranking_breaks_ties_on_the_symbol_so_the_order_is_stable() -> None:
+    strategy = FakeStrategy(price_history())
+    strategy._daily_frames = {name: volume_frame(3_000_000.0) for name in ("ZZZ", "AAA", "MMM")}
+    strategy._eligible_symbols = ["ZZZ", "AAA", "MMM"]
+
+    ordered = [symbol for symbol, _ in strategy._ranked(NOW)]
+
+    assert ordered == ["AAA", "MMM", "ZZZ"]

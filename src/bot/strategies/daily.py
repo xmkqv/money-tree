@@ -10,6 +10,7 @@ from bot.strategies.shared import (
     earnings_exit_due,
     entry_quantity,
     latest_atr,
+    latest_volume,
     market_is_rising,
     normalize_ohlcv,
     signal_exit,
@@ -61,8 +62,8 @@ class DailyStrategy(StrategyBase):
         if market is None or not market_is_rising(market):
             return
         symbols: list[str] = parameters.get("symbols") or ["SPY"]
-        for symbol in symbols:
-            self._trade(symbol, day, equity)
+        for symbol, frame in self._ranked(symbols):
+            self._trade(symbol, day, equity, frame)
 
     def _entry_ready(self, frame: DataFrame) -> bool:
         raise NotImplementedError
@@ -114,10 +115,22 @@ class DailyStrategy(StrategyBase):
         index = cast(Any, cast(DatetimeIndex, frame.index))
         return cast(DataFrame, frame[index.date < day])
 
-    def _trade(self, symbol: str, day: date, equity: float) -> None:
-        frame = self._frame(symbol)
-        if frame is None:
-            return
+    def _ranked(self, symbols: list[str]) -> list[tuple[str, DataFrame]]:
+        """The tradable symbols and their frames, busiest completed session first.
+
+        Equity runs out before the candidates do, so the order decides who gets
+        funded. It is the volume of the last completed session, not the symbol.
+        """
+        ranked: list[tuple[float, str, DataFrame]] = []
+        for symbol in symbols:
+            frame = self._frame(symbol)
+            if frame is None:
+                continue
+            ranked.append((latest_volume(frame), symbol, frame))
+        ranked.sort(key=lambda row: (-row[0], row[1]))
+        return [(symbol, frame) for _, symbol, frame in ranked]
+
+    def _trade(self, symbol: str, day: date, equity: float, frame: DataFrame) -> None:
         position: Any = self.get_position(symbol)
         held = 0.0 if position is None else float(position.quantity)
         if held > 0:

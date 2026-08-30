@@ -49,10 +49,14 @@ def configuration(per_trade: float = 0.005, per_day: float = 0.02) -> TradingCon
 
 
 def spec_rows(strategy_id: str) -> dict[str, str]:
+    return {row["field"]: row["value"] for row in spec_rows_full(strategy_id)}
+
+
+def spec_rows_full(strategy_id: str) -> list[dict[str, str]]:
     card = next(
         card for card in strategy_spec(configuration())["strategies"] if card["id"] == strategy_id
     )
-    return {row["field"]: row["value"] for row in card["rows"]}
+    return card["rows"]
 
 
 COMPOSER = Path("src/bot/portfolio.py")
@@ -226,6 +230,20 @@ def test_an_unreadable_earnings_calendar_does_not_force_an_exit() -> None:
 
     for engine in ("sma", "tfb_50"):
         assert "cannot be read" in spec_rows(engine)["Emergency Exit"]
+
+
+def test_daily_candidates_compete_on_volume_in_both_paths() -> None:
+    """Alphabetical order handed every slot to whatever sorted first."""
+    for runner in (PortfolioStrategy._ranked, DailyStrategy._ranked):
+        source = inspect.getsource(runner)
+        assert "latest_volume(frame)" in source
+        assert "key=lambda row: (-row[0], row[1])" in source
+
+    for engine in ("sma", "tfb_50"):
+        assert "busiest first" in spec_rows(engine)["Entry"]
+        assert "_ranked" in next(
+            row["source"] for row in spec_rows_full(engine) if row["field"] == "Entry"
+        )
 
 
 def test_an_empty_earnings_calendar_does_not_hold_an_entry_back() -> None:

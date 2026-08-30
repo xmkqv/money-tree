@@ -28,6 +28,7 @@ from bot.strategies.shared import (
     earnings_exit_due,
     entry_quantity,
     latest_atr,
+    latest_volume,
     market_is_rising,
     momentum_entry,
     next_stop,
@@ -553,12 +554,26 @@ class Strategy(StrategyBase):
                 self._run_tfb(now)
         self._daily_run_on = now.date()
 
-    def _run_sma(self, now: datetime) -> None:
+    def _ranked(self, now: datetime) -> list[tuple[str, DataFrame]]:
+        """Eligible symbols and their completed frames, busiest session first.
+
+        More symbols pass a daily setup on a good morning than there is room to
+        hold, and the position cap decides the rest. Walking them in symbol
+        order hands the slots to whatever sorts first; walking them by the last
+        completed session's volume spends the slots where the trading is.
+        """
+        ranked: list[tuple[float, str, DataFrame]] = []
         for symbol in self._eligible_symbols:
             daily_frame = self._daily_frames.get(symbol)
             if daily_frame is None:
                 continue
             frame = self._completed(daily_frame, now)
+            ranked.append((latest_volume(frame), symbol, frame))
+        ranked.sort(key=lambda row: (-row[0], row[1]))
+        return [(symbol, frame) for _, symbol, frame in ranked]
+
+    def _run_sma(self, now: datetime) -> None:
+        for symbol, frame in self._ranked(now):
             if self._claimed(symbol) or not momentum_entry(frame):
                 continue
             try:
@@ -585,11 +600,7 @@ class Strategy(StrategyBase):
             )
 
     def _run_tfb(self, now: datetime) -> None:
-        for symbol in self._eligible_symbols:
-            daily_frame = self._daily_frames.get(symbol)
-            if daily_frame is None:
-                continue
-            frame = self._completed(daily_frame, now)
+        for symbol, frame in self._ranked(now):
             if self._claimed(symbol) or not tfb_entry(frame):
                 continue
             last = float(cast(Any, frame["close"]).iloc[-1])

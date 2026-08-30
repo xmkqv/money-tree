@@ -128,6 +128,18 @@ def quantity_value(quantity: float, fractional_orders: bool) -> Decimal:
     return Decimal(str(quantity)).quantize(increment, rounding=ROUND_DOWN)
 
 
+def latest_volume(frame: DataFrame) -> float:
+    """The last completed session's volume, or 0 when it cannot be read.
+
+    Used to order candidates competing for the same position slots. A symbol
+    whose volume is unreadable still trades; it simply ranks last.
+    """
+    if frame.empty or "volume" not in frame.columns:
+        return 0.0
+    value = float(cast(float, cast(Series, frame["volume"]).iloc[-1]))
+    return value if isfinite(value) else 0.0
+
+
 def market_is_rising(frame: DataFrame) -> bool:
     close = cast(Series, frame["close"])
     if close.count() < 20:

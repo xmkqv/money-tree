@@ -222,6 +222,11 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         setup_source = "strategies/shared.py · tfb_entry"
         entry_source = "portfolio.py · _run_tfb"
 
+    ranking = (
+        " When more symbols qualify on the same morning than there is room to hold, they "
+        "are taken by the volume of their last completed session, busiest first."
+    )
+
     return [
         Row(field="Market", value=UNIVERSE, source="portfolio.py · _discover_eligible_symbols"),
         Row(
@@ -238,7 +243,7 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         ),
         Row(field="Setup", value=setup, source=setup_source),
         Row(field="Confirmation", value=confirmation, source=setup_source),
-        Row(field="Entry", value=entry, source=entry_source),
+        Row(field="Entry", value=entry + ranking, source=f"{entry_source}, _ranked"),
         Row(
             field="Stop Loss",
             value=f"{stop_multiple:g}x the 14-period ATR below the entry price, then trailing "
