@@ -36,7 +36,6 @@ class OrbPosition:
 class OrbPending:
     direction: Direction
     stop: float
-    targets: tuple[float, float, float]
 
 
 def relative_volume_ready(
@@ -101,6 +100,8 @@ class OrbStrategy(StrategyBase):
     volume_multiple: ClassVar[float]
     uses_macd: ClassVar[bool]
     risk_fraction_max: ClassVar[float | None]
+    target_multiples: ClassVar[tuple[float, float, float]]
+    signal_candles_max: ClassVar[int]
 
     _baseline_equity: float
     _day: date | None
@@ -173,12 +174,19 @@ class OrbStrategy(StrategyBase):
             self._protect(symbol)
 
     def _filled_targets(self, pending: OrbPending, entry: float) -> tuple[float, float, float]:
-        if self.candle_minutes == 10:
-            return pending.targets
+        """The three scale-out levels, counted from the risk the fill actually took.
+
+        The ten-minute register writes them as fractions of the opening range
+        measured from the breakout level, which is the same 2R, 4R and 8R only
+        while the fill lands on that level. A breakout candle closing well past it
+        filled above targets already counted as reached, and the position scaled
+        itself out within a minute of opening without the price going near the
+        stop. Counting from the fill keeps every target ahead of the entry.
+        """
         risk = abs(entry - pending.stop)
         return cast(
             tuple[float, float, float],
-            tuple(entry + pending.direction * risk * value for value in (1.5, 2.5, 4.0)),
+            tuple(entry + pending.direction * risk * value for value in self.target_multiples),
         )
 
     def _account_values(self) -> tuple[float, float]:
@@ -207,6 +215,27 @@ class OrbStrategy(StrategyBase):
         index = cast(DatetimeIndex, frame.index)
         mask = cast(Any, index) + timedelta(minutes=self.candle_minutes) <= now
         return cast(DataFrame, frame[mask])
+
+    def _signal(
+        self, candles: DataFrame, high: float, low: float
+    ) -> tuple[int, Direction, float] | None:
+        """The *first* candle since the opening range that closed outside it.
+
+        Reading only the newest completed candle made the signal depend on which
+        bars had been published when the scan ran: one arriving late was missed,
+        and the breakout was then read off the candle after it — an entry a whole
+        candle beyond the level the rule names.
+        """
+        closes = cast(Series, candles["close"])
+        for position, value in enumerate(cast(list[Any], closes.tolist())):
+            close = float(value)
+            if not isfinite(close):
+                continue
+            if close > high:
+                return position, 1, close
+            if close < low:
+                return position, -1, close
+        return None
 
     def _scan(self, symbol: str, now: datetime, equity: float) -> None:
         key = (now.date(), symbol)
@@ -237,33 +266,40 @@ class OrbStrategy(StrategyBase):
         completed = self._completed(session, now)
         if opening.empty or completed.empty:
             return
-        completed_at = cast(Timestamp, completed.index[-1])
-        if completed_at < opening_end:
+        after = cast(
+            DataFrame,
+            completed[cast(Any, cast(DatetimeIndex, completed.index)) >= opening_end],
+        )
+        if after.empty:
             return
-        last = cast(Series, cast(Any, completed).iloc[-1])
         high = float(cast(Any, opening["high"]).max())
         low = float(cast(Any, opening["low"]).min())
-        close = float(cast(Any, last)["close"])
-        if not all(isfinite(value) for value in (high, low, close)):
+        if not all(isfinite(value) for value in (high, low)):
             return
-        direction: Direction | None = 1 if close > high else -1 if close < low else None
-        if direction is None:
+        signal = self._signal(after, high, low)
+        if signal is None:
             return
+        position, direction, close = signal
         self._signaled.add(key)
-        clock = completed_at.time()
-        if not relative_volume_ready(frame, now.date(), clock, self.volume_multiple):
+        # The breakout is taken at the open of the candle after the one that closed
+        # outside the range. A close found further back than this engine's own bound
+        # has already run, and buying it now would be a chase rather than the entry
+        # the rule names.
+        if len(after) - position > self.signal_candles_max:
+            return
+        # Both gates read the market as it stood when the signal candle closed, not
+        # as it stands now: they confirm that breakout, and on a signal recovered a
+        # candle late the two moments are not the same one.
+        signal_at = cast(Timestamp, after.index[position])
+        if not relative_volume_ready(frame, now.date(), signal_at.time(), self.volume_multiple):
             return
         if self.uses_macd:
             regular = cast(DataFrame, cast(Any, frame).between_time("09:30", "15:59"))
-            history = cast(DataFrame, regular[cast(Any, regular.index) <= completed_at])
+            history = cast(DataFrame, regular[cast(Any, regular.index) <= signal_at])
             if not does_macd_confirm(cast(Series, history["close"]), direction):
                 return
         span = high - low
         stop = low + span * (0.75 if direction == 1 else 0.25)
-        if direction == 1:
-            targets = (high + 0.5 * span, high + span, high + 2.0 * span)
-        else:
-            targets = (low - 0.5 * span, low - span, low - 2.0 * span)
         stop_distance = abs(close - stop)
         risk_limit = float(self.parameters["risk_per_trade_max"])
         if self.risk_fraction_max is not None:
@@ -278,7 +314,7 @@ class OrbStrategy(StrategyBase):
         )
         if quantity <= 0:
             return
-        self._pending[symbol] = OrbPending(direction, stop, targets)
+        self._pending[symbol] = OrbPending(direction, stop)
         side = "buy" if direction == 1 else "sell"
         self.submit_order(self.create_order(symbol, quantity, side, time_in_force="day"))
 

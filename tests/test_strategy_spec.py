@@ -16,6 +16,8 @@ import pytest
 
 from bot.portfolio import DAILY_EXIT_NEEDS_BOTH as COMPOSER_EXIT_NEEDS_BOTH
 from bot.portfolio import ORB_CLOSE_DEADLINE
+from bot.portfolio import ORB_SIGNAL_CANDLES_MAX as COMPOSER_SIGNAL_CANDLES_MAX
+from bot.portfolio import ORB_TARGET_MULTIPLES as COMPOSER_TARGET_MULTIPLES
 from bot.portfolio import Strategy as PortfolioStrategy
 from bot.strategies import orb, orb_base, orb_momentum, shared, sma, tfb_50
 from bot.strategies.daily import DailyStrategy
@@ -46,6 +48,9 @@ from ui.strategies import (
     Row,
     entry_windows,
     strategy_spec,
+)
+from ui.strategies import (
+    ORB_SIGNAL_CANDLES_MAX as PAGE_SIGNAL_CANDLES_MAX,
 )
 
 
@@ -176,7 +181,8 @@ def test_the_order_is_sent_when_the_signal_candle_closes(engine: str, minutes: i
     assert "now.minute % 5 == 0" in loop
     assert "self._run_orb(now)" in loop and "self._run_orb_momentum(now)" in loop
     assert "or now.minute % minutes" in variant
-    assert "if opening.empty or frame_at.time() < opening_end:" in variant
+    assert "if opening.empty or after.empty:" in variant
+    assert "self._orb_signal(after, high, low)" in variant
     assert "self._enter(" in variant, "the scan submits in the same pass"
 
     opening_end = entry_windows()[engine]["from"]
@@ -197,12 +203,13 @@ def test_the_fill_and_not_the_signal_price_sets_the_trade(engine: str) -> None:
     assert "holding.entry = self._entry_price(order, price)" in filled
     assert "holding.risk = abs(holding.entry - holding.stop)" in filled
     assert "avg_fill_price" in inspect.getsource(PortfolioStrategy._entry_price)
-    assert "candidate.close," in inspect.getsource(PortfolioStrategy._run_orb_variant)
+    assert "self._orb_price(candidate)," in inspect.getsource(PortfolioStrategy._run_orb_variant)
+    assert "return candidate.close" in inspect.getsource(PortfolioStrategy._orb_price)
 
     entry = spec_rows(engine)["Entry"]
-    assert "size is worked out from the breakout candle's close" in entry
-    assert "the fill then sets the entry" in entry
-    assert ("the risk and the targets" in entry) is (engine == "orb")
+    assert "size is worked out from the live quote" in entry
+    assert "falling back to the breakout candle's close" in entry
+    assert "the fill then sets the entry, the risk and the targets" in entry
 
 
 @pytest.mark.parametrize("engine", ORB_ENGINES)
@@ -311,16 +318,20 @@ def test_a_position_below_the_minimum_notional_is_not_opened(engine: str) -> Non
     assert "another engine already holds the stock" in entry
 
 
-def test_the_five_minute_targets_are_cut_from_the_fill() -> None:
-    """ORB5 re-reads its targets on the fill, so the page must not quote the signal price."""
+@pytest.mark.parametrize(
+    ("engine", "multiples"),
+    [("orb", "1.5x, 2.5x and 4x"), ("orb_momentum", "2x, 4x and 8x")],
+)
+def test_the_targets_are_cut_from_the_fill(engine: str, multiples: str) -> None:
+    """Both engines re-read their targets on the fill, so neither quotes the signal price."""
     filled = inspect.getsource(PortfolioStrategy.on_filled_order)
 
-    assert 'if holding.engine == "orb":' in filled
-    assert "for multiple in (1.5, 2.5, 4.0)" in filled
+    assert "multiples = ORB_TARGET_MULTIPLES.get(holding.engine)" in filled
+    assert "holding.entry + holding.direction * holding.risk * multiple" in filled
 
-    reward = spec_rows("orb")["Min. R:R"]
+    reward = spec_rows(engine)["Min. R:R"]
     assert "re-cut from the filled price" in reward
-    assert "1.5x, 2.5x and 4x the risk actually taken" in reward
+    assert f"{multiples} the risk actually taken" in reward
 
 
 @pytest.mark.parametrize("engine", ORB_ENGINES)
@@ -626,11 +637,34 @@ def test_reconstructed_orb_levels_follow_the_composer() -> None:
     assert short["stop"] == pytest.approx(10.125)
 
 
-def test_the_ten_minute_engine_keeps_range_based_targets() -> None:
-    """Only the five-minute engine re-cuts its targets from the fill."""
-    levels = orb_levels("orb_momentum", 1, entry=10.60, high=10.50, low=10.00)
+def test_the_ten_minute_targets_are_the_range_levels_read_off_the_fill() -> None:
+    """A fill on the breakout level puts 2R, 4R and 8R exactly where the range does.
 
+    The register writes ORB10's targets as half a range, one range and two ranges
+    beyond the level, over a stop three quarters of the way back into it. That is
+    2R, 4R and 8R — but only from a fill at the level, which is why the composer
+    counts them from the fill instead.
+    """
+    levels = orb_levels("orb_momentum", 1, entry=10.50, high=10.50, low=10.00)
+
+    assert levels["stop"] == pytest.approx(10.375)
     assert levels["targets"] == pytest.approx([10.75, 11.0, 11.5])
+
+
+def test_a_ten_minute_fill_past_the_level_carries_its_targets_with_it() -> None:
+    """A breakout candle closing past the level used to fill above its own targets.
+
+    Range targets sat at 10.75, 11.00 and 11.50, so a 11.60 fill was through all
+    three the moment it landed: the position scaled itself out within a minute of
+    opening, nowhere near its 10.375 stop. Counting from the fill keeps every
+    target ahead of the entry.
+    """
+    levels = orb_levels("orb_momentum", 1, entry=11.60, high=10.50, low=10.00)
+
+    assert min(levels["targets"]) > 11.60
+    assert levels["targets"] == pytest.approx(
+        [11.60 + (11.60 - 10.375) * m for m in (2.0, 4.0, 8.0)]
+    )
 
 
 def test_average_true_range_needs_more_bars_than_its_period() -> None:
@@ -733,3 +767,54 @@ def test_folding_keeps_sessions_apart() -> None:
 
     assert len(folded) == 2
     assert _clocks(folded) == ["09:30", "09:30"]
+
+
+@pytest.mark.parametrize(("engine", "module"), [("orb", orb), ("orb_momentum", orb_momentum)])
+def test_the_standalone_classes_cut_the_same_targets_as_the_composer(
+    engine: str, module: Any
+) -> None:
+    """A backtest that scaled out on different levels than the live bot proves nothing."""
+    pending = orb_base.OrbPending(1, 12.925)
+    standalone = module.Strategy._filled_targets(module.Strategy, pending, 13.42)
+
+    risk = 13.42 - 12.925
+    composed = [13.42 + risk * multiple for multiple in COMPOSER_TARGET_MULTIPLES[engine]]
+
+    assert module.Strategy.target_multiples == COMPOSER_TARGET_MULTIPLES[engine]
+    assert list(standalone) == pytest.approx(composed)
+    assert min(standalone) > 13.42, "no target may start behind the fill that opened the trade"
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_the_breakout_is_confirmed_as_of_the_signal_candle(engine: str) -> None:
+    """A signal recovered a candle late is still confirmed on the candle that made it."""
+    variant = inspect.getsource(PortfolioStrategy._run_orb_variant)
+
+    assert "completed[cast(Any, completed.index) <= candidate.at]" in variant
+    assert "regular[cast(Any, regular.index) <= signal_at]" in inspect.getsource(
+        orb_base.OrbStrategy._scan
+    )
+
+    setup = spec_rows(engine)["Setup"]
+    assert "The first completed" in setup
+    assert "re-read on every pass rather than only its newest candle" in setup
+    assert "has already run, and is passed over rather than chased" in setup
+
+    entry = spec_rows(engine)["Entry"]
+    assert "filling at the next executable price" in entry
+
+
+@pytest.mark.parametrize(("engine", "minutes"), [("orb", 5), ("orb_momentum", 10)])
+def test_each_engine_quotes_its_own_signal_age_bound(engine: str, minutes: int) -> None:
+    """A bound moved in the bot must move on the page: the unit is that engine's candle."""
+    bound = COMPOSER_SIGNAL_CANDLES_MAX[engine]
+    module = orb if engine == "orb" else orb_momentum
+
+    assert PAGE_SIGNAL_CANDLES_MAX[engine] == bound, "the page must quote the composer's bound"
+    assert module.Strategy.signal_candles_max == bound, "the backtest class must agree"
+    assert set(PAGE_SIGNAL_CANDLES_MAX) == set(COMPOSER_SIGNAL_CANDLES_MAX)
+    assert "self.signal_candles_max" in inspect.getsource(orb_base.OrbStrategy._scan)
+
+    setup = spec_rows(engine)["Setup"]
+    assert f"one of the last {bound} completed candles" in setup
+    assert f"{bound * minutes} minutes of the move" in setup

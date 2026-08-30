@@ -231,8 +231,7 @@ def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, 
 ATR_PERIOD = 14
 DAILY_STOP_MULTIPLES = {"sma": 1.5, "tfb_50": 2.0}
 ORB_OPENING_MINUTES = {"orb": 5, "orb_momentum": 10}
-ORB_TARGET_MULTIPLES = (1.5, 2.5, 4.0)
-ORB_SPAN_MULTIPLES = (0.5, 1.0, 2.0)
+ORB_TARGET_MULTIPLES = {"orb": (1.5, 2.5, 4.0), "orb_momentum": (2.0, 4.0, 8.0)}
 ORB_STOP_FRACTION = {1: 0.75, -1: 0.25}
 
 
@@ -283,13 +282,12 @@ def orb_levels(
     """The stop and the three targets the composer would have set on this range."""
     span = high - low
     stop = low + span * ORB_STOP_FRACTION[direction]
-    if engine == "orb":
-        # the five-minute engine re-cuts its targets from the filled price
-        risk = abs(entry - stop)
-        targets = [entry + direction * risk * multiple for multiple in ORB_TARGET_MULTIPLES]
-    else:
-        edge = high if direction == 1 else low
-        targets = [edge + direction * span * multiple for multiple in ORB_SPAN_MULTIPLES]
+    # Both engines re-cut their targets from the filled price. The ten-minute
+    # register writes its own as fractions of the range measured from the breakout
+    # level, which is these multiples of the risk a fill at that level would take.
+    risk = abs(entry - stop)
+    multiples = ORB_TARGET_MULTIPLES.get(engine, ORB_TARGET_MULTIPLES["orb"])
+    targets = [entry + direction * risk * multiple for multiple in multiples]
     return {
         "range": {"high": round(high, 4), "low": round(low, 4)},
         "stop": round(stop, 4),
