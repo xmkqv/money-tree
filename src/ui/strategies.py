@@ -207,8 +207,9 @@ def _orb(
 def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
     if engine == "sma":
         setup = (
-            "The closing price crosses back above its 20-day average while already above "
-            "both the 50-day and 200-day averages. Needs 200 sessions of history."
+            "The closing price crosses back above its 20-day average while the trend is "
+            "already stacked underneath it: price above the 50-day average, and that "
+            "average above the 200-day. Needs 200 sessions of history."
         )
         confirmation = "RSI (14) at 50 or above, and ADX (14) at 25 or above."
         entry = (
@@ -224,11 +225,11 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
             f"position cap alone: never more than {_pct(POSITION_FRACTION_CEILING)} of equity."
         )
         setup_source = "strategies/shared.py · momentum_entry"
-        entry_source = "portfolio.py · _run_sma"
+        entry_source = "strategies/shared.py · momentum_entry, portfolio.py · _run_sma"
     else:
         setup = (
             "The closing price is above its 50-day average, that average is higher than it "
-            "was 4 sessions ago, and the close beats the previous session's high."
+            "was 3 sessions ago, and the close beats the previous session's high."
         )
         confirmation = "ADX (14) at 20 or above."
         entry = (

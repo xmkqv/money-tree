@@ -251,7 +251,7 @@ setup
     timeframe = daily candles
     opening range = none
     marks = none
-    price = price > SMA(50) and SMA(50) > SMA(50) from 3 candles ago
+    price = price > SMA(50) and SMA(50) > SMA(50) from 3 sessions ago
     momentum = ADX >= 20
 
 sorting

@@ -17,6 +17,7 @@ from bot.strategies.shared import (
     next_stop,
     normalize_ohlcv,
     signal_exit,
+    tfb_entry,
 )
 from tests.world.index import market_frame, relative_volume_frame
 
@@ -203,6 +204,38 @@ def test_momentum_entry_reads_the_second_day_close_and_both_floors(
         )
 
         assert momentum_entry(frame) is expected
+
+
+@pytest.mark.parametrize(
+    ("dip_at", "expected"),
+    [
+        (-4, True),  # the average is higher than it was three sessions back
+        (-5, False),  # a dip one session further out is not what the rule reads
+    ],
+)
+def test_tfb_entry_compares_the_average_with_three_sessions_earlier(
+    dip_at: int, expected: bool
+) -> None:
+    """The comparison is iloc[-1] against iloc[-4], which is three sessions apart."""
+    frame = market_frame(60)
+    frame.iloc[-1, frame.columns.get_loc("close")] = 200.0
+
+    def average(close: Series, length: int, talib: bool) -> Series:
+        values = [100.0] * len(close)
+        values[dip_at] = 90.0
+        return Series(values, index=close.index)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(shared, "ta_sma", average)
+        monkeypatch.setattr(
+            shared,
+            "ta_adx",
+            lambda high, low, close, length, talib: DataFrame(
+                {"ADX_14": Series(30.0, index=close.index)}
+            ),
+        )
+
+        assert tfb_entry(frame) is expected
 
 
 def test_signal_exit_reads_the_twenty_day_average() -> None:

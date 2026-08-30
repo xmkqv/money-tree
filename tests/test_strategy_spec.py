@@ -241,6 +241,17 @@ def test_an_unreadable_earnings_calendar_does_not_force_an_exit() -> None:
         assert "cannot be read" in spec_rows(engine)["Emergency Exit"]
 
 
+def test_the_daily_setups_describe_what_the_predicates_check() -> None:
+    """Both setup rows had drifted from the comparisons they name."""
+    assert "latest > latest_50 > latest_200" in inspect.getsource(shared.momentum_entry)
+    sma_setup = spec_rows("sma")["Setup"]
+    assert "above the 50-day average" in sma_setup
+    assert "average above the 200-day" in sma_setup
+
+    assert "_finite_value(average_50, -4)" in inspect.getsource(shared.tfb_entry)
+    assert "3 sessions ago" in spec_rows("tfb_50")["Setup"], "iloc[-1] vs iloc[-4] is three"
+
+
 def test_sorting_sits_between_confirmation_and_entry() -> None:
     """A rule that decides who gets a slot belongs before the entry it gates."""
     assert FIELDS.index("Confirmation") + 1 == FIELDS.index("Sorting")
