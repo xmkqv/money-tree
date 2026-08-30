@@ -93,6 +93,9 @@ setup
     volume = cumulative volume >= 1.3 * 20-day average cumulative volume at the same time
     other filters = none
 
+sorting
+    rank = none, breakouts are taken in symbol order as the scan meets them
+
 entry
     window = 09:35-10:30 ET
     long signal = first candle close above the opening range high
@@ -143,6 +146,9 @@ setup
     long MACD = increasing
     short MACD = decreasing
     remove the MACD filter if it reduces trade count without raising average return
+
+sorting
+    rank = none, breakouts are taken in symbol order as the scan meets them
 
 entry
     window = 09:40-10:30 ET
@@ -195,6 +201,10 @@ setup
     price = price > SMA(50) > SMA(200)
     momentum = RSI >= 50 and ADX >= 25
 
+sorting
+    rank = last completed session close * volume, highest first
+    applies when more symbols qualify than there is room to hold
+
 entry
     window = market open on day 3
     day 1 = close < SMA(20)
@@ -203,8 +213,6 @@ entry
     order = day 3 market open
     earnings block = no new entry within 5 days before earnings,
         ignored when no earnings date is known
-    ranking = when more symbols qualify than there is room to hold,
-        take them by last completed session close * volume, highest first
 
 risk
     position size = 10% of account
@@ -245,14 +253,16 @@ setup
     price = price > SMA(50) and SMA(50) > SMA(50) from 3 candles ago
     momentum = ADX >= 20
 
+sorting
+    rank = last completed session close * volume, highest first
+    applies when more symbols qualify than there is room to hold
+
 entry
     window = next market open
     long signal = daily close > previous candle high
     short signal = none
     order = market open after the signal candle
     earnings block = none
-    ranking = when more symbols qualify than there is room to hold,
-        take them by last completed session close * volume, highest first
 
 risk
     position size = 10% of account

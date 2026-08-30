@@ -24,6 +24,7 @@ FIELDS = [
     "Range",
     "Setup",
     "Confirmation",
+    "Sorting",
     "Entry",
     "Stop Loss",
     "Max Risk",
@@ -141,6 +142,12 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
         ),
         Row(field="Confirmation", value=confirmation, source="portfolio.py · _orb_confirm"),
         Row(
+            field="Sorting",
+            value="Not ranked. Breakouts are taken in symbol order as the scan meets them, so "
+            "when more fire than the position cap allows, the earlier symbol wins the slot.",
+            source="portfolio.py · _run_orb_variant",
+        ),
+        Row(
             field="Entry",
             value="Market order at the breakout candle's close, good for the day only.",
             source="portfolio.py · _enter",
@@ -222,11 +229,6 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         setup_source = "strategies/shared.py · tfb_entry"
         entry_source = "portfolio.py · _run_tfb"
 
-    ranking = (
-        " When more symbols qualify on the same morning than there is room to hold, they "
-        "are taken by the value traded in their last completed session, busiest first."
-    )
-
     return [
         Row(field="Market", value=UNIVERSE, source="portfolio.py · _discover_eligible_symbols"),
         Row(
@@ -243,7 +245,15 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         ),
         Row(field="Setup", value=setup, source=setup_source),
         Row(field="Confirmation", value=confirmation, source=setup_source),
-        Row(field="Entry", value=entry + ranking, source=f"{entry_source}, _ranked"),
+        Row(
+            field="Sorting",
+            value="Ranked by the value traded in the last completed session — its close times "
+            "its share volume — highest first. When more symbols qualify on the same "
+            "morning than there is room to hold, the busiest take the slots. A symbol "
+            "whose session cannot be read ranks last but still trades.",
+            source="portfolio.py · _ranked",
+        ),
+        Row(field="Entry", value=entry, source=entry_source),
         Row(
             field="Stop Loss",
             value=f"{stop_multiple:g}x the 14-period ATR below the entry price, then trailing "

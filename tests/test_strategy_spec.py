@@ -34,6 +34,7 @@ from ui.strategies import (
     ORB_RISK_CEILING,
     POSITION_FRACTION_CEILING,
     POSITIONS_MAX,
+    RISK_PER_TRADE_DEFAULT,
     entry_windows,
     strategy_spec,
 )
@@ -198,9 +199,11 @@ def test_risk_wording_follows_the_reported_configuration() -> None:
 
 def test_spec_falls_back_to_documented_defaults_when_no_bot_is_reporting() -> None:
     spec = strategy_spec(None)
+    card = next(card for card in spec["strategies"] if card["id"] == "tfb_50")
+    rows = {row["field"]: row["value"] for row in card["rows"]}
 
     assert spec["configured"] is False
-    assert "0.5% of account equity" in spec["strategies"][3]["rows"][8]["value"]
+    assert f"{RISK_PER_TRADE_DEFAULT:.1%} of account equity" in rows["Max Risk"]
 
 
 def test_the_momentum_engine_sets_no_per_trade_risk_limit() -> None:
@@ -232,7 +235,13 @@ def test_an_unreadable_earnings_calendar_does_not_force_an_exit() -> None:
         assert "cannot be read" in spec_rows(engine)["Emergency Exit"]
 
 
-def test_daily_candidates_compete_on_volume_in_both_paths() -> None:
+def test_sorting_sits_between_confirmation_and_entry() -> None:
+    """A rule that decides who gets a slot belongs before the entry it gates."""
+    assert FIELDS.index("Confirmation") + 1 == FIELDS.index("Sorting")
+    assert FIELDS.index("Sorting") + 1 == FIELDS.index("Entry")
+
+
+def test_daily_candidates_compete_on_traded_value_in_both_paths() -> None:
     """Alphabetical order handed every slot to whatever sorted first."""
     for runner in (PortfolioStrategy._ranked, DailyStrategy._ranked):
         source = inspect.getsource(runner)
@@ -240,11 +249,15 @@ def test_daily_candidates_compete_on_volume_in_both_paths() -> None:
         assert "key=lambda row: (-row[0], row[1])" in source
 
     for engine in ("sma", "tfb_50"):
-        assert "value traded" in spec_rows(engine)["Entry"]
-        assert "busiest first" in spec_rows(engine)["Entry"]
+        sorting = spec_rows(engine)["Sorting"]
+        assert "close times" in sorting and "share volume" in sorting
+        assert "highest first" in sorting
         assert "_ranked" in next(
-            row["source"] for row in spec_rows_full(engine) if row["field"] == "Entry"
+            row["source"] for row in spec_rows_full(engine) if row["field"] == "Sorting"
         )
+
+    for engine in ("orb", "orb_momentum"):
+        assert "Not ranked" in spec_rows(engine)["Sorting"], "the ORB scan is still symbol order"
 
 
 def test_an_empty_earnings_calendar_does_not_hold_an_entry_back() -> None:
