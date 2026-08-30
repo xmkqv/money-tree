@@ -260,8 +260,14 @@ def tfb_entry(frame: DataFrame) -> bool:
     )
 
 
-def signal_exit(frame: DataFrame) -> bool:
-    """Momentum has given out: the close is under its average and RSI is weak."""
+def signal_exit(frame: DataFrame, needs_both: bool = True) -> bool:
+    """Momentum has given out: the close is under its average, RSI is weak, or both.
+
+    Which of those counts is the caller's. TFB-50 waits for the two together.
+    Momentum (SMA) treats either as enough, because waiting for both left it
+    holding through a close under the average whenever RSI was merely soft
+    rather than weak.
+    """
     close = cast(Series, frame["close"])
     if close.count() < 20:
         return False
@@ -273,13 +279,11 @@ def signal_exit(frame: DataFrame) -> bool:
     latest = _finite_value(close)
     latest_average = _finite_value(average)
     latest_strength = _finite_value(strength_values)
-    return (
-        latest is not None
-        and latest_average is not None
-        and latest_strength is not None
-        and latest < latest_average
-        and latest_strength < 50.0
-    )
+    if latest is None or latest_average is None or latest_strength is None:
+        return False
+    below_average = latest < latest_average
+    weak_strength = latest_strength < 50.0
+    return (below_average and weak_strength) if needs_both else (below_average or weak_strength)
 
 
 def does_macd_confirm(close: Series, direction: Direction) -> bool:

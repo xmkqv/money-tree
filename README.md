@@ -227,7 +227,7 @@ risk
 
 exit
     profit targets = none
-    signal exit = daily close < SMA(20) and RSI(14) < 50
+    signal exit = daily close < SMA(20) or RSI(14) < 50
     earnings exit = close any open position on the day before earnings,
         ignored when the earnings calendar cannot be read
     deadline = none

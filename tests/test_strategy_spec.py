@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from bot.portfolio import DAILY_EXIT_NEEDS_BOTH as COMPOSER_EXIT_NEEDS_BOTH
 from bot.portfolio import ORB_CLOSE_DEADLINE
 from bot.portfolio import Strategy as PortfolioStrategy
 from bot.strategies import orb, orb_momentum, shared, sma, tfb_50
@@ -30,6 +31,7 @@ from ui.dashboard import (
 )
 from ui.ledger import TRADING_ZONE
 from ui.strategies import (
+    DAILY_EXIT_NEEDS_BOTH,
     FIELDS,
     ORB_RISK_CEILING,
     POSITION_FRACTION_CEILING,
@@ -230,6 +232,16 @@ def test_the_daily_engines_give_up_on_the_twenty_day_average() -> None:
 
     for engine in ("sma", "tfb_50"):
         assert "20-day average" in spec_rows(engine)["Exit Rule"]
+
+
+def test_only_the_momentum_engine_exits_on_either_condition() -> None:
+    """TFB-50 still waits for the close and RSI together."""
+    assert DAILY_EXIT_NEEDS_BOTH == COMPOSER_EXIT_NEEDS_BOTH
+    assert sma.Strategy.exit_needs_both is False
+    assert tfb_50.Strategy.exit_needs_both is True
+
+    assert "Either one is enough" in spec_rows("sma")["Exit Rule"]
+    assert "with RSI (14) under 50" in spec_rows("tfb_50")["Exit Rule"]
 
 
 def test_an_unreadable_earnings_calendar_does_not_force_an_exit() -> None:

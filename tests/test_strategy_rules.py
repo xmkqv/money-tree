@@ -238,23 +238,39 @@ def test_tfb_entry_compares_the_average_with_three_sessions_earlier(
         assert tfb_entry(frame) is expected
 
 
-def test_signal_exit_reads_the_twenty_day_average() -> None:
+@pytest.mark.parametrize(
+    ("close", "strength", "needs_both", "expected"),
+    [
+        (120.0, 40.0, True, True),  # both conditions: either engine exits
+        (120.0, 40.0, False, True),
+        (120.0, 60.0, True, False),  # under the average, RSI merely soft
+        (120.0, 60.0, False, True),  # Momentum (SMA) leaves on that alone
+        (140.0, 40.0, True, False),  # weak RSI, still above the average
+        (140.0, 40.0, False, True),
+        (140.0, 60.0, True, False),  # neither: nobody exits
+        (140.0, 60.0, False, False),
+    ],
+)
+def test_signal_exit_wants_both_conditions_only_when_the_caller_asks(
+    close: float, strength: float, needs_both: bool, expected: bool
+) -> None:
+    """Momentum (SMA) exits on either condition; TFB-50 waits for the two."""
     frame = market_frame(60)
-    frame.iloc[-1, frame.columns.get_loc("close")] = 120.0
+    frame.iloc[-1, frame.columns.get_loc("close")] = close
 
-    def average(close: Series, length: int, talib: bool) -> Series:
+    def average(values: Series, length: int, talib: bool) -> Series:
         assert length == 20
-        return Series(130.0, index=close.index)
+        return Series(130.0, index=values.index)
 
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(shared, "ta_sma", average)
         monkeypatch.setattr(
             shared,
             "ta_rsi",
-            lambda close, length, talib: Series(40.0, index=close.index, name="RSI_14"),
+            lambda values, length, talib: Series(strength, index=values.index, name="RSI_14"),
         )
 
-        assert signal_exit(frame) is True
+        assert signal_exit(frame, needs_both) is expected
 
 
 def test_relative_volume_passes_when_current_session_exceeds_threshold() -> None:

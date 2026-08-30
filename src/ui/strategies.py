@@ -47,6 +47,10 @@ ORB_RISK_CEILING = 0.01
 # from the notional cap alone.
 UNCAPPED_RISK_ENGINES = frozenset({"sma"})
 
+# Whether a daily engine's signal exit waits for both conditions, from
+# portfolio.py DAILY_EXIT_NEEDS_BOTH.
+DAILY_EXIT_NEEDS_BOTH = {"sma": False, "tfb_50": True}
+
 # When each engine can open a trade, from portfolio.py. The daily pair is
 # checked once a session before 09:40; the two breakout engines scan on their
 # own candle boundary until 10:30. Positions already open keep being managed
@@ -285,7 +289,12 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         Row(
             field="Exit Rule",
             value="Closed when the price falls through the trailing stop, or when the close "
-            "drops below its 20-day average with RSI (14) under 50.",
+            + (
+                "drops below its 20-day average with RSI (14) under 50."
+                if DAILY_EXIT_NEEDS_BOTH[engine]
+                else "drops below its 20-day average, or RSI (14) falls under 50. Either "
+                "one is enough on its own."
+            ),
             source="strategies/shared.py · signal_exit",
         ),
         Row(
