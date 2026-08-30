@@ -117,7 +117,13 @@ def test_a_position_still_held_is_not_a_closed_trade() -> None:
         [ENTRY, EXIT],
     )
     assert cycles == []
-    assert still_open == {"XOM": {"strategy": "orb", "opened": "24 Aug"}}
+    held = still_open["XOM"]
+    assert held["strategy"] == "orb"
+    assert held["opened"] == "24 Aug"
+    # enough to chart the position: where the entry sits, and every fill so far
+    assert held["inDate"] == "2026-08-24"
+    assert held["inMinute"] == 9 * 60 + 35
+    assert [f["s"] for f in held["fills"]] == ["in", "out"]
 
 
 def test_reopening_after_flat_starts_a_new_cycle() -> None:
