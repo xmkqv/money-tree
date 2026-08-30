@@ -201,7 +201,8 @@ entry
     day 2 = close > SMA(20) and close > day 1 close
     long signal = day 1 and day 2 rules pass
     order = day 3 market open
-    earnings block = no new entry within 5 days before earnings
+    earnings block = no new entry within 5 days before earnings,
+        ignored when no earnings date is known
 
 risk
     position size = 10% of account

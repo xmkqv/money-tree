@@ -195,8 +195,9 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
             "A three-day structure: one session closes below the 20-day average, the next "
             "closes back above it and higher than that first close, and the buy goes in at "
             "the open of the third. Market buy before 09:40, checked once a day. Skipped if "
-            "the company reports earnings within 5 days, or if its earnings date cannot be "
-            "read."
+            "the company reports earnings within 5 days. A company with no earnings date on "
+            "file is not held back; one whose calendar cannot be read at all is left for "
+            "that session."
         )
         risk = (
             "No per-trade risk limit is set for this engine, so the size comes from the "

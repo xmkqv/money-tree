@@ -254,8 +254,17 @@ def test_earnings_rules_block_entry_and_schedule_prior_session_exit() -> None:
         assert earnings_exit_due("AAPL", date(2026, 8, 28)) is True
 
 
-def test_earnings_rules_do_not_exit_when_no_earnings_are_known() -> None:
+def test_earnings_rules_stand_down_when_no_earnings_are_known() -> None:
+    """Both rules only act on earnings they can actually see."""
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr(shared, "earnings_dates", lambda symbol: ())
 
         assert earnings_exit_due("AAPL", date(2026, 8, 28)) is False
+        assert earnings_blocked("AAPL", date(2026, 8, 27)) is False
+
+
+def test_entry_is_open_once_earnings_are_more_than_five_days_out() -> None:
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(shared, "earnings_dates", lambda symbol: (date(2026, 8, 31),))
+
+        assert earnings_blocked("AAPL", date(2026, 8, 20)) is False

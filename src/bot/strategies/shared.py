@@ -300,8 +300,15 @@ def next_earnings(symbol: str, day: date) -> date | None:
 
 
 def earnings_blocked(symbol: str, day: date) -> bool:
+    """Whether earnings are close enough to stand in the way of a new position.
+
+    A calendar that reads back empty is not a reason to stay out: the rule bars
+    an entry made *near earnings*, and no known date is not that. A calendar
+    that cannot be read at all is a different matter, and the callers stand
+    aside on it.
+    """
     upcoming = next_earnings(symbol, day)
-    return upcoming is None or 0 <= (upcoming - day).days <= 5
+    return upcoming is not None and 0 <= (upcoming - day).days <= 5
 
 
 def earnings_exit_due(symbol: str, day: date) -> bool:

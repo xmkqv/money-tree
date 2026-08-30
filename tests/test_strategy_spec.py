@@ -228,6 +228,15 @@ def test_an_unreadable_earnings_calendar_does_not_force_an_exit() -> None:
         assert "cannot be read" in spec_rows(engine)["Emergency Exit"]
 
 
+def test_an_empty_earnings_calendar_does_not_hold_an_entry_back() -> None:
+    """No known date is not the same as earnings being near."""
+    assert "upcoming is not None and" in inspect.getsource(shared.earnings_blocked)
+
+    entry = spec_rows("sma")["Entry"]
+    assert "within 5 days" in entry
+    assert "no earnings date on file is not held back" in entry
+
+
 def test_the_daily_stop_only_trails_closes_made_since_entry() -> None:
     """Anchoring to the whole frame would stop a new position out on day one."""
     source = inspect.getsource(PortfolioStrategy._manage_daily)

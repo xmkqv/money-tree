@@ -85,6 +85,13 @@ class DailyStrategy(StrategyBase):
         if orders and not self.is_backtesting:
             self.sleep(1)
 
+    def _earnings_blocked(self, symbol: str, day: date) -> bool:
+        """Whether earnings bar an entry, standing aside when the calendar errors."""
+        try:
+            return earnings_blocked(symbol, day)
+        except Exception:
+            return True
+
     def _earnings_exit_due(self, symbol: str, day: date) -> bool:
         """Whether earnings force an exit, ignoring a calendar that cannot be read."""
         try:
@@ -118,7 +125,7 @@ class DailyStrategy(StrategyBase):
             return
         if not self._entry_ready(frame):
             return
-        if self.blocks_entries_before_earnings and earnings_blocked(symbol, day):
+        if self.blocks_entries_before_earnings and self._earnings_blocked(symbol, day):
             return
         average_range = latest_atr(frame)
         price = float(cast(Any, frame["close"]).iloc[-1])
