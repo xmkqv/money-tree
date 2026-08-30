@@ -1,4 +1,6 @@
+import re
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -22,16 +24,68 @@ def test_configuration_is_rejected_when_strategy_selection_is_invalid(strategies
         Settings(_env_file=None, strategies=strategies)
 
 
+DEPLOYMENT = Path(".railway/railway.ts")
+
+
+def deployed_strategies() -> list[str]:
+    """The roster the deployed bot is started with, read from the Railway config."""
+    match = re.search(r'STRATEGIES:\s*"([^"]*)"', DEPLOYMENT.read_text())
+    assert match is not None, "railway.ts no longer declares STRATEGIES"
+    return [value.strip() for value in match.group(1).split(",") if value.strip()]
+
+
+def register_states() -> dict[str, str]:
+    """The state each engine's README register block declares, keyed by its label."""
+    states: dict[str, str] = {}
+    for block in Path("README.md").read_text().split("#### ")[1:]:
+        found = re.search(r"state = (\w+)", block)
+        if found is not None:
+            states[block.splitlines()[0].strip()] = found.group(1)
+    return states
+
+
+def test_the_deployment_starts_every_engine_that_is_not_paused() -> None:
+    """Unpausing in code does nothing if the bot is never told to load the engine.
+
+    Two switches decide whether an engine trades: PAUSED_STRATEGIES here, and
+    the STRATEGIES the deployed bot is started with. An engine whose register
+    reads enabled but that the bot never loads is a register that lies.
+    """
+    deployed = deployed_strategies()
+
+    assert set(deployed).issubset(STRATEGY_LABELS), "unknown engine in the deployed roster"
+    # noop is a placeholder, never something the deployment should carry.
+    live = {name for name in STRATEGY_LABELS if name not in PAUSED_STRATEGIES and name != "noop"}
+    assert live.issubset(set(deployed)), f"not started by the deployment: {live - set(deployed)}"
+
+
+def test_the_register_state_matches_the_pause_switch() -> None:
+    """The page and the README both read paused/enabled off this one frozenset."""
+    states = register_states()
+
+    for name, label in STRATEGY_LABELS.items():
+        if name == "noop":
+            continue
+        expected = "paused" if name in PAUSED_STRATEGIES else "enabled"
+        assert states[label] == expected, f"{label} register reads {states[label]}"
+
+
 def test_paused_strategies_are_registered_strategy_names() -> None:
-    assert sorted(PAUSED_STRATEGIES) == ["orb_momentum", "sma", "tfb_50"]
+    assert sorted(PAUSED_STRATEGIES) == ["orb_momentum", "tfb_50"]
     assert PAUSED_STRATEGIES.issubset(STRATEGY_LABELS)
+
+
+def test_the_momentum_engine_is_switched_on() -> None:
+    """It opens new positions again, so its register must not read paused."""
+    assert "sma" not in PAUSED_STRATEGIES
+    assert active_strategies(["sma"]) == ["sma"]
 
 
 def test_paused_strategies_take_no_entries_when_selection_includes_them() -> None:
     settings = Settings(_env_file=None, strategies="orb,sma,tfb_50,orb_momentum")
 
     assert settings.strategy_names == ["orb", "sma", "tfb_50", "orb_momentum"]
-    assert active_strategies(settings.strategy_names) == ["orb"]
+    assert active_strategies(settings.strategy_names) == ["orb", "sma"]
 
 
 def test_configuration_is_rejected_when_export_settings_are_incomplete() -> None:

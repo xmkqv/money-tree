@@ -28,7 +28,7 @@ STRATEGY_LABELS: dict[StrategyName, str] = {
     "tfb_50": "TFB-50",
     "orb_momentum": "ORB (10-minute)",
 }
-PAUSED_STRATEGIES: frozenset[StrategyName] = frozenset({"orb_momentum", "sma", "tfb_50"})
+PAUSED_STRATEGIES: frozenset[StrategyName] = frozenset({"orb_momentum", "tfb_50"})
 
 
 def active_strategies(selected: Iterable[StrategyName]) -> list[StrategyName]:

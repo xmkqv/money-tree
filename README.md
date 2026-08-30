@@ -93,6 +93,10 @@ setup
     volume = cumulative volume >= 1.3 * 20-day average cumulative volume at the same time
     other filters = none
 
+sorting
+    rank = last completed daily session close * volume, highest first
+    applies when more breakouts fire than there is room to hold
+
 entry
     window = 09:35-10:30 ET
     long signal = first candle close above the opening range high
@@ -144,6 +148,9 @@ setup
     short MACD = decreasing
     remove the MACD filter if it reduces trade count without raising average return
 
+sorting
+    rank = none, breakouts are taken in symbol order as the scan meets them
+
 entry
     window = 09:40-10:30 ET
     long signal = first candle close above the opening range high
@@ -179,7 +186,7 @@ exit
 
 ```text:surface
 status
-    state = paused
+    state = enabled
 
 market
     asset = US stocks
@@ -193,15 +200,20 @@ setup
     opening range = none
     marks = none
     price = price > SMA(50) > SMA(200)
-    momentum = 50 <= RSI <= 70 and ADX >= 25
+    momentum = RSI >= 50 and ADX >= 25
+
+sorting
+    rank = last completed session close * volume, highest first
+    applies when more symbols qualify than there is room to hold
 
 entry
     window = market open on day 3
     day 1 = close < SMA(20)
-    day 2 = close > SMA(20)
+    day 2 = close > SMA(20) and close > day 1 close
     long signal = day 1 and day 2 rules pass
     order = day 3 market open
-    earnings block = no new entry within 5 days before earnings
+    earnings block = no new entry within 5 days before earnings,
+        ignored when no earnings date is known
 
 risk
     position size = 10% of account
@@ -215,8 +227,9 @@ risk
 
 exit
     profit targets = none
-    signal exit = daily close < SMA(20) and RSI(14) < 50
-    earnings exit = close any open position on the day before earnings
+    signal exit = daily close < SMA(20) or RSI(14) < 50
+    earnings exit = close any open position on the day before earnings,
+        ignored when the earnings calendar cannot be read
     deadline = none
     shared rules = Stop Loss and Emergency Exit
 ```
@@ -238,8 +251,12 @@ setup
     timeframe = daily candles
     opening range = none
     marks = none
-    price = price > SMA(50) and SMA(50) > SMA(50) from 3 candles ago
+    price = price > SMA(50) and SMA(50) > SMA(50) from 3 sessions ago
     momentum = ADX >= 20
+
+sorting
+    rank = last completed session close * volume, highest first
+    applies when more symbols qualify than there is room to hold
 
 entry
     window = next market open

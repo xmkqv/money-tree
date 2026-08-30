@@ -14,9 +14,11 @@ from typing import Any
 
 import pytest
 
+from bot.portfolio import DAILY_EXIT_NEEDS_BOTH as COMPOSER_EXIT_NEEDS_BOTH
 from bot.portfolio import ORB_CLOSE_DEADLINE
 from bot.portfolio import Strategy as PortfolioStrategy
-from bot.strategies import orb, orb_base, orb_momentum, sma, tfb_50
+from bot.strategies import orb, orb_base, orb_momentum, shared, sma, tfb_50
+from bot.strategies.daily import DailyStrategy
 from bot.strategies.shared import MIN_NOTIONAL_USD, entry_quantity
 from bot.types import TradingConfiguration
 from tests.test_ledger import _snapshot
@@ -31,6 +33,7 @@ from ui.dashboard import (
 )
 from ui.ledger import TRADING_ZONE
 from ui.strategies import (
+    DAILY_EXIT_NEEDS_BOTH,
     FIELDS,
     ORB_HISTORY_SESSIONS,
     ORB_RISK_CEILING,
@@ -39,6 +42,7 @@ from ui.strategies import (
     POSITION_FRACTION_CEILING,
     POSITION_NOTIONAL_MIN,
     POSITIONS_MAX,
+    RISK_PER_TRADE_DEFAULT,
     Row,
     entry_windows,
     strategy_spec,
@@ -55,10 +59,14 @@ def configuration(per_trade: float = 0.005, per_day: float = 0.02) -> TradingCon
 
 
 def spec_rows(strategy_id: str) -> dict[str, str]:
+    return {row["field"]: row["value"] for row in spec_rows_full(strategy_id)}
+
+
+def spec_rows_full(strategy_id: str) -> list[dict[str, str]]:
     card = next(
         card for card in strategy_spec(configuration())["strategies"] if card["id"] == strategy_id
     )
-    return {row["field"]: row["value"] for row in card["rows"]}
+    return card["rows"]
 
 
 COMPOSER = Path("src/bot/portfolio.py")
@@ -90,14 +98,20 @@ def test_every_strategy_answers_every_category() -> None:
 
 
 @pytest.mark.parametrize(
-    ("engine", "minutes", "volume_multiple", "uses_macd"),
-    [("orb", 5, 1.3, False), ("orb_momentum", 10, 1.5, True)],
+    ("engine", "minutes", "volume_multiple", "uses_macd", "ranked"),
+    [("orb", 5, 1.3, False, True), ("orb_momentum", 10, 1.5, True, False)],
 )
 def test_orb_numbers_match_the_composer(
-    engine: str, minutes: int, volume_multiple: float, uses_macd: bool
+    engine: str, minutes: int, volume_multiple: float, uses_macd: bool, ranked: bool
 ) -> None:
     """portfolio.py hard-codes these per variant; the page must quote the same."""
-    assert orb_variant_arguments()[engine] == (engine, minutes, volume_multiple, uses_macd)
+    assert orb_variant_arguments()[engine] == (
+        engine,
+        minutes,
+        volume_multiple,
+        uses_macd,
+        ranked,
+    )
 
     rows = spec_rows(engine)
     assert f"{minutes}-minute" in rows["Range"]
@@ -351,9 +365,13 @@ def test_intraday_engines_are_flat_before_the_close() -> None:
 
 
 def test_risk_wording_follows_the_reported_configuration() -> None:
-    """The limits are environment settings, so the page must not quote defaults."""
+    """The limits are environment settings, so the page must not quote defaults.
+
+    Read off TFB-50: Momentum (SMA) sets no per-trade risk limit, so its card
+    has no configured figure to follow.
+    """
     spec = strategy_spec(configuration(per_trade=0.0075, per_day=0.03))
-    rows = {row["field"]: row["value"] for row in spec["strategies"][2]["rows"]}
+    rows = {row["field"]: row["value"] for row in spec["strategies"][3]["rows"]}
     rules = {row["field"]: row["value"] for row in spec["portfolio"]}
 
     assert "0.75% of account equity" in rows["Max Risk"]
@@ -363,9 +381,107 @@ def test_risk_wording_follows_the_reported_configuration() -> None:
 
 def test_spec_falls_back_to_documented_defaults_when_no_bot_is_reporting() -> None:
     spec = strategy_spec(None)
+    card = next(card for card in spec["strategies"] if card["id"] == "tfb_50")
+    rows = {row["field"]: row["value"] for row in card["rows"]}
 
     assert spec["configured"] is False
-    assert "0.5% of account equity" in spec["strategies"][2]["rows"][8]["value"]
+    assert f"{RISK_PER_TRADE_DEFAULT:.1%} of account equity" in rows["Max Risk"]
+
+
+def test_the_momentum_engine_sets_no_per_trade_risk_limit() -> None:
+    """Its register reads "risk per trade = not set", so only the notional caps it."""
+    assert "caps_risk_per_trade=False" in inspect.getsource(PortfolioStrategy._run_sma)
+    assert "caps_risk_per_trade" not in inspect.getsource(PortfolioStrategy._run_tfb)
+
+    assert sma.Strategy.caps_risk_per_trade is False
+    assert tfb_50.Strategy.caps_risk_per_trade is True
+
+    risk = spec_rows("sma")["Max Risk"]
+    assert "No per-trade risk limit" in risk
+    assert f"{POSITION_FRACTION_CEILING:.0%} of equity" in risk
+
+
+def test_the_daily_engines_give_up_on_the_twenty_day_average() -> None:
+    assert "length=20" in inspect.getsource(shared.signal_exit)
+
+    for engine in ("sma", "tfb_50"):
+        assert "20-day average" in spec_rows(engine)["Exit Rule"]
+
+
+def test_only_the_momentum_engine_exits_on_either_condition() -> None:
+    """TFB-50 still waits for the close and RSI together."""
+    assert DAILY_EXIT_NEEDS_BOTH == COMPOSER_EXIT_NEEDS_BOTH
+    assert sma.Strategy.exit_needs_both is False
+    assert tfb_50.Strategy.exit_needs_both is True
+
+    assert "Either one is enough" in spec_rows("sma")["Exit Rule"]
+    assert "with RSI (14) under 50" in spec_rows("tfb_50")["Exit Rule"]
+
+
+def test_an_unreadable_earnings_calendar_does_not_force_an_exit() -> None:
+    """The register only exits on earnings it can actually see."""
+    assert "return False" in inspect.getsource(DailyStrategy._earnings_exit_due)
+    assert "exit_for_earnings = False" in inspect.getsource(PortfolioStrategy._manage_daily)
+
+    for engine in ("sma", "tfb_50"):
+        assert "cannot be read" in spec_rows(engine)["Emergency Exit"]
+
+
+def test_the_daily_setups_describe_what_the_predicates_check() -> None:
+    """Both setup rows had drifted from the comparisons they name."""
+    assert "latest > latest_50 > latest_200" in inspect.getsource(shared.momentum_entry)
+    sma_setup = spec_rows("sma")["Setup"]
+    assert "above the 50-day average" in sma_setup
+    assert "average above the 200-day" in sma_setup
+
+    assert "_finite_value(average_50, -4)" in inspect.getsource(shared.tfb_entry)
+    assert "3 sessions ago" in spec_rows("tfb_50")["Setup"], "iloc[-1] vs iloc[-4] is three"
+
+
+def test_sorting_sits_between_confirmation_and_entry() -> None:
+    """A rule that decides who gets a slot belongs before the entry it gates."""
+    assert FIELDS.index("Confirmation") + 1 == FIELDS.index("Sorting")
+    assert FIELDS.index("Sorting") + 1 == FIELDS.index("Entry")
+
+
+def test_daily_candidates_compete_on_traded_value_in_both_paths() -> None:
+    """Alphabetical order handed every slot to whatever sorted first."""
+    for runner in (PortfolioStrategy._ranked, DailyStrategy._ranked):
+        source = inspect.getsource(runner)
+        assert "latest_dollar_volume(frame)" in source
+        assert "key=lambda row: (-row[0], row[1])" in source
+
+    for engine in ("sma", "tfb_50"):
+        sorting = spec_rows(engine)["Sorting"]
+        assert "close times" in sorting and "share volume" in sorting
+        assert "highest first" in sorting
+        assert "_ranked" in next(
+            row["source"] for row in spec_rows_full(engine) if row["field"] == "Sorting"
+        )
+
+    orb_sorting = spec_rows("orb")["Sorting"]
+    assert "close times" in orb_sorting and "share volume" in orb_sorting
+    assert "_rank_candidates" in next(
+        row["source"] for row in spec_rows_full("orb") if row["field"] == "Sorting"
+    )
+    assert "Not ranked" in spec_rows("orb_momentum")["Sorting"], "the 10-minute scan is unranked"
+
+
+def test_an_empty_earnings_calendar_does_not_hold_an_entry_back() -> None:
+    """No known date is not the same as earnings being near."""
+    assert "upcoming is not None and" in inspect.getsource(shared.earnings_blocked)
+
+    entry = spec_rows("sma")["Entry"]
+    assert "within 5 days" in entry
+    assert "no earnings date on file is not held back" in entry
+
+
+def test_the_daily_stop_only_trails_closes_made_since_entry() -> None:
+    """Anchoring to the whole frame would stop a new position out on day one."""
+    source = inspect.getsource(PortfolioStrategy._manage_daily)
+
+    assert "if len(since):" in source
+    assert "observed" not in source
 
 
 def test_the_universe_screen_matches_the_discovery_query() -> None:

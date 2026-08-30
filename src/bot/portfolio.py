@@ -28,6 +28,7 @@ from bot.strategies.shared import (
     earnings_exit_due,
     entry_quantity,
     latest_atr,
+    latest_dollar_volume,
     market_is_rising,
     momentum_entry,
     next_stop,
@@ -47,6 +48,9 @@ STOP_COVERAGE_TOLERANCE = 1e-6
 # The register closes intraday positions *before* 15:55 ET. The exit is a market
 # order, so it is submitted a minute early to leave room for the fill.
 ORB_CLOSE_DEADLINE = time(15, 54)
+# Whether a daily engine's signal exit waits for both of its conditions or acts
+# on either. Momentum (SMA) exits on either; TFB-50 asks for the two together.
+DAILY_EXIT_NEEDS_BOTH: dict[StrategyName, bool] = {"sma": False, "tfb_50": True}
 
 
 @dataclass(slots=True)
@@ -553,12 +557,26 @@ class Strategy(StrategyBase):
                 self._run_tfb(now)
         self._daily_run_on = now.date()
 
-    def _run_sma(self, now: datetime) -> None:
+    def _ranked(self, now: datetime) -> list[tuple[str, DataFrame]]:
+        """Eligible symbols and their completed frames, busiest session first.
+
+        More symbols pass a daily setup on a good morning than there is room to
+        hold, and the position cap decides the rest. Walking them in symbol
+        order hands the slots to whatever sorts first; walking them by the value
+        traded in the last completed session spends them where the money is.
+        """
+        ranked: list[tuple[float, str, DataFrame]] = []
         for symbol in self._eligible_symbols:
             daily_frame = self._daily_frames.get(symbol)
             if daily_frame is None:
                 continue
             frame = self._completed(daily_frame, now)
+            ranked.append((latest_dollar_volume(frame), symbol, frame))
+        ranked.sort(key=lambda row: (-row[0], row[1]))
+        return [(symbol, frame) for _, symbol, frame in ranked]
+
+    def _run_sma(self, now: datetime) -> None:
+        for symbol, frame in self._ranked(now):
             if self._claimed(symbol) or not momentum_entry(frame):
                 continue
             try:
@@ -574,24 +592,48 @@ class Strategy(StrategyBase):
             if blocked:
                 continue
             last = float(cast(Any, frame["close"]).iloc[-1])
-            self._enter("sma", symbol, symbol, last, last - 1.5 * latest_atr(frame), now)
+            self._enter(
+                "sma",
+                symbol,
+                symbol,
+                last,
+                last - 1.5 * latest_atr(frame),
+                now,
+                caps_risk_per_trade=False,
+            )
 
     def _run_tfb(self, now: datetime) -> None:
-        for symbol in self._eligible_symbols:
-            daily_frame = self._daily_frames.get(symbol)
-            if daily_frame is None:
-                continue
-            frame = self._completed(daily_frame, now)
+        for symbol, frame in self._ranked(now):
             if self._claimed(symbol) or not tfb_entry(frame):
                 continue
             last = float(cast(Any, frame["close"]).iloc[-1])
             self._enter("tfb_50", symbol, symbol, last, last - 2.0 * latest_atr(frame), now)
 
     def _run_orb(self, now: datetime) -> None:
-        self._run_orb_variant("orb", now, 5, 1.3, False)
+        self._run_orb_variant("orb", now, 5, 1.3, False, True)
 
     def _run_orb_momentum(self, now: datetime) -> None:
-        self._run_orb_variant("orb_momentum", now, 10, 1.5, True)
+        self._run_orb_variant("orb_momentum", now, 10, 1.5, True, False)
+
+    def _rank_candidates(self, candidates: list[OrbCandidate], now: datetime) -> list[OrbCandidate]:
+        """Breakouts by the value traded in their last completed daily session.
+
+        The relative-volume gate has already asked whether each stock is busy
+        against its own history. This asks a different question — which of the
+        survivors trades the most money — because the cap they are competing
+        for is a money cap.
+        """
+        ranked: list[tuple[float, str, OrbCandidate]] = []
+        for candidate in candidates:
+            daily_frame = self._daily_frames.get(candidate.symbol)
+            traded = (
+                0.0
+                if daily_frame is None
+                else latest_dollar_volume(self._completed(daily_frame, now))
+            )
+            ranked.append((traded, candidate.symbol, candidate))
+        ranked.sort(key=lambda row: (-row[0], row[1]))
+        return [candidate for _, _, candidate in ranked]
 
     def _run_orb_variant(
         self,
@@ -600,6 +642,7 @@ class Strategy(StrategyBase):
         minutes: int,
         volume_multiple: float,
         uses_macd: bool,
+        ranks_candidates: bool,
     ) -> None:
         opening_end = time(9, 35) if minutes == 5 else time(9, 40)
         if (
@@ -642,6 +685,8 @@ class Strategy(StrategyBase):
             candidates.append(OrbCandidate(symbol, direction, high, low, close))
         if not candidates:
             return
+        if ranks_candidates:
+            candidates = self._rank_candidates(candidates, now)
         timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
         histories = self._frames(
             [candidate.symbol for candidate in candidates],
@@ -755,15 +800,16 @@ class Strategy(StrategyBase):
             DataFrame,
             frame[cast(Any, frame.index) >= holding.entered_at.astimezone(TRADING_ZONE)],
         )
-        observed = since if len(since) else frame
         last = float(cast(Any, frame["close"]).iloc[-1])
-        holding.highest = max(
-            holding.highest,
-            float(cast(Any, observed["close"]).max()),
-        )
+        # The stop trails the highest close *since entry*. On the entry day there
+        # is no such close yet, and `highest` stays at the fill price: falling
+        # back to the whole frame here would anchor the stop to a high set months
+        # before the trade and stop it out on its first session.
+        if len(since):
+            holding.highest = max(holding.highest, float(cast(Any, since["close"]).max()))
         multiple = 1.5 if holding.engine == "sma" else 2.0
         holding.stop = max(holding.stop, holding.highest - multiple * latest_atr(frame))
-        if last < holding.stop or signal_exit(frame):
+        if last < holding.stop or signal_exit(frame, DAILY_EXIT_NEEDS_BOTH[holding.engine]):
             self._exit(holding)
 
     def _manage_orb(self, holding: Holding, now: datetime) -> None:
@@ -823,6 +869,7 @@ class Strategy(StrategyBase):
         direction: Direction = 1,
         targets: tuple[float, float, float] | None = None,
         risk_fraction_max: float | None = None,
+        caps_risk_per_trade: bool = True,
     ) -> bool:
         if engine not in self._enabled or self._claimed(signal) or direction * (price - stop) <= 0:
             return False
@@ -850,11 +897,13 @@ class Strategy(StrategyBase):
                 engine,
             )
             return False
-        risk_fraction = float(self.parameters["risk_per_trade_max"])
+        risk_fraction: float | None = float(self.parameters["risk_per_trade_max"])
         if equity <= 0:
             return False
         if risk_fraction_max is not None:
             risk_fraction = risk_fraction_max
+        if not caps_risk_per_trade:
+            risk_fraction = None
         quantity = entry_quantity(
             equity,
             price,

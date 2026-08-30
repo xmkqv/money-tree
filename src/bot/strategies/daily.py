@@ -10,6 +10,7 @@ from bot.strategies.shared import (
     earnings_exit_due,
     entry_quantity,
     latest_atr,
+    latest_dollar_volume,
     market_is_rising,
     normalize_ohlcv,
     signal_exit,
@@ -22,6 +23,8 @@ LOOKBACK = 260
 class DailyStrategy(StrategyBase):
     stop_multiple: ClassVar[float]
     blocks_entries_before_earnings: ClassVar[bool]
+    caps_risk_per_trade: ClassVar[bool]
+    exit_needs_both: ClassVar[bool]
 
     _baseline_equity: float
     _day: date | None
@@ -60,8 +63,8 @@ class DailyStrategy(StrategyBase):
         if market is None or not market_is_rising(market):
             return
         symbols: list[str] = parameters.get("symbols") or ["SPY"]
-        for symbol in symbols:
-            self._trade(symbol, day, equity)
+        for symbol, frame in self._ranked(symbols):
+            self._trade(symbol, day, equity, frame)
 
     def _entry_ready(self, frame: DataFrame) -> bool:
         raise NotImplementedError
@@ -84,6 +87,20 @@ class DailyStrategy(StrategyBase):
         if orders and not self.is_backtesting:
             self.sleep(1)
 
+    def _earnings_blocked(self, symbol: str, day: date) -> bool:
+        """Whether earnings bar an entry, standing aside when the calendar errors."""
+        try:
+            return earnings_blocked(symbol, day)
+        except Exception:
+            return True
+
+    def _earnings_exit_due(self, symbol: str, day: date) -> bool:
+        """Whether earnings force an exit, ignoring a calendar that cannot be read."""
+        try:
+            return earnings_exit_due(symbol, day)
+        except Exception:
+            return False
+
     def _flatten(self, day: date) -> None:
         self.sell_all()
         self._locked_on = day
@@ -99,10 +116,23 @@ class DailyStrategy(StrategyBase):
         index = cast(Any, cast(DatetimeIndex, frame.index))
         return cast(DataFrame, frame[index.date < day])
 
-    def _trade(self, symbol: str, day: date, equity: float) -> None:
-        frame = self._frame(symbol)
-        if frame is None:
-            return
+    def _ranked(self, symbols: list[str]) -> list[tuple[str, DataFrame]]:
+        """The tradable symbols and their frames, busiest completed session first.
+
+        Equity runs out before the candidates do, so the order decides who gets
+        funded. It is the value traded in the last completed session, not the
+        symbol.
+        """
+        ranked: list[tuple[float, str, DataFrame]] = []
+        for symbol in symbols:
+            frame = self._frame(symbol)
+            if frame is None:
+                continue
+            ranked.append((latest_dollar_volume(frame), symbol, frame))
+        ranked.sort(key=lambda row: (-row[0], row[1]))
+        return [(symbol, frame) for _, symbol, frame in ranked]
+
+    def _trade(self, symbol: str, day: date, equity: float, frame: DataFrame) -> None:
         position: Any = self.get_position(symbol)
         held = 0.0 if position is None else float(position.quantity)
         if held > 0:
@@ -110,18 +140,19 @@ class DailyStrategy(StrategyBase):
             return
         if not self._entry_ready(frame):
             return
-        if self.blocks_entries_before_earnings and earnings_blocked(symbol, day):
+        if self.blocks_entries_before_earnings and self._earnings_blocked(symbol, day):
             return
         average_range = latest_atr(frame)
         price = float(cast(Any, frame["close"]).iloc[-1])
         stop_distance = self.stop_multiple * average_range
         parameters: dict[str, Any] = self.parameters
+        risk_limit = float(parameters["risk_per_trade_max"]) if self.caps_risk_per_trade else None
         quantity = entry_quantity(
             equity,
             price,
             stop_distance,
             min(0.10, float(parameters["position_fraction_max"])),
-            float(parameters["risk_per_trade_max"]),
+            risk_limit,
             bool(parameters["fractional_orders"]),
         )
         if quantity <= 0:
@@ -136,7 +167,11 @@ class DailyStrategy(StrategyBase):
         self._highest[symbol] = highest
         stop = max(self._stops.get(symbol, 0.0), highest - self.stop_multiple * latest_atr(frame))
         self._stops[symbol] = stop
-        if last >= stop and not signal_exit(frame) and not earnings_exit_due(symbol, day):
+        if (
+            last >= stop
+            and not signal_exit(frame, self.exit_needs_both)
+            and not self._earnings_exit_due(symbol, day)
+        ):
             return
         self._cancel_symbol_orders(symbol)
         self.submit_order(self.create_order(symbol, held, "sell", time_in_force="day"))

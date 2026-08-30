@@ -99,9 +99,15 @@ def entry_quantity(
     price: float,
     stop_distance: float,
     position_fraction_max: float,
-    risk_per_trade_max: float,
+    risk_per_trade_max: float | None,
     fractional_orders: bool,
 ) -> Decimal:
+    """Size a position from the notional cap, and from risk when a limit is set.
+
+    A strategy whose register reads "risk per trade = not set" passes None, and
+    is then sized by the notional cap alone. The stop still has to be a real
+    distance: a non-positive one means the caller's levels are wrong.
+    """
     if (
         not all(isfinite(value) for value in (equity, price, stop_distance))
         or equity <= 0
@@ -109,10 +115,9 @@ def entry_quantity(
         or stop_distance <= 0
     ):
         return Decimal(0)
-    quantity = min(
-        equity * position_fraction_max / price,
-        equity * risk_per_trade_max / stop_distance,
-    )
+    quantity = equity * position_fraction_max / price
+    if risk_per_trade_max is not None:
+        quantity = min(quantity, equity * risk_per_trade_max / stop_distance)
     if quantity * price < MIN_NOTIONAL_USD:
         return Decimal(0)
     return quantity_value(quantity, fractional_orders)
@@ -121,6 +126,23 @@ def entry_quantity(
 def quantity_value(quantity: float, fractional_orders: bool) -> Decimal:
     increment = Decimal("0.000000001" if fractional_orders else "1")
     return Decimal(str(quantity)).quantize(increment, rounding=ROUND_DOWN)
+
+
+def latest_dollar_volume(frame: DataFrame) -> float:
+    """The last completed session's traded value, or 0 when it cannot be read.
+
+    Used to order candidates competing for the same position slots. Share count
+    alone would rank a cheap stock above a higher-priced one turning over the
+    same money, and the position cap is a money cap, so the ranking is on value
+    traded. A symbol whose session cannot be read still trades; it ranks last.
+    """
+    if frame.empty or not {"close", "volume"}.issubset(frame.columns):
+        return 0.0
+    volume = float(cast(float, cast(Series, frame["volume"]).iloc[-1]))
+    close = float(cast(float, cast(Series, frame["close"]).iloc[-1]))
+    if not isfinite(volume) or not isfinite(close) or volume < 0.0 or close < 0.0:
+        return 0.0
+    return volume * close
 
 
 def market_is_rising(frame: DataFrame) -> bool:
@@ -163,6 +185,7 @@ def momentum_entry(frame: DataFrame) -> bool:
     if not isinstance(crossed, Series):
         return False
     latest = _finite_value(close)
+    previous = _finite_value(close, -2)
     latest_20 = _finite_value(average_20)
     latest_50 = _finite_value(average_50)
     latest_200 = _finite_value(average_200)
@@ -171,6 +194,7 @@ def momentum_entry(frame: DataFrame) -> bool:
     latest_directional = _finite_value(directional_values)
     if None in {
         latest,
+        previous,
         latest_20,
         latest_50,
         latest_200,
@@ -180,6 +204,7 @@ def momentum_entry(frame: DataFrame) -> bool:
     }:
         return False
     assert latest is not None
+    assert previous is not None
     assert latest_20 is not None
     assert latest_50 is not None
     assert latest_200 is not None
@@ -187,10 +212,14 @@ def momentum_entry(frame: DataFrame) -> bool:
     assert latest_strength is not None
     assert latest_directional is not None
     trend = latest > latest_50 > latest_200
+    # The cross settles day 1 below and day 2 above the 20-day average. Day 2
+    # must also close up on day 1, so the reclaim is carried by the buyer rather
+    # than by an average drifting down onto a flat price.
     return (
         bool(latest_cross)
+        and latest > previous
         and trend
-        and 50.0 <= latest_strength <= 70.0
+        and latest_strength >= 50.0
         and latest_directional >= 25.0
     )
 
@@ -231,25 +260,30 @@ def tfb_entry(frame: DataFrame) -> bool:
     )
 
 
-def signal_exit(frame: DataFrame) -> bool:
+def signal_exit(frame: DataFrame, needs_both: bool = True) -> bool:
+    """Momentum has given out: the close is under its average, RSI is weak, or both.
+
+    Which of those counts is the caller's. TFB-50 waits for the two together.
+    Momentum (SMA) treats either as enough, because waiting for both left it
+    holding through a close under the average whenever RSI was merely soft
+    rather than weak.
+    """
     close = cast(Series, frame["close"])
     if close.count() < 20:
         return False
-    average_20 = ta_sma(close, length=20, talib=False)
+    average = ta_sma(close, length=20, talib=False)
     strength = ta_rsi(close, length=PERIOD, talib=False)
     strength_values = _indicator_series(strength, f"RSI_{PERIOD}", 1)
-    if not isinstance(average_20, Series) or strength_values is None:
+    if not isinstance(average, Series) or strength_values is None:
         return False
     latest = _finite_value(close)
-    latest_average = _finite_value(average_20)
+    latest_average = _finite_value(average)
     latest_strength = _finite_value(strength_values)
-    return (
-        latest is not None
-        and latest_average is not None
-        and latest_strength is not None
-        and latest < latest_average
-        and latest_strength < 50.0
-    )
+    if latest is None or latest_average is None or latest_strength is None:
+        return False
+    below_average = latest < latest_average
+    weak_strength = latest_strength < 50.0
+    return (below_average and weak_strength) if needs_both else (below_average or weak_strength)
 
 
 def does_macd_confirm(close: Series, direction: Direction) -> bool:
@@ -287,8 +321,15 @@ def next_earnings(symbol: str, day: date) -> date | None:
 
 
 def earnings_blocked(symbol: str, day: date) -> bool:
+    """Whether earnings are close enough to stand in the way of a new position.
+
+    A calendar that reads back empty is not a reason to stay out: the rule bars
+    an entry made *near earnings*, and no known date is not that. A calendar
+    that cannot be read at all is a different matter, and the callers stand
+    aside on it.
+    """
     upcoming = next_earnings(symbol, day)
-    return upcoming is None or 0 <= (upcoming - day).days <= 5
+    return upcoming is not None and 0 <= (upcoming - day).days <= 5
 
 
 def earnings_exit_due(symbol: str, day: date) -> bool:
