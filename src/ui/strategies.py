@@ -155,8 +155,11 @@ def _orb(
         ),
         Row(
             field="Direction",
-            value="Long and short. A short is skipped when the broker will not lend the stock.",
-            source="portfolio.py · _enter",
+            value="Long and short. A short is skipped when the broker will not lend the stock, "
+            "and is sized in whole shares — a broker lends shares, not fractions of one, so "
+            "every order on a short leg is rounded down to a whole number. Longs use "
+            "fractional quantities when the account allows them.",
+            source="portfolio.py · _enter, _protect, _exit",
         ),
         Row(
             field="Range",

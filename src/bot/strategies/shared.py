@@ -128,6 +128,19 @@ def quantity_value(quantity: float, fractional_orders: bool) -> Decimal:
     return Decimal(str(quantity)).quantize(increment, rounding=ROUND_DOWN)
 
 
+def fractional_allowed(direction: Direction, fractional_orders: bool) -> bool:
+    """Whole shares on a short leg, whatever the account is configured for.
+
+    A broker lends shares, not fractions of one: Alpaca accepts a fractional
+    quantity only to open or close a long. A fractional short is rejected
+    outright, and a fractional *cover* is worse than useless — it would strand a
+    fractional short position that no later order can close. Every quantity on a
+    short, entry, stop and scale-out alike, is therefore rounded down to whole
+    shares. Long orders keep whatever the account allows.
+    """
+    return fractional_orders and direction == 1
+
+
 def latest_dollar_volume(frame: DataFrame) -> float:
     """The last completed session's traded value, or 0 when it cannot be read.
 

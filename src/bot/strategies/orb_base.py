@@ -11,6 +11,7 @@ from bot.strategies.shared import (
     Direction,
     does_macd_confirm,
     entry_quantity,
+    fractional_allowed,
     latest_atr,
     next_stop,
     normalize_ohlcv,
@@ -273,7 +274,7 @@ class OrbStrategy(StrategyBase):
             stop_distance,
             min(0.10, float(self.parameters["position_fraction_max"])),
             risk_limit,
-            bool(self.parameters["fractional_orders"]),
+            fractional_allowed(direction, bool(self.parameters["fractional_orders"])),
         )
         if quantity <= 0:
             return
@@ -329,12 +330,18 @@ class OrbStrategy(StrategyBase):
         quantity = self._quantity(symbol)
         if quantity <= 0:
             return
+        size = quantity_value(
+            quantity,
+            fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"])),
+        )
+        if size <= 0:
+            return
         self._cancel(symbol)
         side = "sell" if holding.direction == 1 else "buy"
         self.submit_order(
             self.create_order(
                 symbol,
-                quantity_value(quantity, bool(self.parameters["fractional_orders"])),
+                size,
                 side,
                 stop_price=round(holding.stop, 2),
                 time_in_force="day",
@@ -349,12 +356,20 @@ class OrbStrategy(StrategyBase):
         if amount <= 0:
             self._positions.pop(symbol, None)
             return
+        size = quantity_value(
+            amount,
+            fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"])),
+        )
+        if size <= 0:
+            # See the composer's _exit: a scale-out below one whole share of a
+            # short is skipped rather than cancelling the stop for nothing.
+            return
         self._cancel(symbol)
         side = "sell" if holding.direction == 1 else "buy"
         self.submit_order(
             self.create_order(
                 symbol,
-                quantity_value(amount, bool(self.parameters["fractional_orders"])),
+                size,
                 side,
                 time_in_force="day",
             )
