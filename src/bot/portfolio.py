@@ -47,6 +47,9 @@ STOP_COVERAGE_TOLERANCE = 1e-6
 # The register closes intraday positions *before* 15:55 ET. The exit is a market
 # order, so it is submitted a minute early to leave room for the fill.
 ORB_CLOSE_DEADLINE = time(15, 54)
+# The average each daily engine's signal exit is measured against. They differ:
+# Momentum (SMA) gives up on the 50-day average, TFB-50 on the 20-day one.
+DAILY_EXIT_AVERAGE: dict[StrategyName, int] = {"sma": 50, "tfb_50": 20}
 
 
 @dataclass(slots=True)
@@ -574,7 +577,15 @@ class Strategy(StrategyBase):
             if blocked:
                 continue
             last = float(cast(Any, frame["close"]).iloc[-1])
-            self._enter("sma", symbol, symbol, last, last - 1.5 * latest_atr(frame), now)
+            self._enter(
+                "sma",
+                symbol,
+                symbol,
+                last,
+                last - 1.5 * latest_atr(frame),
+                now,
+                caps_risk_per_trade=False,
+            )
 
     def _run_tfb(self, now: datetime) -> None:
         for symbol in self._eligible_symbols:
@@ -755,15 +766,16 @@ class Strategy(StrategyBase):
             DataFrame,
             frame[cast(Any, frame.index) >= holding.entered_at.astimezone(TRADING_ZONE)],
         )
-        observed = since if len(since) else frame
         last = float(cast(Any, frame["close"]).iloc[-1])
-        holding.highest = max(
-            holding.highest,
-            float(cast(Any, observed["close"]).max()),
-        )
+        # The stop trails the highest close *since entry*. On the entry day there
+        # is no such close yet, and `highest` stays at the fill price: falling
+        # back to the whole frame here would anchor the stop to a high set months
+        # before the trade and stop it out on its first session.
+        if len(since):
+            holding.highest = max(holding.highest, float(cast(Any, since["close"]).max()))
         multiple = 1.5 if holding.engine == "sma" else 2.0
         holding.stop = max(holding.stop, holding.highest - multiple * latest_atr(frame))
-        if last < holding.stop or signal_exit(frame):
+        if last < holding.stop or signal_exit(frame, DAILY_EXIT_AVERAGE[holding.engine]):
             self._exit(holding)
 
     def _manage_orb(self, holding: Holding, now: datetime) -> None:
@@ -823,6 +835,7 @@ class Strategy(StrategyBase):
         direction: Direction = 1,
         targets: tuple[float, float, float] | None = None,
         risk_fraction_max: float | None = None,
+        caps_risk_per_trade: bool = True,
     ) -> bool:
         if engine not in self._enabled or self._claimed(signal) or direction * (price - stop) <= 0:
             return False
@@ -850,11 +863,13 @@ class Strategy(StrategyBase):
                 engine,
             )
             return False
-        risk_fraction = float(self.parameters["risk_per_trade_max"])
+        risk_fraction: float | None = float(self.parameters["risk_per_trade_max"])
         if equity <= 0:
             return False
         if risk_fraction_max is not None:
             risk_fraction = risk_fraction_max
+        if not caps_risk_per_trade:
+            risk_fraction = None
         quantity = entry_quantity(
             equity,
             price,

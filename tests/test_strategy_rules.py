@@ -16,6 +16,7 @@ from bot.strategies.shared import (
     momentum_entry,
     next_stop,
     normalize_ohlcv,
+    signal_exit,
 )
 from tests.world.index import market_frame, relative_volume_frame
 
@@ -65,6 +66,19 @@ def test_position_size_respects_tighter_risk_limit_when_inputs_are_valid() -> No
     quantity = entry_quantity(10_000, 100, 5, 0.1, 0.005, True)
 
     assert quantity == Decimal("10.000000000")
+
+
+def test_position_size_uses_the_notional_cap_alone_when_no_risk_limit_is_set() -> None:
+    """An engine whose register reads "risk per trade = not set" passes None."""
+    capped = entry_quantity(10_000, 100, 5, 0.1, 0.005, True)
+    uncapped = entry_quantity(10_000, 100, 5, 0.1, None, True)
+
+    assert capped == Decimal("10.000000000")
+    assert uncapped == Decimal("10.000000000")  # notional cap: 10% of 10_000 / 100
+
+
+def test_position_size_is_still_zero_without_a_risk_limit_when_the_stop_is_unusable() -> None:
+    assert entry_quantity(10_000, 100, 0.0, 0.1, None, True) == Decimal(0)
 
 
 def test_position_size_rounds_down_when_fractional_orders_are_disabled() -> None:
@@ -143,6 +157,73 @@ def test_momentum_entry_passes_when_every_threshold_is_met() -> None:
 
 def test_momentum_entry_fails_when_history_is_insufficient() -> None:
     assert momentum_entry(market_frame(199)) is False
+
+
+@pytest.mark.parametrize(
+    ("last_close", "directional", "expected"),
+    [
+        (260.0, 30.0, True),
+        (240.0, 30.0, False),  # day 2 closes below day 1: the reclaim is the average drifting
+        (251.0, 25.0, False),  # ADX has to clear 25, not merely reach it
+    ],
+)
+def test_momentum_entry_reads_the_second_day_close_and_the_adx_floor(
+    last_close: float, directional: float, expected: bool
+) -> None:
+    frame = market_frame(200)
+    close_column = frame.columns.get_loc("close")
+    frame.iloc[-2, close_column] = 250.0  # day 1, the session that closed below SMA(20)
+    frame.iloc[-1, close_column] = last_close
+
+    def average(close: Series, length: int, talib: bool) -> Series:
+        values = {20: 230.0, 50: 200.0, 200: 100.0}
+        return Series(values[length], index=close.index)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(shared, "ta_sma", average)
+        monkeypatch.setattr(
+            shared,
+            "ta_rsi",
+            lambda close, length, talib: Series(60.0, index=close.index, name="RSI_14"),
+        )
+        monkeypatch.setattr(
+            shared,
+            "ta_adx",
+            lambda high, low, close, length, talib: DataFrame(
+                {"ADX_14": Series(directional, index=close.index)}
+            ),
+        )
+        monkeypatch.setattr(
+            shared,
+            "ta_cross",
+            lambda close, threshold, above, asint: Series(1.0, index=close.index),
+        )
+
+        assert momentum_entry(frame) is expected
+
+
+def test_signal_exit_reads_the_average_the_caller_asks_for() -> None:
+    """Momentum (SMA) gives up on the 50-day average, TFB-50 on the 20-day one."""
+    frame = market_frame(60)
+    frame.iloc[-1, frame.columns.get_loc("close")] = 120.0
+
+    def average(close: Series, length: int, talib: bool) -> Series:
+        return Series(110.0 if length == 20 else 130.0, index=close.index)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(shared, "ta_sma", average)
+        monkeypatch.setattr(
+            shared,
+            "ta_rsi",
+            lambda close, length, talib: Series(40.0, index=close.index, name="RSI_14"),
+        )
+
+        assert signal_exit(frame, 20) is False
+        assert signal_exit(frame, 50) is True
+
+
+def test_signal_exit_fails_when_history_is_shorter_than_its_average() -> None:
+    assert signal_exit(market_frame(30), 50) is False
 
 
 def test_relative_volume_passes_when_current_session_exceeds_threshold() -> None:

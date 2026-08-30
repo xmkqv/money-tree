@@ -42,6 +42,15 @@ POSITION_FRACTION_CEILING = 0.10
 POSITIONS_MAX = 10
 ORB_RISK_CEILING = 0.01
 
+# The average each daily engine's signal exit is measured against, from
+# portfolio.py DAILY_EXIT_AVERAGE. The two engines disagree, so the wording
+# below cannot quote a single length.
+DAILY_EXIT_AVERAGE = {"sma": 50, "tfb_50": 20}
+
+# Engines whose register sets no per-trade risk limit, so position size comes
+# from the notional cap alone.
+UNCAPPED_RISK_ENGINES = frozenset({"sma"})
+
 # When each engine can open a trade, from portfolio.py. The daily pair is
 # checked once a session before 09:40; the two breakout engines scan on their
 # own candle boundary until 10:30. Positions already open keep being managed
@@ -181,15 +190,23 @@ def _orb(minutes: int, volume_multiple: float, uses_macd: bool, per_trade: float
 
 
 def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
+    exit_average = DAILY_EXIT_AVERAGE[engine]
     if engine == "sma":
         setup = (
             "The closing price crosses back above its 20-day average while already above "
             "both the 50-day and 200-day averages. Needs 200 sessions of history."
         )
-        confirmation = "RSI (14) between 50 and 70, and ADX (14) at 25 or above."
+        confirmation = "RSI (14) between 50 and 70, and ADX (14) above 25."
         entry = (
-            "Market buy before 09:40, checked once a day. Skipped if the company reports "
-            "earnings within 5 days, or if its earnings date cannot be read."
+            "A three-day structure: one session closes below the 20-day average, the next "
+            "closes back above it and higher than that first close, and the buy goes in at "
+            "the open of the third. Market buy before 09:40, checked once a day. Skipped if "
+            "the company reports earnings within 5 days, or if its earnings date cannot be "
+            "read."
+        )
+        risk = (
+            "No per-trade risk limit is set for this engine, so the size comes from the "
+            f"position cap alone: never more than {_pct(POSITION_FRACTION_CEILING)} of equity."
         )
         setup_source = "strategies/shared.py · momentum_entry"
         entry_source = "portfolio.py · _run_sma"
@@ -202,6 +219,10 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         entry = (
             "Market buy before 09:40, checked once a day. Upcoming earnings do not block "
             "an entry for this engine."
+        )
+        risk = (
+            f"{_pct(per_trade)} of account equity per trade, and a single position is "
+            f"never worth more than {_pct(POSITION_FRACTION_CEILING)} of equity."
         )
         setup_source = "strategies/shared.py · tfb_entry"
         entry_source = "portfolio.py · _run_tfb"
@@ -230,12 +251,7 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
             "only ever moves up.",
             source="portfolio.py · _manage_daily",
         ),
-        Row(
-            field="Max Risk",
-            value=f"{_pct(per_trade)} of account equity per trade, and a single position is "
-            f"never worth more than {_pct(POSITION_FRACTION_CEILING)} of equity.",
-            source="portfolio.py · _enter",
-        ),
+        Row(field="Max Risk", value=risk, source="portfolio.py · _enter"),
         Row(
             field="Min. R:R",
             value="No fixed target. The trade is held while the trend holds and closed on the "
@@ -245,7 +261,7 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         Row(
             field="Exit Rule",
             value="Closed when the price falls through the trailing stop, or when the close "
-            "drops below its 20-day average with RSI (14) under 50.",
+            f"drops below its {exit_average}-day average with RSI (14) under 50.",
             source="strategies/shared.py · signal_exit",
         ),
         Row(

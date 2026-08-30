@@ -22,6 +22,8 @@ LOOKBACK = 260
 class DailyStrategy(StrategyBase):
     stop_multiple: ClassVar[float]
     blocks_entries_before_earnings: ClassVar[bool]
+    caps_risk_per_trade: ClassVar[bool]
+    exit_average_length: ClassVar[int]
 
     _baseline_equity: float
     _day: date | None
@@ -116,12 +118,13 @@ class DailyStrategy(StrategyBase):
         price = float(cast(Any, frame["close"]).iloc[-1])
         stop_distance = self.stop_multiple * average_range
         parameters: dict[str, Any] = self.parameters
+        risk_limit = float(parameters["risk_per_trade_max"]) if self.caps_risk_per_trade else None
         quantity = entry_quantity(
             equity,
             price,
             stop_distance,
             min(0.10, float(parameters["position_fraction_max"])),
-            float(parameters["risk_per_trade_max"]),
+            risk_limit,
             bool(parameters["fractional_orders"]),
         )
         if quantity <= 0:
@@ -136,7 +139,11 @@ class DailyStrategy(StrategyBase):
         self._highest[symbol] = highest
         stop = max(self._stops.get(symbol, 0.0), highest - self.stop_multiple * latest_atr(frame))
         self._stops[symbol] = stop
-        if last >= stop and not signal_exit(frame) and not earnings_exit_due(symbol, day):
+        if (
+            last >= stop
+            and not signal_exit(frame, self.exit_average_length)
+            and not earnings_exit_due(symbol, day)
+        ):
             return
         self._cancel_symbol_orders(symbol)
         self.submit_order(self.create_order(symbol, held, "sell", time_in_force="day"))

@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+from bot.portfolio import DAILY_EXIT_AVERAGE as COMPOSER_EXIT_AVERAGE
 from bot.portfolio import ORB_CLOSE_DEADLINE
 from bot.portfolio import Strategy as PortfolioStrategy
 from bot.strategies import orb, orb_momentum, sma, tfb_50
@@ -29,6 +30,7 @@ from ui.dashboard import (
 )
 from ui.ledger import TRADING_ZONE
 from ui.strategies import (
+    DAILY_EXIT_AVERAGE,
     FIELDS,
     ORB_RISK_CEILING,
     POSITION_FRACTION_CEILING,
@@ -177,9 +179,13 @@ def test_intraday_engines_are_flat_before_the_close() -> None:
 
 
 def test_risk_wording_follows_the_reported_configuration() -> None:
-    """The limits are environment settings, so the page must not quote defaults."""
+    """The limits are environment settings, so the page must not quote defaults.
+
+    Read off TFB-50: Momentum (SMA) sets no per-trade risk limit, so its card
+    has no configured figure to follow.
+    """
     spec = strategy_spec(configuration(per_trade=0.0075, per_day=0.03))
-    rows = {row["field"]: row["value"] for row in spec["strategies"][2]["rows"]}
+    rows = {row["field"]: row["value"] for row in spec["strategies"][3]["rows"]}
     rules = {row["field"]: row["value"] for row in spec["portfolio"]}
 
     assert "0.75% of account equity" in rows["Max Risk"]
@@ -191,7 +197,38 @@ def test_spec_falls_back_to_documented_defaults_when_no_bot_is_reporting() -> No
     spec = strategy_spec(None)
 
     assert spec["configured"] is False
-    assert "0.5% of account equity" in spec["strategies"][2]["rows"][8]["value"]
+    assert "0.5% of account equity" in spec["strategies"][3]["rows"][8]["value"]
+
+
+def test_the_momentum_engine_sets_no_per_trade_risk_limit() -> None:
+    """Its register reads "risk per trade = not set", so only the notional caps it."""
+    assert "caps_risk_per_trade=False" in inspect.getsource(PortfolioStrategy._run_sma)
+    assert "caps_risk_per_trade" not in inspect.getsource(PortfolioStrategy._run_tfb)
+
+    assert sma.Strategy.caps_risk_per_trade is False
+    assert tfb_50.Strategy.caps_risk_per_trade is True
+
+    risk = spec_rows("sma")["Max Risk"]
+    assert "No per-trade risk limit" in risk
+    assert f"{POSITION_FRACTION_CEILING:.0%} of equity" in risk
+
+
+def test_daily_exit_averages_match_the_composer() -> None:
+    """The two daily engines give up on different averages."""
+    assert DAILY_EXIT_AVERAGE == COMPOSER_EXIT_AVERAGE
+
+    for engine, length in COMPOSER_EXIT_AVERAGE.items():
+        module = sma if engine == "sma" else tfb_50
+        assert module.Strategy.exit_average_length == length
+        assert f"{length}-day average" in spec_rows(engine)["Exit Rule"]
+
+
+def test_the_daily_stop_only_trails_closes_made_since_entry() -> None:
+    """Anchoring to the whole frame would stop a new position out on day one."""
+    source = inspect.getsource(PortfolioStrategy._manage_daily)
+
+    assert "if len(since):" in source
+    assert "observed" not in source
 
 
 def test_the_universe_screen_matches_the_discovery_query() -> None:

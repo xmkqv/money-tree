@@ -193,12 +193,12 @@ setup
     opening range = none
     marks = none
     price = price > SMA(50) > SMA(200)
-    momentum = 50 <= RSI <= 70 and ADX >= 25
+    momentum = 50 <= RSI <= 70 and ADX > 25
 
 entry
     window = market open on day 3
     day 1 = close < SMA(20)
-    day 2 = close > SMA(20)
+    day 2 = close > SMA(20) and close > day 1 close
     long signal = day 1 and day 2 rules pass
     order = day 3 market open
     earnings block = no new entry within 5 days before earnings
@@ -215,7 +215,7 @@ risk
 
 exit
     profit targets = none
-    signal exit = daily close < SMA(20) and RSI(14) < 50
+    signal exit = daily close < SMA(50) and RSI(14) < 50
     earnings exit = close any open position on the day before earnings
     deadline = none
     shared rules = Stop Loss and Emergency Exit
