@@ -8,6 +8,7 @@ holds the strategy register.
 - [ ] Split the orb5 strategy in two: one long-only, one short-only. Does the split
       make any difference to results?
 - [ ] Why haven't orb5 or orb10 made any short plays?
+- [ ] Sorting rule for the orb5 strategy.
 
 ## new strategies
 
