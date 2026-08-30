@@ -36,6 +36,7 @@ ASSET_MEDIA_TYPES = {
     "dashboard.css": "text/css",
     "dashboard.js": "text/javascript",
     "theme.js": "text/javascript",
+    "favicon.svg": "image/svg+xml",
 }
 LEDGER_TTL_SECONDS = 60
 BENCHMARK_SYMBOL = "SPY"

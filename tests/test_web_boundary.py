@@ -1,5 +1,6 @@
 import hashlib
 import re
+import xml.etree.ElementTree as ET
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -75,6 +76,27 @@ def test_asset_urls_carry_a_digest_so_a_changed_file_is_never_served_from_cache(
     contents = (ASSET_DIRECTORY / "dashboard.css").read_bytes()
     changed = hashlib.sha256(contents + b"/* edit */").hexdigest()[:12]
     assert changed not in ASSET_REWRITES[b"/assets/dashboard.css"].decode()
+
+
+def test_the_page_links_a_tab_icon_that_survives_a_dark_tab_strip() -> None:
+    """Black is right on a light tab strip and invisible on a dark one.
+
+    The icon is one file for both, so it carries the switch itself; without it
+    the tab would simply look empty for anyone running a dark browser.
+    """
+    with web_client() as client:
+        authenticate(client)
+        page = client.get("/")
+        link = re.search(r'<link rel="icon" href="([^"]+)" type="([^"]+)">', page.text)
+        assert link, "the page should declare a tab icon"
+        icon = client.get(link.group(1))
+
+    assert link.group(2) == "image/svg+xml"
+    assert link.group(1).encode() in ASSET_REWRITES.values(), "the icon should be fingerprinted"
+    assert icon.status_code == 200
+    assert icon.headers["content-type"].startswith("image/svg+xml")
+    ET.fromstring(icon.text)  # a malformed icon draws nothing at all
+    assert "prefers-color-scheme: dark" in icon.text
 
 
 def test_unknown_asset_is_not_served() -> None:
