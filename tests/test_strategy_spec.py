@@ -795,3 +795,6 @@ def test_the_breakout_is_confirmed_as_of_the_signal_candle(engine: str) -> None:
     assert "The first completed" in setup
     assert "re-read on every pass rather than only its newest candle" in setup
     assert "further back than the previous candle has run, and is passed over" in setup
+
+    entry = spec_rows(engine)["Entry"]
+    assert "filling at the next executable price" in entry

@@ -206,8 +206,10 @@ def _orb(
         ),
         Row(
             field="Entry",
-            value="A market order goes in the moment the breakout candle closes, so it fills "
-            f"at the open of the next {minutes}-minute candle — {first_entry} at the earliest, "
+            value="A market order goes in the moment the scan reads the breakout, filling at the "
+            "next executable price — the open of the next "
+            f"{minutes}-minute candle when the signal is read on its own boundary, {first_entry} "
+            "at the earliest, "
             "since the opening candle cannot break its own range. Good for the day only. The "
             "size is worked out from the live quote, falling back to the breakout candle's "
             f"close, and the fill then sets {fill_sets}. It is passed "
