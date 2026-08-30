@@ -1203,8 +1203,12 @@ function renderPortfolio() {
       { t: signedMoney(pos.unreal) + "  " + signedPct(pos.unrealPct), r: true, cls: tone(pos.unreal) },
     ]), 3);
 
-  /* the session before today */
-  const prev = SESSIONS[SESSIONS.length - 2];
+  /* The most recent session that is not today's. Taking the second-to-last
+     entry assumed the last one was always today, which only holds while the bot
+     has already traded today: on a weekend, a holiday, or before the first fill
+     of the session, it left this panel a session behind the trades it was
+     meant to be showing. */
+  const prev = [...SESSIONS].reverse().find(session => session.date !== LIVE.today);
   const trades = prev ? tradesByDate.get(prev.date) || [] : [];
   const realised = trades.reduce((a, t) => a + t.pnl, 0);
   const wins = trades.filter(t => t.pnl > 0).length;
