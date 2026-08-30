@@ -1447,6 +1447,12 @@ function clockOf(iso) {
   }).format(at);
 }
 
+function monthOf(iso) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/New_York", month: "short", year: "numeric",
+  }).format(new Date(iso));
+}
+
 function weekdayOf(iso) {
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: "America/New_York", weekday: "short",
@@ -1805,37 +1811,102 @@ function drawTradeChart() {
     '<text x="' + (width - TC_PAD.r + 8) + '" y="' + (py(v) + 3.5).toFixed(2) + '" fill="' + C.axis +
     '" font-size="10" font-family="Roboto Mono, monospace">' + money(v) + "</text>").join("");
 
-  /* Time along the axis, and the day named wherever the date turns over — every
-     label carrying the full date would not fit a chart spanning several
-     sessions, and none of them carrying it leaves the reader guessing. */
-  const dayStarts = new Map();
-  shown.forEach((b, k) => {
-    const key = dayOf(b.t);
-    if (!dayStarts.has(key)) dayStarts.set(key, k + lo);
+  /* The axis carries as much date as it has room for and no more. On a daily
+     chart zoomed out to a year, a label per session is thousands of characters
+     in the space of a few hundred, so the grain steps back to the month; on an
+     intraday chart the day is named where the date turns over and the rest
+     carry the time. Either way the number of labels is decided by the width
+     available, not by the number of bars, which is what let them pile up. */
+  const LABEL_WIDTH = 78;
+  const roomFor = Math.max(2, Math.floor(plotW / LABEL_WIDTH));
+
+  const firstOf = key => {
+    const seen = new Map();
+    shown.forEach((b, k) => { const at = key(b.t); if (!seen.has(at)) seen.set(at, k + lo); });
+    return seen;
+  };
+  const daily = TC_STATE.bar === "1Day";
+  const byDay = firstOf(dayOf);
+  const byMonth = firstOf(monthOf);
+  /* on a daily chart every bar is its own day, so the month is the next grain up */
+  const byMonths = daily && byDay.size > roomFor;
+  const anchors = byMonths ? byMonth : byDay;
+
+  /* still too many? keep every nth, so the ones that remain stay evenly spread */
+  const keep = Math.max(1, Math.ceil(anchors.size / roomFor));
+  const labelled = new Map();
+  [...anchors.entries()].forEach(([text, index], n) => {
+    if (n % keep === 0) labelled.set(index, text);
   });
-  const boundary = new Set(dayStarts.values());
-  const every = Math.max(1, Math.round(shown.length / 8));
-  /* a dated label is twice the width of a bare time, so keep plain labels well
-     clear of one rather than letting the two print over each other */
-  const clearOf = Math.max(2, Math.round(shown.length / 14));
-  const axis = shown.map((b, k) => {
+  const boundary = new Set(anchors.values());
+
+  /* Times are placed inside each day, never by one stride across the whole
+     window: with seven bars to a session, a global stride walks backwards
+     through the time of day and the axis reads 15:30, 14:30, 13:30, each from
+     a different session and none of them saying so. Where there is not room
+     for a few times within a day, the day markers carry the axis alone. */
+  const dayIndexes = [...byDay.values()].sort((a, b) => a - b);
+  const perDay = dayIndexes.length ? roomFor / dayIndexes.length : roomFor;
+  const timesPerDay = daily ? 0 : Math.max(0, Math.floor(perDay) - 1);
+
+  const candidates = [];
+  const push = (i, named) => {
+    const b = shown[i - lo];
+    if (!b) return;
+    candidates.push({
+      i, named,
+      lines: named
+        ? (byMonths ? [monthOf(b.t)]
+          : daily ? [weekdayOf(b.t) + " " + dayOf(b.t)]
+          : [weekdayOf(b.t) + " " + dayOf(b.t), clockOf(b.t)])
+        : [clockOf(b.t)],
+    });
+  };
+
+  dayIndexes.forEach((from, n) => {
+    const to = n + 1 < dayIndexes.length ? dayIndexes[n + 1] - 1 : hi;
+    if (labelled.has(from)) push(from, true);
+    if (timesPerDay < 2) return;
+    const step = (to - from) / (timesPerDay + 1);
+    if (step < 1) return;
+    for (let slot = 1; slot <= timesPerDay; slot++) {
+      const at = Math.round(from + step * slot);
+      if (at > from && at <= to) push(at, false);
+    }
+  });
+  candidates.sort((a, b) => a.i - b.i);
+
+  const CHAR = 6.1, GAP = 10;          /* Roboto Mono advance at 10px, and air */
+  const kept = [];
+  for (const candidate of candidates) {
+    const half = Math.max(...candidate.lines.map(line => line.length)) * CHAR / 2;
+    const natural = px(candidate.i);
+    candidate.x = clamp(natural, TC_PAD.l + half, width - TC_PAD.r - half);
+    candidate.left = candidate.x - half;
+    candidate.right = candidate.x + half;
+    candidate.clamped = Math.abs(candidate.x - natural) > 0.5;
+    const previous = kept[kept.length - 1];
+    if (!previous || candidate.left >= previous.right + GAP) { kept.push(candidate); continue; }
+    /* they collide: the one shoved onto the plot by the clamp is the one whose
+       real position is off it, so it gives way to the one that belongs here */
+    if (previous.clamped && !candidate.clamped) kept[kept.length - 1] = candidate;
+    else if (previous.clamped && candidate.clamped) kept[kept.length - 1] = candidate;
+  }
+
+  const rules = shown.map((b, k) => {
     const i = k + lo;
-    const isBoundary = boundary.has(i);
-    if (!isBoundary && i % every !== 0) return "";
-    if (!isBoundary && [...boundary].some(at => Math.abs(at - i) < clearOf)) return "";
-    const x = clamp(px(i), TC_PAD.l + 26, width - TC_PAD.r - 26);
-    const label = TC_STATE.bar === "1Day"
-      ? [weekdayOf(b.t) + " " + dayOf(b.t)]
-      : isBoundary ? [weekdayOf(b.t) + " " + dayOf(b.t), clockOf(b.t)] : [clockOf(b.t)];
-    const rule = isBoundary && i > 0
+    return boundary.has(i) && i > lo
       ? '<line x1="' + px(i - 0.5).toFixed(2) + '" y1="' + TC_PAD.t + '" x2="' + px(i - 0.5).toFixed(2) +
         '" y2="' + (TC_PAD.t + plotH) + '" stroke="' + C.grid + '" stroke-width="1"/>'
       : "";
-    return rule + label.map((line, row) =>
-      '<text x="' + x.toFixed(2) + '" y="' + (height - 15 + row * 11) + '" fill="' + C.axis +
-      '" font-size="10" text-anchor="middle" font-family="Roboto Mono, monospace"' +
-      (isBoundary ? ' font-weight="600"' : "") + ">" + line + "</text>").join("");
   }).join("");
+
+  const axis = rules + kept.map(candidate =>
+    candidate.lines.map((line, row) =>
+      '<text x="' + candidate.x.toFixed(2) + '" y="' + (height - 15 + row * 11) + '" fill="' + C.axis +
+      '" font-size="10" text-anchor="middle" font-family="Roboto Mono, monospace"' +
+      (candidate.named ? ' font-weight="600"' : "") + ">" + line + "</text>").join("")
+  ).join("");
 
   /* One line per length, each labelled at its right end. */
   const smaEnds = [];
