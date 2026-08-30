@@ -220,7 +220,7 @@ def sessions(cycles: list[Cycle], closes: dict[str, float], opening: float) -> l
 SHORT_LABELS: dict[str, str] = {
     "orb": "ORB5",
     "orb_momentum": "ORB10",
-    "sma": "Momentum",
+    "sma": "Momentum SMA",
     "tfb_50": "TFB-50",
     UNATTRIBUTED: "Untagged",
 }
