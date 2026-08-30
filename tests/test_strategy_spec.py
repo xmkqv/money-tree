@@ -236,10 +236,11 @@ def test_daily_candidates_compete_on_volume_in_both_paths() -> None:
     """Alphabetical order handed every slot to whatever sorted first."""
     for runner in (PortfolioStrategy._ranked, DailyStrategy._ranked):
         source = inspect.getsource(runner)
-        assert "latest_volume(frame)" in source
+        assert "latest_dollar_volume(frame)" in source
         assert "key=lambda row: (-row[0], row[1])" in source
 
     for engine in ("sma", "tfb_50"):
+        assert "value traded" in spec_rows(engine)["Entry"]
         assert "busiest first" in spec_rows(engine)["Entry"]
         assert "_ranked" in next(
             row["source"] for row in spec_rows_full(engine) if row["field"] == "Entry"

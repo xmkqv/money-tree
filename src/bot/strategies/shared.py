@@ -128,16 +128,21 @@ def quantity_value(quantity: float, fractional_orders: bool) -> Decimal:
     return Decimal(str(quantity)).quantize(increment, rounding=ROUND_DOWN)
 
 
-def latest_volume(frame: DataFrame) -> float:
-    """The last completed session's volume, or 0 when it cannot be read.
+def latest_dollar_volume(frame: DataFrame) -> float:
+    """The last completed session's traded value, or 0 when it cannot be read.
 
-    Used to order candidates competing for the same position slots. A symbol
-    whose volume is unreadable still trades; it simply ranks last.
+    Used to order candidates competing for the same position slots. Share count
+    alone would rank a cheap stock above a higher-priced one turning over the
+    same money, and the position cap is a money cap, so the ranking is on value
+    traded. A symbol whose session cannot be read still trades; it ranks last.
     """
-    if frame.empty or "volume" not in frame.columns:
+    if frame.empty or not {"close", "volume"}.issubset(frame.columns):
         return 0.0
-    value = float(cast(float, cast(Series, frame["volume"]).iloc[-1]))
-    return value if isfinite(value) else 0.0
+    volume = float(cast(float, cast(Series, frame["volume"]).iloc[-1]))
+    close = float(cast(float, cast(Series, frame["close"]).iloc[-1]))
+    if not isfinite(volume) or not isfinite(close) or volume < 0.0 or close < 0.0:
+        return 0.0
+    return volume * close
 
 
 def market_is_rising(frame: DataFrame) -> bool:

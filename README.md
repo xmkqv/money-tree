@@ -204,7 +204,7 @@ entry
     earnings block = no new entry within 5 days before earnings,
         ignored when no earnings date is known
     ranking = when more symbols qualify than there is room to hold,
-        take them by last completed session volume, highest first
+        take them by last completed session close * volume, highest first
 
 risk
     position size = 10% of account
@@ -252,7 +252,7 @@ entry
     order = market open after the signal candle
     earnings block = none
     ranking = when more symbols qualify than there is room to hold,
-        take them by last completed session volume, highest first
+        take them by last completed session close * volume, highest first
 
 risk
     position size = 10% of account

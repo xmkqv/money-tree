@@ -117,44 +117,56 @@ def test_a_close_below_the_trailing_stop_exits() -> None:
     assert strategy.exited == [held]
 
 
-def volume_frame(volume: float) -> DataFrame:
-    """One symbol's history, whose last completed session traded `volume`."""
+def session_frame(volume: float, price_scale: float = 1.0) -> DataFrame:
+    """One symbol's history, with the last completed session's tape set."""
     frame = price_history().copy(deep=True)
+    for column in ("open", "high", "low", "close"):
+        frame[column] = frame[column] * price_scale
     frame.iloc[-1, frame.columns.get_loc("volume")] = volume
     return frame
 
 
-def test_candidates_are_taken_by_last_session_volume_not_alphabetically() -> None:
+def ranked(frames: dict[str, DataFrame]) -> list[str]:
+    strategy = FakeStrategy(price_history())
+    strategy._daily_frames = frames
+    strategy._eligible_symbols = sorted(frames)
+    return [symbol for symbol, _ in strategy._ranked(NOW)]
+
+
+def test_candidates_are_taken_by_traded_value_not_alphabetically() -> None:
     """The position cap decides who misses out, so the order has to mean something."""
-    strategy = FakeStrategy(price_history())
-    strategy._daily_frames = {
-        "AAA": volume_frame(1_000_000.0),
-        "MMM": volume_frame(9_000_000.0),
-        "ZZZ": volume_frame(4_000_000.0),
-    }
-    strategy._eligible_symbols = ["AAA", "MMM", "ZZZ"]
+    order = ranked(
+        {
+            "AAA": session_frame(1_000_000.0),
+            "MMM": session_frame(9_000_000.0),
+            "ZZZ": session_frame(4_000_000.0),
+        }
+    )
 
-    ordered = [symbol for symbol, _ in strategy._ranked(NOW)]
-
-    assert ordered == ["MMM", "ZZZ", "AAA"]
+    assert order == ["MMM", "ZZZ", "AAA"]
 
 
-def test_a_symbol_with_unreadable_volume_ranks_last_but_still_trades() -> None:
-    strategy = FakeStrategy(price_history())
-    blank = price_history().drop(columns=["volume"])
-    strategy._daily_frames = {"AAA": blank, "ZZZ": volume_frame(2_000_000.0)}
-    strategy._eligible_symbols = ["AAA", "ZZZ"]
+def test_a_higher_priced_name_outranks_a_busier_but_cheaper_one() -> None:
+    """The slots are a money cap, so share count on its own is the wrong measure."""
+    cheap = session_frame(5_000_000.0, price_scale=0.1)
+    dear = session_frame(1_000_000.0, price_scale=1.0)
 
-    ordered = [symbol for symbol, _ in strategy._ranked(NOW)]
+    assert float(cheap["close"].iloc[-1]) < float(dear["close"].iloc[-1])
+    assert ranked({"AAA": cheap, "ZZZ": dear}) == ["ZZZ", "AAA"]
 
-    assert ordered == ["ZZZ", "AAA"]
+
+def test_a_symbol_with_an_unreadable_session_ranks_last_but_still_trades() -> None:
+    order = ranked(
+        {
+            "AAA": price_history().drop(columns=["volume"]),
+            "ZZZ": session_frame(2_000_000.0),
+        }
+    )
+
+    assert order == ["ZZZ", "AAA"]
 
 
 def test_ranking_breaks_ties_on_the_symbol_so_the_order_is_stable() -> None:
-    strategy = FakeStrategy(price_history())
-    strategy._daily_frames = {name: volume_frame(3_000_000.0) for name in ("ZZZ", "AAA", "MMM")}
-    strategy._eligible_symbols = ["ZZZ", "AAA", "MMM"]
+    order = ranked({name: session_frame(3_000_000.0) for name in ("ZZZ", "AAA", "MMM")})
 
-    ordered = [symbol for symbol, _ in strategy._ranked(NOW)]
-
-    assert ordered == ["AAA", "MMM", "ZZZ"]
+    assert order == ["AAA", "MMM", "ZZZ"]

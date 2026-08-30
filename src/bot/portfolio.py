@@ -28,7 +28,7 @@ from bot.strategies.shared import (
     earnings_exit_due,
     entry_quantity,
     latest_atr,
-    latest_volume,
+    latest_dollar_volume,
     market_is_rising,
     momentum_entry,
     next_stop,
@@ -559,8 +559,8 @@ class Strategy(StrategyBase):
 
         More symbols pass a daily setup on a good morning than there is room to
         hold, and the position cap decides the rest. Walking them in symbol
-        order hands the slots to whatever sorts first; walking them by the last
-        completed session's volume spends the slots where the trading is.
+        order hands the slots to whatever sorts first; walking them by the value
+        traded in the last completed session spends them where the money is.
         """
         ranked: list[tuple[float, str, DataFrame]] = []
         for symbol in self._eligible_symbols:
@@ -568,7 +568,7 @@ class Strategy(StrategyBase):
             if daily_frame is None:
                 continue
             frame = self._completed(daily_frame, now)
-            ranked.append((latest_volume(frame), symbol, frame))
+            ranked.append((latest_dollar_volume(frame), symbol, frame))
         ranked.sort(key=lambda row: (-row[0], row[1]))
         return [(symbol, frame) for _, symbol, frame in ranked]
 

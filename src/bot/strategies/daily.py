@@ -10,7 +10,7 @@ from bot.strategies.shared import (
     earnings_exit_due,
     entry_quantity,
     latest_atr,
-    latest_volume,
+    latest_dollar_volume,
     market_is_rising,
     normalize_ohlcv,
     signal_exit,
@@ -119,14 +119,15 @@ class DailyStrategy(StrategyBase):
         """The tradable symbols and their frames, busiest completed session first.
 
         Equity runs out before the candidates do, so the order decides who gets
-        funded. It is the volume of the last completed session, not the symbol.
+        funded. It is the value traded in the last completed session, not the
+        symbol.
         """
         ranked: list[tuple[float, str, DataFrame]] = []
         for symbol in symbols:
             frame = self._frame(symbol)
             if frame is None:
                 continue
-            ranked.append((latest_volume(frame), symbol, frame))
+            ranked.append((latest_dollar_volume(frame), symbol, frame))
         ranked.sort(key=lambda row: (-row[0], row[1]))
         return [(symbol, frame) for _, symbol, frame in ranked]
 

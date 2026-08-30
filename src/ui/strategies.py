@@ -224,7 +224,7 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
 
     ranking = (
         " When more symbols qualify on the same morning than there is room to hold, they "
-        "are taken by the volume of their last completed session, busiest first."
+        "are taken by the value traded in their last completed session, busiest first."
     )
 
     return [
