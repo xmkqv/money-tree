@@ -103,6 +103,7 @@ entry
     window = 09:35-10:30 ET
     long signal = first candle close above the opening range high
     short signal = first candle close below the opening range low
+    signal candle = the first such candle since the range, and no older than one candle
     order = next 5-minute candle open, directly after the signal candle
     earnings block = none
     open positions may remain after the entry window
@@ -158,6 +159,7 @@ entry
     window = 09:40-10:30 ET
     long signal = first candle close above the opening range high
     short signal = first candle close below the opening range low
+    signal candle = the first such candle since the range, and no older than one candle
     order = next 10-minute candle open, directly after the signal candle
     earnings block = none
     open positions may remain after the entry window
@@ -167,19 +169,17 @@ risk
     short position size = whole shares only
     risk per trade = not set
     risk-to-reward ratio = 1:2
-    R = not set
+    R = absolute(entry price - initial stop)
     long initial stop = opening range level(0.75)
     short initial stop = opening range level(0.25)
-    at PT(0.5) set stop = breakeven
-    at PT(0.5) enable trailing stop = 1.5 * ATR(14) on 10-minute candles
+    at +2R set stop = breakeven
+    at +2R enable trailing stop = 1.5 * ATR(14) on 10-minute candles
     active stop cannot move past breakeven into a loss
 
 exit
-    long PT(n) = opening range high + n * opening range size
-    short PT(n) = opening range low - n * opening range size
-    at PT(0.5) close = 50% of original position
-    at PT(1.0) close = 25% of original position
-    at PT(2.0) close = remaining 25% of original position
+    at +2R close = 50% of original position
+    at +4R close = 25% of original position
+    at +8R close = remaining 25% of original position
     signal exit = none
     earnings exit = none
     deadline = close any remaining position before 15:55 ET

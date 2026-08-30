@@ -132,18 +132,23 @@ def _orb(
     if uses_macd:
         confirmation += " MACD (12/26/9) must also be rising for a long, falling for a short."
 
-    fill_sets = "the entry, the risk and the targets" if minutes == 5 else "the entry and the risk"
+    fill_sets = "the entry, the risk and the targets"
     if minutes == 5:
-        targets = (
-            "Targets are re-cut from the filled price: 1.5x, 2.5x and 4x the risk actually "
-            "taken, so a fill away from the signal price carries them with it."
-        )
+        multiples = "1.5x, 2.5x and 4x"
         reward = "1.5:1 at the first target, then 2.5:1 and 4:1."
     else:
-        targets = "Targets sit half a range, one range and two ranges beyond the breakout level."
-        reward = (
-            "About 2:1 at the first target — half a range of reward against a quarter "
-            "of a range of risk."
+        multiples = "2x, 4x and 8x"
+        reward = "2:1 at the first target, then 4:1 and 8:1."
+    targets = (
+        f"Targets are re-cut from the filled price: {multiples} the risk actually taken, so a "
+        "fill away from the signal price carries them with it."
+    )
+    if minutes == 10:
+        targets += (
+            " Measured from a fill at the breakout level those are the same half a range, one "
+            "range and two ranges beyond it; measured from the range they were, a breakout "
+            "candle closing well past the level filled above targets already counted as "
+            "reached and scaled the trade out on the spot."
         )
 
     return [
@@ -170,10 +175,13 @@ def _orb(
         ),
         Row(
             field="Setup",
-            value=f"A completed {minutes}-minute candle closes above the range high (long) or "
-            f"below the range low (short) — a candle still forming never signals. Checked every "
-            f"{minutes} minutes from {opening_end}, the moment the opening candle closes, to "
-            "10:30, at most once per stock per day. "
+            value=f"The first completed {minutes}-minute candle since the range that closes above "
+            "the range high (long) or below the range low (short) — a candle still forming never "
+            f"signals. Checked every {minutes} minutes from {opening_end}, the moment the opening "
+            "candle closes, to 10:30, at most once per stock per day. The whole session since the "
+            "range is re-read on every pass rather than only its newest candle, so a breakout "
+            "whose bars reached the scan late is still the candle the signal is taken from — but "
+            f"a close further back than the previous candle has run, and is passed over. "
             "Once either breakout engine has traded a stock, both leave it alone for the rest "
             "of the session.",
             source="portfolio.py · _run_orb_variant",
@@ -201,8 +209,8 @@ def _orb(
             value="A market order goes in the moment the breakout candle closes, so it fills "
             f"at the open of the next {minutes}-minute candle — {first_entry} at the earliest, "
             "since the opening candle cannot break its own range. Good for the day only. The "
-            "size is worked out from the breakout candle's close, the last price known when the "
-            f"order is sent, and the fill then sets {fill_sets}. It is passed "
+            "size is worked out from the live quote, falling back to the breakout candle's "
+            f"close, and the fill then sets {fill_sets}. It is passed "
             "over if another engine already holds the stock, if the account is at its position "
             "cap or fully invested, or if the size that fits the risk limits comes to less than "
             f"${POSITION_NOTIONAL_MIN}.",

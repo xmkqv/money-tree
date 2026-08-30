@@ -52,6 +52,24 @@ ORB_CLOSE_DEADLINE = time(15, 54)
 # Whether a daily engine's signal exit waits for both of its conditions or acts
 # on either. Momentum (SMA) exits on either; TFB-50 asks for the two together.
 DAILY_EXIT_NEEDS_BOTH: dict[StrategyName, bool] = {"sma": False, "tfb_50": True}
+# Where each breakout engine's three scale-out targets sit, counted in multiples
+# of the risk the fill actually took. ORB-10m's register writes them as fractions
+# of the opening range measured from the breakout level — half a range, one range,
+# two ranges beyond a stop three quarters of the way back into it — which is the
+# same 2R, 4R and 8R, but only while the fill lands *on* the level. A breakout
+# candle that closes well past it used to fill above targets already counted as
+# reached, and the trade scaled itself out of existence within a minute of opening
+# without the price ever going near the stop. Counting from the fill puts every
+# target ahead of the entry wherever it lands.
+ORB_TARGET_MULTIPLES: dict[StrategyName, tuple[float, float, float]] = {
+    "orb": (1.5, 2.5, 4.0),
+    "orb_momentum": (2.0, 4.0, 8.0),
+}
+# How far back a breakout close may sit and still be worth taking, counted in
+# candles ending at the newest completed one. 1 is the candle that has just
+# closed; 2 allows the scan one pass to recover a candle whose bars had not been
+# published yet. Beyond that the level is gone and the entry would be a chase.
+ORB_SIGNAL_CANDLES_MAX = 2
 
 
 @dataclass(slots=True)
@@ -85,6 +103,10 @@ class OrbCandidate:
     high: float
     low: float
     close: float
+    # When the candle that carried the signal closed. The confirmation gates read
+    # the market as it stood then, which on a signal recovered a candle late is
+    # not where it stands now.
+    at: Timestamp | None = None
 
 
 class LoadUniverseError(Exception):
@@ -167,12 +189,13 @@ class Strategy(StrategyBase):
             holding.highest = holding.entry
             holding.lowest = holding.entry
             holding.original_quantity = self._entry_quantity_filled(asset, quantity)
-            if holding.engine == "orb":
+            multiples = ORB_TARGET_MULTIPLES.get(holding.engine)
+            if multiples is not None:
                 holding.targets = cast(
                     tuple[float, float, float],
                     tuple(
                         holding.entry + holding.direction * holding.risk * multiple
-                        for multiple in (1.5, 2.5, 4.0)
+                        for multiple in multiples
                     ),
                 )
             self._holdings[asset] = holding
@@ -288,17 +311,15 @@ class Strategy(StrategyBase):
             entered_at = entry_order.filled_at or datetime.now(UTC)
             direction: Direction = 1 if quantity > 0 else -1
             original = abs(float(entry_order.filled_qty or entry_order.qty or position.qty))
-            targets: tuple[float, float, float] | None = None
-            if engine == "orb":
-                targets = cast(
+            multiples = ORB_TARGET_MULTIPLES.get(engine)
+            targets: tuple[float, float, float] | None = (
+                None
+                if multiples is None
+                else cast(
                     tuple[float, float, float],
-                    tuple(entry + direction * risk * value for value in (1.5, 2.5, 4.0)),
+                    tuple(entry + direction * risk * value for value in multiples),
                 )
-            if engine == "orb_momentum":
-                targets = cast(
-                    tuple[float, float, float],
-                    tuple(entry + direction * risk * value for value in (2.0, 4.0, 8.0)),
-                )
+            )
             holding = Holding(
                 engine,
                 signal,
@@ -670,20 +691,28 @@ class Strategy(StrategyBase):
                 DataFrame,
                 cast(Any, frame).between_time("09:30", "09:34" if minutes == 5 else "09:39"),
             )
-            candle = cast(Series, cast(Any, frame).iloc[-1])
-            frame_at = cast(Timestamp, frame.index[-1])
-            if opening.empty or frame_at.time() < opening_end:
+            after = cast(
+                DataFrame,
+                frame[cast(Any, cast(DatetimeIndex, frame.index)).time >= opening_end],
+            )
+            if opening.empty or after.empty:
                 continue
             high = float(cast(Any, opening["high"]).max())
             low = float(cast(Any, opening["low"]).min())
-            close = float(cast(Any, candle)["close"])
-            if not all(isfinite(value) for value in (high, low, close)):
+            if not all(isfinite(value) for value in (high, low)):
                 continue
-            direction: Direction | None = 1 if close > high else -1 if close < low else None
-            if direction is None:
+            signal = self._orb_signal(after, high, low)
+            if signal is None:
                 continue
+            position, direction, close = signal
             self._orb_scanned.add(key)
-            candidates.append(OrbCandidate(symbol, direction, high, low, close))
+            if len(after) - position > ORB_SIGNAL_CANDLES_MAX:
+                continue
+            candidates.append(
+                OrbCandidate(
+                    symbol, direction, high, low, close, cast(Timestamp, after.index[position])
+                )
+            )
         if not candidates:
             return
         if ranks_candidates:
@@ -700,6 +729,8 @@ class Strategy(StrategyBase):
             if frame is None:
                 continue
             completed = self._completed(frame, now, minutes)
+            if candidate.at is not None:
+                completed = cast(DataFrame, completed[cast(Any, completed.index) <= candidate.at])
             if not self._orb_confirm(
                 completed,
                 now,
@@ -710,32 +741,55 @@ class Strategy(StrategyBase):
                 continue
             span = candidate.high - candidate.low
             stop = candidate.low + span * (0.75 if candidate.direction == 1 else 0.25)
-            targets = None
-            if minutes == 10:
-                targets = (
-                    (
-                        candidate.high + 0.5 * span,
-                        candidate.high + span,
-                        candidate.high + 2.0 * span,
-                    )
-                    if candidate.direction == 1
-                    else (
-                        candidate.low - 0.5 * span,
-                        candidate.low - span,
-                        candidate.low - 2.0 * span,
-                    )
-                )
             self._enter(
                 engine,
                 candidate.symbol,
                 candidate.symbol,
-                candidate.close,
+                self._orb_price(candidate),
                 stop,
                 now,
                 direction=candidate.direction,
-                targets=targets,
                 risk_fraction_max=0.01 if engine == "orb" else None,
             )
+
+    def _orb_signal(
+        self, candles: DataFrame, high: float, low: float
+    ) -> tuple[int, Direction, float] | None:
+        """The *first* candle since the opening range that closed outside it.
+
+        Reading only the newest candle made the signal depend on which snapshot of
+        Alpaca's aggregates happened to have landed. A bar published a few seconds
+        after its boundary — routine, since the scan walks the whole universe in
+        fifty-symbol pages before the clock is read again — was simply missed, and
+        the breakout was then read off the *following* candle. The entry that came
+        out of that was a candle's worth of momentum above the level it was meant
+        to buy, which is what the charts of 28 August show. Walking the session
+        outwards from the range finds the same candle whenever the bars arrive.
+        """
+        closes = cast(Series, candles["close"])
+        for position, value in enumerate(cast(list[Any], closes.tolist())):
+            close = float(value)
+            if not isfinite(close):
+                continue
+            if close > high:
+                return position, 1, close
+            if close < low:
+                return position, -1, close
+        return None
+
+    def _orb_price(self, candidate: OrbCandidate) -> float:
+        """What to size the order on: the live quote, or the breakout close.
+
+        The breakout candle's close is where the signal was read, not what the
+        order will pay, and on a signal recovered a candle late it is a whole
+        candle stale. Sizing on the live quote also lets _enter turn away a
+        breakout the market has already dragged back through its own stop.
+        """
+        try:
+            price = float(self.get_last_price(candidate.symbol))
+        except Exception:
+            return candidate.close
+        return price if isfinite(price) and price > 0 else candidate.close
 
     def _intraday(self, symbols: list[str], now: datetime, minutes: int) -> dict[str, DataFrame]:
         start = datetime.combine(now.date(), time(9, 30), TRADING_ZONE)
@@ -868,7 +922,6 @@ class Strategy(StrategyBase):
         now: datetime,
         *,
         direction: Direction = 1,
-        targets: tuple[float, float, float] | None = None,
         risk_fraction_max: float | None = None,
         caps_risk_per_trade: bool = True,
     ) -> bool:
@@ -932,7 +985,6 @@ class Strategy(StrategyBase):
             price,
             now.astimezone(UTC),
             direction=direction,
-            targets=targets,
             lowest=price,
         )
         self._pending[asset] = Pending(holding, now, notional)

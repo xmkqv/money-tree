@@ -1,13 +1,14 @@
 import inspect
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 import pytest
+from pandas import DataFrame, DatetimeIndex
 
-from bot.portfolio import Holding, Strategy
-from bot.strategies.shared import entry_quantity, fractional_allowed
+from bot.portfolio import ORB_SIGNAL_CANDLES_MAX, Holding, Strategy
+from bot.strategies.shared import TRADING_ZONE, entry_quantity, fractional_allowed
 
 
 @dataclass
@@ -404,3 +405,175 @@ def test_the_daily_engines_do_not_write_to_the_traded_ledger() -> None:
     )
 
     assert strategy._orb_traded == set()
+
+
+# --- the breakout is read off the first candle to close outside the range -
+
+
+def session(closes: list[float], minutes: int = 10) -> DataFrame:
+    """A day's completed candles from 09:30, one close each, stamped by start."""
+    opens = datetime(2026, 8, 28, 9, 30, tzinfo=TRADING_ZONE)
+    index = DatetimeIndex([opens + timedelta(minutes=minutes * i) for i in range(len(closes))])
+    return DataFrame({"close": closes}, index=index)
+
+
+# The opening range of 28 August: 12.85 low, 12.95 high. Price left it on the
+# 09:40 candle and kept running, so every later candle also closes above it.
+BREAKOUT_HIGH = 12.95
+BREAKOUT_LOW = 12.85
+
+
+def test_the_signal_is_the_first_candle_to_close_outside_the_range() -> None:
+    """Not the newest one — reading that entered a candle above the level.
+
+    On 28 August the 09:40 candle closed at 13.05, the first close above the
+    range. Its bars had not reached the scan by 09:50, so the newest candle at
+    10:00 was read instead and the order went in at 13.42, half a dollar above
+    the level it was meant to buy.
+    """
+    strategy = TradedStrategy()
+    candles = session([13.05, 13.42])
+
+    signal = strategy._orb_signal(candles, BREAKOUT_HIGH, BREAKOUT_LOW)
+
+    assert signal == (0, 1, 13.05), "the 09:40 close is the signal, not the 09:50 one"
+
+
+def test_a_close_back_inside_the_range_is_not_a_signal() -> None:
+    strategy = TradedStrategy()
+
+    assert strategy._orb_signal(session([12.90, 12.88]), BREAKOUT_HIGH, BREAKOUT_LOW) is None
+
+
+def test_a_close_below_the_range_is_a_short_signal() -> None:
+    strategy = TradedStrategy()
+
+    signal = strategy._orb_signal(session([12.90, 12.60, 12.40]), BREAKOUT_HIGH, BREAKOUT_LOW)
+
+    assert signal == (1, -1, 12.60)
+
+
+def test_the_side_is_taken_from_the_signal_candle_not_a_later_reversal() -> None:
+    """A breakout that closes below the range first is a short, whatever follows."""
+    strategy = TradedStrategy()
+
+    signal = strategy._orb_signal(session([12.60, 13.40]), BREAKOUT_HIGH, BREAKOUT_LOW)
+
+    assert signal is not None and signal[1] == -1
+
+
+def test_a_breakout_older_than_one_candle_is_passed_over_rather_than_chased() -> None:
+    """The rule buys the open after the signal candle; three candles on it is a chase."""
+    fresh = session([12.90, 13.05])
+    stale = session([13.05, 13.20, 13.35, 13.42])
+    strategy = TradedStrategy()
+
+    fresh_signal = strategy._orb_signal(fresh, BREAKOUT_HIGH, BREAKOUT_LOW)
+    stale_signal = strategy._orb_signal(stale, BREAKOUT_HIGH, BREAKOUT_LOW)
+
+    assert fresh_signal is not None and len(fresh) - fresh_signal[0] <= ORB_SIGNAL_CANDLES_MAX
+    assert stale_signal is not None and len(stale) - stale_signal[0] > ORB_SIGNAL_CANDLES_MAX
+
+
+def test_one_missed_pass_is_still_recovered() -> None:
+    """The scan that follows a late bar may still take it — one candle, no more."""
+    strategy = TradedStrategy()
+    recovered = session([13.05, 13.42])
+
+    signal = strategy._orb_signal(recovered, BREAKOUT_HIGH, BREAKOUT_LOW)
+
+    assert signal is not None and len(recovered) - signal[0] == ORB_SIGNAL_CANDLES_MAX
+
+
+# --- targets are cut from the fill, so none of them starts behind it ------
+
+
+@dataclass
+class FilledOrder:
+    asset: FakeAsset
+    side: str
+    avg_fill_price: float
+
+
+@dataclass
+class FilledPosition:
+    quantity: float
+
+
+class FillStrategy(TradedStrategy):
+    """Drives the real on_filled_order and _manage_orb without a broker."""
+
+    def __init__(self, price: float) -> None:
+        super().__init__()
+        self.price = price
+        self.exits: list[tuple[str, float | None]] = []
+
+    def get_last_price(self, asset: str) -> float:
+        return self.price
+
+    def get_position(self, asset: str) -> Any:
+        return FilledPosition(100.0)
+
+    def _protect(self, holding: Holding, quantity: float | None = None) -> None:
+        return None
+
+    def _exit(self, holding: Holding, quantity: float | None = None) -> None:
+        self.exits.append((holding.asset, quantity))
+
+
+def filled(engine: str, entry: float, stop: float, price: float) -> FillStrategy:
+    """A breakout entry that fills at `entry`, with the market sitting at `price`."""
+    strategy = FillStrategy(price)
+    now = datetime(2026, 8, 28, 13, 50, tzinfo=UTC)
+    assert strategy._enter(engine, "AUR", "AUR", entry, stop, now, direction=1)
+    strategy.on_filled_order(
+        FilledPosition(100.0), FilledOrder(FakeAsset("AUR"), "buy", entry), entry, 100.0, 1.0
+    )
+    return strategy
+
+
+# The 28 August range: 12.85 to 12.95, so the stop sits at 12.925 and the range
+# targets sat at 13.00, 13.05 and 13.15 — all three behind a 13.42 fill.
+FAR_FILL = 13.42
+RANGE_STOP = 12.925
+
+
+@pytest.mark.parametrize(
+    ("engine", "multiples"), [("orb", (1.5, 2.5, 4.0)), ("orb_momentum", (2.0, 4.0, 8.0))]
+)
+def test_every_target_sits_beyond_a_fill_that_ran_past_the_level(
+    engine: str, multiples: tuple[float, ...]
+) -> None:
+    strategy = filled(engine, FAR_FILL, RANGE_STOP, FAR_FILL)
+    holding = strategy._holdings["AUR"]
+
+    assert holding.targets is not None
+    assert min(holding.targets) > FAR_FILL
+    risk = FAR_FILL - RANGE_STOP
+    assert holding.targets == pytest.approx([FAR_FILL + risk * m for m in multiples])
+
+
+def test_a_fill_past_the_level_does_not_scale_itself_out_on_the_spot() -> None:
+    """ORB10 held AUR for one candle on 28 August: entry 13.42, exit 13.21.
+
+    Its targets were cut from the opening range rather than the fill, so all
+    three sat below the entry price. The first _manage_orb pass counted the
+    first as reached, the next the second, and the trade was flat within three
+    minutes without the price going near its 12.925 stop.
+    """
+    strategy = filled("orb_momentum", FAR_FILL, RANGE_STOP, FAR_FILL)
+
+    strategy._manage_orb(strategy._holdings["AUR"], datetime(2026, 8, 28, 13, 51, tzinfo=UTC))
+
+    assert strategy.exits == [], "no target is reached by the fill that opened the trade"
+    assert strategy._holdings["AUR"].stage == 0
+
+
+def test_the_first_target_still_scales_out_when_the_price_reaches_it() -> None:
+    risk = FAR_FILL - RANGE_STOP
+    strategy = filled("orb_momentum", FAR_FILL, RANGE_STOP, FAR_FILL + 2.0 * risk)
+
+    strategy._manage_orb(strategy._holdings["AUR"], datetime(2026, 8, 28, 13, 51, tzinfo=UTC))
+
+    assert strategy.exits == [("AUR", 50.0)], "half the position at +2R"
+    assert strategy._holdings["AUR"].stage == 1
