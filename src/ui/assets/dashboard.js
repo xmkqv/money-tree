@@ -202,8 +202,12 @@ function derive(live) {
     return { ...t, y, m: m - 1, day, weekday: dateOf(t.date).getDay() };
   }).reverse();
 
+  /* Index the same objects ALL_TRADES holds, not fresh copies of the payload:
+     the chart identifies a trade by identity when walking the others in its
+     stock, and a copy is never found among them. Walked oldest first so each
+     day still reads in the order it happened. */
   tradesByDate = new Map();
-  for (const t of live.trades) {
+  for (const t of [...ALL_TRADES].reverse()) {
     if (!tradesByDate.has(t.date)) tradesByDate.set(t.date, []);
     tradesByDate.get(t.date).push(t);
   }
@@ -366,7 +370,7 @@ function symbolCell(symbol, side, trade) {
     sym.type = "button";
     sym.classList.add("linked");
     sym.title = "Chart this trade";
-    sym.addEventListener("click", () => openTradeChart(trade));
+    sym.addEventListener("click", () => openTradeChart(trade, currentView));
   }
   const tag = document.createElement("span");
   tag.className = "side" + (side === "short" ? " short" : "");
@@ -1189,10 +1193,11 @@ function renderPortfolio() {
   document.getElementById("pf-open-note").textContent =
     OPEN_POSITIONS.length + " held · " + money(ACCOUNT.deployed);
 
+  const openCharts = new Map(OPEN_POSITIONS.map(pos => [pos.symbol, positionTrade(pos)]));
   buildTable(document.getElementById("pf-open-table"),
     ["Symbol", "Strategy", "Opened", "Qty", "Entry", "Last", "Value", "Weight", "Unrealised"],
     OPEN_POSITIONS.map(pos => [
-      symbolCell(pos.symbol, pos.side),
+      symbolCell(pos.symbol, pos.side, openCharts.get(pos.symbol)),
       stratCell(pos.strategy),
       { t: pos.opened, dim: true },
       { t: String(pos.qty), r: true, dim: true },
@@ -1224,7 +1229,7 @@ function renderPortfolio() {
     ["Time", "Symbol", "Strategy", "In", "Out", "P&L"],
     trades.map(t => [
       { t: clockLabel(t.minute), dim: true },
-      symbolCell(t.symbol, t.side),
+      symbolCell(t.symbol, t.side, t),
       stratCell(t.strategy),
       { t: money(t.entry), r: true },
       { t: money(t.exit), r: true },
@@ -1423,6 +1428,7 @@ let TC_LEVELS = null, TC_SIBLINGS = [];
    scale once it has been stretched by hand. custom means the reader has moved
    the view, after which the level lines no longer drag the scale open. */
 let TC_VIEW = { i0: 0, i1: 0, yManual: null, custom: false };
+let TC_ORIGIN = "history";
 
 /* Three lengths of the same measure, so they read as one family; validated for
    colour-vision separation against both surfaces, and each line is labelled at
@@ -1472,14 +1478,49 @@ function barStamp(iso) {
     Number(get("hour")) * 60 + Number(get("minute")));
 }
 
-async function openTradeChart(trade) {
+/* A held position charted like a closed one, with the current price standing in
+   for an exit that has not happened. Marked open so the page says "Now" rather
+   than "Exit" and reports the gain as unrealised. Positions the fill history
+   does not reach back far enough to match have no entry to place, and stay
+   unlinked rather than being charted from a guess. */
+function positionTrade(position) {
+  if (!position.inDate) return null;
+  return {
+    symbol: position.symbol,
+    side: position.side,
+    strategy: position.strategy,
+    entry: position.entry,
+    exit: position.last,
+    pnl: position.unreal,
+    qty: position.qty,
+    inDate: position.inDate,
+    inMinute: position.inMinute,
+    date: LIVE.today,
+    minute: tradingMinutes(),
+    heldMin: Math.max(0,
+      (Date.parse(LIVE.today + "T00:00:00Z") / 60000 + tradingMinutes()) -
+      (Date.parse(position.inDate + "T00:00:00Z") / 60000 + position.inMinute)),
+    fills: position.fills || [],
+    open: true,
+  };
+}
+
+async function openTradeChart(trade, from) {
   TRADE = trade;
+  /* charts open from three tables now, so remember which one to go back to
+     rather than always landing on History */
+  if (from) TC_ORIGIN = from;
   TC_LEVELS = null;
   TC_STATE = { bar: "5Min", bars: null, hover: null };
   /* the bot's other trades in this stock, oldest first, for the stepper */
   TC_SIBLINGS = ALL_TRADES.filter(t => t.symbol === trade.symbol).slice().reverse();
+  /* the held position is not in the closed-trade list, but it is the latest
+     thing that happened in this stock, so it belongs at the end of the walk */
+  if (trade.open) TC_SIBLINGS.push(trade);
   for (const b of document.querySelectorAll("#tc-range button"))
     b.setAttribute("aria-pressed", String(b.dataset.bar === "5Min"));
+  document.getElementById("chart-back").textContent =
+    TC_ORIGIN === "portfolio" ? "← Portfolio" : "← Trade log";
   switchView("chart");
   paintTradeFacts();
   paintRail();
@@ -1588,7 +1629,16 @@ function paintTradeFacts() {
   document.getElementById("tc-title").textContent = t.symbol;
   const strategy = STRAT_BY_ID[t.strategy];
   document.getElementById("tc-sub").textContent =
-    (strategy ? strategy.label : t.strategy) + " · " + (t.side === "short" ? "Short" : "Long");
+    (strategy ? strategy.label : t.strategy) + " · " + (t.side === "short" ? "Short" : "Long") +
+    (t.open ? " · Open" : "");
+
+  /* said as its own line, so the standing caveats below are not overwritten */
+  const openNote = document.getElementById("tc-open-note");
+  openNote.textContent = t.open
+    ? "This position is still open. The second mark is the current price, not an exit, and "
+      + "the figure beside it is unrealised."
+    : "";
+  openNote.hidden = !t.open;
 
   const held = t.heldMin >= 1440
     ? Math.round(t.heldMin / 1440) + "d"
@@ -1596,10 +1646,12 @@ function paintTradeFacts() {
 
   const facts = [
     ["Entry", money(t.entry), dayOf2(t.inDate) + " " + clockLabel(t.inMinute)],
-    ["Exit", money(t.exit), dayOf2(t.date) + " " + clockLabel(t.minute)],
+    [t.open ? "Last" : "Exit", money(t.exit),
+      t.open ? "still open" : dayOf2(t.date) + " " + clockLabel(t.minute)],
     ["Quantity", plainNum(Math.round(t.qty * 100) / 100), ""],
-    ["Held", held, ""],
-    ["P&L", signedMoney(t.pnl), signedPct(((t.exit - t.entry) / t.entry) * 100 * (t.side === "short" ? -1 : 1))],
+    [t.open ? "Held so far" : "Held", held, ""],
+    [t.open ? "Unrealised" : "P&L", signedMoney(t.pnl),
+      signedPct(((t.exit - t.entry) / t.entry) * 100 * (t.side === "short" ? -1 : 1))],
   ];
   const host = document.getElementById("tc-facts");
   host.replaceChildren();
@@ -1908,7 +1960,7 @@ function drawTradeChart() {
   host.insertAdjacentHTML("afterbegin",
     '<svg viewBox="0 0 ' + width + " " + height + '" preserveAspectRatio="none" role="img" ' +
     'aria-label="' + t.symbol + " price around the trade, entry " + money(t.entry) +
-    " and exit " + money(t.exit) + '">' +
+    (t.open ? " and last " : " and exit ") + money(t.exit) + '">' +
     '<defs><clipPath id="tcClip"><rect x="' + TC_PAD.l + '" y="' + TC_PAD.t +
     '" width="' + plotW + '" height="' + plotH + '"/></clipPath></defs>' +
     grid + axis +
@@ -1961,7 +2013,7 @@ function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
     host.append(el);
   };
   if (entryInView) place(x1, y1, "Entry", TRADE.entry, "entry");
-  if (exitInView) place(x2, y2, "Exit", TRADE.exit, "exit");
+  if (exitInView) place(x2, y2, TRADE.open ? "Now" : "Exit", TRADE.exit, "exit");
   separateMarks(host);
 }
 
@@ -2012,7 +2064,7 @@ function tradeHover(event) {
 }
 
 function wireTradeChart() {
-  document.getElementById("chart-back").addEventListener("click", () => switchView("history"));
+  document.getElementById("chart-back").addEventListener("click", () => switchView(TC_ORIGIN));
   document.getElementById("tc-prev").addEventListener("click", () => stepTrade(-1));
   document.getElementById("tc-next").addEventListener("click", () => stepTrade(1));
   document.getElementById("tc-range").addEventListener("click", event => {
@@ -2127,8 +2179,9 @@ function switchView(name) {
   document.body.dataset.view = name;
 
   for (const b of document.querySelectorAll(".tabs button")) {
-    /* the trade chart is opened from the log, so History stays the current tab */
-    const owner = name === "chart" ? "history" : name;
+    /* the chart has no tab of its own, so whichever page it was opened from
+       stays lit while it is on screen */
+    const owner = name === "chart" ? TC_ORIGIN : name;
     if (b.dataset.view === owner) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }

@@ -327,6 +327,11 @@ def _position_rows(
                 "side": "long" if item["side"] == "long" else "short",
                 "strategy": held.get("strategy", "unattributed"),
                 "opened": held.get("opened", "—"),
+                # only present when the position matched a cycle in the fill
+                # history; without them the page cannot place an entry on a chart
+                "inDate": held.get("inDate"),
+                "inMinute": held.get("inMinute"),
+                "fills": held.get("fills", []),
                 "qty": round(abs(float(item["qty"])), 4),
                 "entry": round(float(item["avg_entry_price"]), 4),
                 "last": round(float(item["current_price"]), 4),

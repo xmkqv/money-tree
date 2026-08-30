@@ -72,8 +72,13 @@ def _local(timestamp: str) -> datetime:
 
 
 class OpenCycle(TypedDict):
+    """A position still held. Carries enough to chart it, not just to name it."""
+
     strategy: str
     opened: str
+    inDate: str
+    inMinute: int
+    fills: list[Fill]
 
 
 def match_cycles(
@@ -165,6 +170,10 @@ def match_cycles(
         symbol: OpenCycle(
             strategy=cycle["engine"] or UNATTRIBUTED,
             opened=f"{cycle['opened']:%-d %b}",
+            inDate=cast(datetime, cycle["opened"]).date().isoformat(),
+            inMinute=cast(datetime, cycle["opened"]).hour * 60
+            + cast(datetime, cycle["opened"]).minute,
+            fills=cast(list[Fill], cycle["fills"]),
         )
         for symbol, cycle in live.items()
     }
