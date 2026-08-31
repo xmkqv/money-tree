@@ -71,7 +71,7 @@ def test_the_register_state_matches_the_pause_switch() -> None:
 
 
 def test_paused_strategies_are_registered_strategy_names() -> None:
-    assert sorted(PAUSED_STRATEGIES) == ["orb_momentum", "tfb_50"]
+    assert sorted(PAUSED_STRATEGIES) == ["tfb_50"]
     assert PAUSED_STRATEGIES.issubset(STRATEGY_LABELS)
 
 
@@ -85,7 +85,10 @@ def test_paused_strategies_take_no_entries_when_selection_includes_them() -> Non
     settings = Settings(_env_file=None, strategies="orb,sma,tfb_50,orb_momentum")
 
     assert settings.strategy_names == ["orb", "sma", "tfb_50", "orb_momentum"]
-    assert active_strategies(settings.strategy_names) == ["orb", "sma"]
+    # Selection is not permission: tfb_50 is named here and still filtered out,
+    # while orb_momentum is selected and no longer paused, so it survives.
+    assert active_strategies(settings.strategy_names) == ["orb", "sma", "orb_momentum"]
+    assert "tfb_50" in PAUSED_STRATEGIES
 
 
 def test_configuration_is_rejected_when_export_settings_are_incomplete() -> None:

@@ -140,7 +140,7 @@ exit
 
 ```text:surface
 status
-    state = paused
+    state = enabled
 
 market
     asset = US stocks
