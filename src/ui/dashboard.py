@@ -39,6 +39,7 @@ ASSET_MEDIA_TYPES = {
     "favicon.svg": "image/svg+xml",
 }
 LEDGER_TTL_SECONDS = 60
+PULSE_TTL_SECONDS = 2
 BENCHMARK_SYMBOL = "SPY"
 POSITION_CAP_FALLBACK = 0.10
 DAILY_LOSS_FALLBACK = 0.02
@@ -86,16 +87,18 @@ DASHBOARD_HEADERS = {
 }
 
 
-class LedgerCache:
-    """Fills and orders are paged reads, so the assembled view is held briefly.
+class ReadCache:
+    """One upstream read shared by every viewer, held for as long as it is true.
 
     The bot shares this Alpaca key, and Alpaca rate-limits per key, so the cost
     of the dashboard is capped here rather than left to scale with viewers: one
-    assembly per minute regardless of how many people are watching. At the page
-    ceiling that is roughly 47 requests a minute against a 200 limit.
+    assembly per period regardless of how many people are watching. The ledger
+    is a set of paged reads and is held for a minute — at the page ceiling that
+    is roughly 47 requests a minute against a 200 limit. The pulse is two reads
+    and is held for two seconds, so it adds about 60 a minute on top.
     """
 
-    def __init__(self, ttl_seconds: int = LEDGER_TTL_SECONDS) -> None:
+    def __init__(self, ttl_seconds: int) -> None:
         self._ttl = ttl_seconds
         self._lock = asyncio.Lock()
         self._payload: dict[str, Any] | None = None
@@ -109,6 +112,10 @@ class LedgerCache:
     def store(self, payload: dict[str, Any]) -> None:
         self._payload = payload
         self._stamped_at = time.monotonic()
+
+    def drop(self) -> None:
+        """Retire the held answer, so the next reader assembles a new one."""
+        self._payload = None
 
     @property
     def lock(self) -> asyncio.Lock:
@@ -351,27 +358,20 @@ def _intraday_series(history: dict[str, Any]) -> tuple[list[dict[str, Any]], str
     return rows, points[0][0].date().isoformat() if points else ""
 
 
-def _position_rows(
-    raw: list[dict[str, Any]],
-    equity: float,
-    open_cycles: dict[str, Any],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
+def _position_marks(raw: list[dict[str, Any]], equity: float) -> list[dict[str, Any]]:
+    """The half of a holding that moves with the price, and nothing else.
+
+    Split out because the pulse can afford to re-read it every couple of
+    seconds, while the other half — which strategy opened the position, and
+    when — is matched out of the paged fill history and cannot.
+    """
+    marks: list[dict[str, Any]] = []
     for item in raw:
-        symbol = str(item["symbol"])
-        held = open_cycles.get(symbol, {})
         value = float(item["market_value"])
-        rows.append(
+        marks.append(
             {
-                "symbol": symbol,
+                "symbol": str(item["symbol"]),
                 "side": "long" if item["side"] == "long" else "short",
-                "strategy": held.get("strategy", "unattributed"),
-                "opened": held.get("opened", "—"),
-                # only present when the position matched a cycle in the fill
-                # history; without them the page cannot place an entry on a chart
-                "inDate": held.get("inDate"),
-                "inMinute": held.get("inMinute"),
-                "fills": held.get("fills", []),
                 "qty": round(abs(float(item["qty"])), 4),
                 "entry": round(float(item["avg_entry_price"]), 4),
                 "last": round(float(item["current_price"]), 4),
@@ -381,7 +381,30 @@ def _position_rows(
                 "weight": round(value / equity * 100, 2) if equity else 0.0,
             }
         )
-    rows.sort(key=lambda row: -float(row["value"]))
+    marks.sort(key=lambda mark: -float(mark["value"]))
+    return marks
+
+
+def _position_rows(
+    raw: list[dict[str, Any]],
+    equity: float,
+    open_cycles: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for mark in _position_marks(raw, equity):
+        held = open_cycles.get(mark["symbol"], {})
+        rows.append(
+            {
+                **mark,
+                "strategy": held.get("strategy", "unattributed"),
+                "opened": held.get("opened", "—"),
+                # only present when the position matched a cycle in the fill
+                # history; without them the page cannot place an entry on a chart
+                "inDate": held.get("inDate"),
+                "inMinute": held.get("inMinute"),
+                "fills": held.get("fills", []),
+            }
+        )
     return rows
 
 
@@ -394,7 +417,7 @@ async def build_ledger(
     """One assembled view of the account: state, holdings, closed trades, curves."""
     account, positions, fills, orders, daily, intraday, clock = await asyncio.gather(
         alpaca.account(),
-        alpaca.positions(),
+        alpaca.raw_positions(),
         alpaca.raw_fills(),
         alpaca.raw_closed_orders(),
         alpaca.equity("1A", "1D"),
@@ -425,7 +448,10 @@ async def build_ledger(
         bars = []
 
     return {
-        "asOf": datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M ET"),
+        # Seconds, because the pulse restamps this every two seconds and the two
+        # stamps share one line in the header: a format that changed with
+        # whichever read landed last would read as a glitch rather than a clock.
+        "asOf": datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
         "today": today,
         "accountNumber": str(account["account_number"]),
         "status": str(account["status"]),
@@ -457,6 +483,31 @@ async def build_ledger(
         "intraday": intraday_points,
         "intradayDate": intraday_date,
         "spy": [{"date": str(bar["t"])[:10], "close": float(bar["c"])} for bar in bars],
+    }
+
+
+async def build_pulse(alpaca: AlpacaReadClient) -> dict[str, Any]:
+    """Just the figures that move while a session runs.
+
+    The ledger is seven upstream reads and a walk through the fill history,
+    which is why it is held for a minute — and why a portfolio figure on the
+    page could sit ninety seconds behind the account it names. This is the same
+    account read cut down to the two calls that actually change tick to tick, so
+    it can be asked for often enough that the number moves as the market does.
+    Everything a closed trade decides — the log, the calendar, the win rate — is
+    absent on purpose: none of it changes without a fill.
+    """
+    account, positions = await asyncio.gather(alpaca.account(), alpaca.raw_positions())
+    equity = round(float(account["equity"]), 2)
+    marks = _position_marks(positions, equity)
+    return {
+        "asOf": datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
+        "equity": equity,
+        "cash": round(float(account["cash"]), 2),
+        "buyingPower": round(float(account["buying_power"]), 2),
+        "marketValue": round(sum(float(mark["value"]) for mark in marks), 2),
+        "unrealised": round(sum(float(mark["unreal"]) for mark in marks), 2),
+        "positions": marks,
     }
 
 
@@ -493,7 +544,8 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         digest_method=hashlib.sha256,
     )
 
-    ledger_cache = LedgerCache()
+    ledger_cache = ReadCache(LEDGER_TTL_SECONDS)
+    pulse_cache = ReadCache(PULSE_TTL_SECONDS)
     bar_cache = BarCache()
 
     def alpaca(request: Request) -> AlpacaReadClient:
@@ -701,6 +753,32 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
                     cached = await build_ledger(alpaca(request), market(request), snapshot, stale)
                     ledger_cache.store(cached)
         return read_response({**cached, "bot": bot_state(snapshot, stale)}, 10)
+
+    @router.get("/api/pulse")
+    async def pulse(request: Request) -> JSONResponse:
+        """The moving figures, read often and shared by everyone watching."""
+        cached = pulse_cache.fresh()
+        if cached is None:
+            async with pulse_cache.lock:
+                cached = pulse_cache.fresh()
+                if cached is None:
+                    cached = await build_pulse(alpaca(request))
+                    pulse_cache.store(cached)
+
+        # A holding that has opened or closed since the ledger was assembled
+        # makes that assembly wrong rather than merely old: the new position has
+        # no strategy against it and the closed one has no trade, and only the
+        # ledger can supply either. The pulse is the first read to see it, so it
+        # retires the assembly here and the next reader pays for a fresh one,
+        # instead of the page describing half an account for the rest of the
+        # minute.
+        held = ledger_cache.fresh()
+        if held is not None and {row["symbol"] for row in held["positions"]} != {
+            mark["symbol"] for mark in cached["positions"]
+        }:
+            ledger_cache.drop()
+
+        return read_response(cached, 0)
 
     @router.get("/api/equity")
     async def equity(

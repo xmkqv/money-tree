@@ -42,6 +42,17 @@ class AlpacaReadClient:
             attributed.append({**position, "strategy": strategy})
         return attributed
 
+    async def raw_positions(self) -> list[JsonRow]:
+        """Holdings as the broker reports them, without the strategy enrichment.
+
+        `positions` re-reads five hundred orders to name the engine behind each
+        holding. The dashboard does not need it to: it matches a position to the
+        cycle that opened it out of the fill history it already has. Skipping
+        that read is what keeps the pulse down to two calls, and so cheap enough
+        to ask for every couple of seconds.
+        """
+        return cast(list[JsonRow], await self._get("/v2/positions"))
+
     async def orders(self, status: str, limit: int, until: str | None = None) -> list[JsonRow]:
         orders = cast(
             list[JsonRow],
