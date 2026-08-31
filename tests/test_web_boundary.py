@@ -14,9 +14,14 @@ from tests.world.index import (
     sign_snapshot,
     web_client,
 )
-from ui.alpaca import AlpacaReadClient
+from ui.alpaca import AlpacaMarketDataClient, AlpacaReadClient
 from ui.auth import RailwayIdentity, RailwayOAuthClient
-from ui.dashboard import ASSET_DIRECTORY, ASSET_REWRITES, RUNTIME_BODY_BYTES_MAX
+from ui.dashboard import (
+    ASSET_DIRECTORY,
+    ASSET_REWRITES,
+    PULSE_TTL_SECONDS,
+    RUNTIME_BODY_BYTES_MAX,
+)
 
 
 def test_health_is_public_when_session_is_absent() -> None:
@@ -411,3 +416,171 @@ def test_bars_requires_a_session() -> None:
         )
 
     assert response.status_code == 401
+
+
+def test_the_pulse_requires_a_session_like_every_other_read() -> None:
+    with web_client() as client:
+        response = client.get("/api/pulse")
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Authentication is required"}
+
+
+def test_the_pulse_is_shared_by_everyone_watching_and_never_cached_in_a_browser() -> None:
+    """The cost is capped on the server, not in each viewer's cache.
+
+    A per-browser cache would hold a figure past the two seconds it was true
+    for, which is the one thing this read exists to avoid. The sharing has to
+    happen upstream of that: one assembly answers every viewer inside the
+    window, so a second watcher costs nothing and a stale figure is impossible.
+    """
+    reads: list[str] = []
+
+    async def account(client: AlpacaReadClient) -> dict[str, str]:
+        reads.append("account")
+        return {"equity": "100000.00", "cash": "45802.41", "buying_power": "91605.00"}
+
+    async def raw_positions(client: AlpacaReadClient) -> list[dict[str, str]]:
+        return []
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(AlpacaReadClient, "account", account)
+        monkeypatch.setattr(AlpacaReadClient, "raw_positions", raw_positions)
+        with web_client() as client:
+            authenticate(client)
+            first = client.get("/api/pulse")
+            second = client.get("/api/pulse")
+
+    assert first.status_code == 200
+    assert first.json()["data"]["equity"] == 100000.00
+    assert second.json()["data"] == first.json()["data"]
+    assert len(reads) == 1, "a second viewer inside the window should cost no upstream read"
+    assert first.headers["cache-control"] == "private, max-age=0, must-revalidate"
+
+
+def test_the_script_asks_for_a_pulse_no_faster_than_the_server_makes_one() -> None:
+    """The poll interval and the cache window are set in two different files.
+
+    Polling faster than the server assembles only hands every viewer the same
+    answer twice and spends a request doing it. Polling slower wastes the
+    freshness that was paid for upstream. They are meant to be the same number,
+    so drift between them is caught here rather than in a rate-limit reply.
+    """
+    script = (ASSET_DIRECTORY / "dashboard.js").read_text()
+    interval = re.search(r"const PULSE_MS = (\d+);", script)
+
+    assert interval, "the script should carry a pulse interval"
+    assert int(interval.group(1)) == PULSE_TTL_SECONDS * 1000
+
+
+def test_the_pulse_sends_only_fields_the_page_patches_onto_its_own_state() -> None:
+    """A pulse is applied by assignment, so an unread field is a silent no-op.
+
+    The failure this catches is a figure added to the payload and never shown:
+    the endpoint looks right, the page keeps painting the ledger's minute-old
+    answer, and nothing anywhere says so.
+    """
+    script = (ASSET_DIRECTORY / "dashboard.js").read_text()
+    applied = script[script.index("function applyPulse(") : script.index("function hovering(")]
+    sent = {"asOf", "equity", "cash", "buyingPower", "marketValue", "unrealised"}
+
+    unread = {field for field in sent if f"pulsed.{field}" not in applied}
+    assert not unread, f"the page never reads {unread} out of a pulse"
+    assert "pulsed.positions" in applied, "the marks should reach the open positions"
+
+
+def _broker_stubs(held: list[dict[str, str]]) -> dict[str, object]:
+    """The seven reads a ledger assembles from, over a roster the caller owns."""
+    now = datetime.now(UTC)
+
+    async def account(client: AlpacaReadClient) -> dict[str, str]:
+        return {
+            "account_number": "PA0",
+            "status": "ACTIVE",
+            "equity": "100000.00",
+            "last_equity": "99000.00",
+            "cash": "45000.00",
+            "buying_power": "90000.00",
+        }
+
+    async def raw_positions(client: AlpacaReadClient) -> list[dict[str, str]]:
+        return held
+
+    async def raw_fills(client: AlpacaReadClient, after: str | None = None) -> list[dict[str, str]]:
+        return []
+
+    async def raw_closed_orders(
+        client: AlpacaReadClient, after: str | None = None
+    ) -> list[dict[str, str]]:
+        return []
+
+    async def equity(client: AlpacaReadClient, period: str, timeframe: str) -> dict[str, object]:
+        return {"points": [{"timestamp": int(now.timestamp()), "equity": 100000.0}]}
+
+    async def clock(client: AlpacaReadClient) -> dict[str, object]:
+        return {"is_open": True, "next_open": now.isoformat()}
+
+    async def daily_bars(client: object, symbol: str, start: str) -> list[dict[str, object]]:
+        return []
+
+    return {
+        "account": account,
+        "raw_positions": raw_positions,
+        "raw_fills": raw_fills,
+        "raw_closed_orders": raw_closed_orders,
+        "equity": equity,
+        "clock": clock,
+        "daily_bars": daily_bars,
+    }
+
+
+def test_a_pulse_retires_a_ledger_that_no_longer_names_the_same_holdings() -> None:
+    """A roster that has moved makes the cached assembly wrong, not merely old.
+
+    A position opened since it was built has no strategy against it and a
+    position closed since has no trade, and the ledger is the only read that can
+    supply either. Left to expire, the page would show a half-described account
+    for the rest of the minute. The pulse sees the change first, so it is what
+    retires the assembly.
+    """
+
+    def position(symbol: str) -> dict[str, str]:
+        return {
+            "symbol": symbol,
+            "side": "long",
+            "qty": "10",
+            "avg_entry_price": "100.00",
+            "current_price": "101.00",
+            "market_value": "1010.00",
+            "unrealized_pl": "10.00",
+            "unrealized_plpc": "0.01",
+        }
+
+    held = [position("NVDA"), position("AMD")]
+    stubs = _broker_stubs(held)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        for name in (
+            "account",
+            "raw_positions",
+            "raw_fills",
+            "raw_closed_orders",
+            "equity",
+            "clock",
+        ):
+            monkeypatch.setattr(AlpacaReadClient, name, stubs[name])
+        monkeypatch.setattr(AlpacaMarketDataClient, "daily_bars", stubs["daily_bars"])
+        with web_client() as client:
+            authenticate(client)
+            first = client.get("/api/ledger")
+            held.pop()
+            stale = client.get("/api/ledger")
+            client.get("/api/pulse")
+            reassembled = client.get("/api/ledger")
+
+    def symbols(response: httpx.Response) -> list[str]:
+        return [row["symbol"] for row in response.json()["data"]["positions"]]
+
+    assert symbols(first) == ["NVDA", "AMD"]
+    assert symbols(stale) == ["NVDA", "AMD"], "the ledger should be cached, or this proves nothing"
+    assert symbols(reassembled) == ["NVDA"], "the pulse should have retired the stale assembly"

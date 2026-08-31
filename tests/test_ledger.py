@@ -1,11 +1,15 @@
+import asyncio
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
 import pytest
 
+import ui.dashboard
 from bot.types import STRATEGY_LABELS, RunStatus, RuntimeSnapshot, TradingConfiguration
-from ui.dashboard import bot_state
+from ui.dashboard import _position_rows, bot_state, build_pulse
 from ui.ledger import match_cycles, order_engine, sessions, summarise
 
 
@@ -269,3 +273,100 @@ def test_an_overnight_hold_reports_the_day_it_opened_not_the_day_it_closed() -> 
     assert cycles[0]["inDate"] == "2026-08-24"
     assert cycles[0]["inMinute"] == 10 * 60 + 10
     assert cycles[0]["date"] == "2026-08-27"
+
+
+def holding(symbol: str = "NVDA", market_value: str = "10250.00") -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "side": "long",
+        "qty": "50",
+        "avg_entry_price": "200.00",
+        "current_price": "205.00",
+        "market_value": market_value,
+        "unrealized_pl": "250.00",
+        "unrealized_plpc": "0.025",
+    }
+
+
+class StubBroker:
+    """Answers the two reads a pulse makes, and counts them."""
+
+    def __init__(self, equity: str = "100000.00", held: list[dict[str, Any]] | None = None) -> None:
+        self.equity_figure = equity
+        self.held = [holding()] if held is None else held
+        self.calls: list[str] = []
+
+    async def account(self) -> dict[str, str]:
+        self.calls.append("account")
+        return {
+            "equity": self.equity_figure,
+            "cash": "45802.41",
+            "buying_power": "91605.00",
+        }
+
+    async def raw_positions(self) -> list[dict[str, Any]]:
+        self.calls.append("positions")
+        return self.held
+
+
+def test_a_pulse_describes_a_holding_exactly_as_the_ledger_does() -> None:
+    """The page patches a pulse onto the rows the ledger built, key by key.
+
+    Every field the pulse sends therefore has to be a field the ledger row
+    already has, and has to mean the same thing. A field only the pulse knows
+    about would be assigned into a row no renderer reads it from; a field whose
+    value is computed differently would make a figure flicker between two
+    answers two seconds apart, depending on which read painted it last.
+    """
+    broker = StubBroker()
+    pulsed = asyncio.run(build_pulse(cast(Any, broker)))
+    row = _position_rows(broker.held, 100000.0, {})[0]
+    mark = pulsed["positions"][0]
+
+    assert set(mark) <= set(row), "the pulse should send no field the ledger row lacks"
+    assert all(row[key] == value for key, value in mark.items())
+    assert set(row) - set(mark) == {"strategy", "opened", "inDate", "inMinute", "fills"}
+
+
+def test_a_pulse_reads_the_account_twice_and_nothing_else() -> None:
+    """Two calls is the whole justification for asking every two seconds.
+
+    A third would put the pulse over ninety requests a minute against the limit
+    the bot shares — which is why it reads the raw holdings rather than the
+    enriched ones, whose strategy labels it takes from the ledger instead.
+    """
+    broker = StubBroker()
+    asyncio.run(build_pulse(cast(Any, broker)))
+
+    assert sorted(broker.calls) == ["account", "positions"]
+
+
+def test_a_pulse_totals_the_holdings_it_reports() -> None:
+    broker = StubBroker(held=[holding("NVDA", "10250.00"), holding("AMD", "5000.00")])
+    pulsed = asyncio.run(build_pulse(cast(Any, broker)))
+
+    assert pulsed["marketValue"] == 15250.00
+    assert pulsed["unrealised"] == 500.00
+    assert pulsed["equity"] == 100000.00
+    assert [mark["symbol"] for mark in pulsed["positions"]] == ["NVDA", "AMD"]
+
+
+def test_a_pulse_weighs_a_holding_against_the_equity_it_just_read() -> None:
+    """The position cap is a fraction of the account, so both halves move."""
+    broker = StubBroker(equity="50000.00")
+    pulsed = asyncio.run(build_pulse(cast(Any, broker)))
+
+    assert pulsed["positions"][0]["weight"] == 20.50
+
+
+def test_a_pulse_and_a_ledger_stamp_the_time_the_same_way() -> None:
+    """One line in the header carries whichever of the two landed last.
+
+    Two formats would read as a glitch — the seconds appearing and disappearing
+    as the slow read overwrote the fast one.
+    """
+    source = Path(ui.dashboard.__file__).read_text()
+    stamp = r'"asOf": datetime\.now\(TRADING_ZONE\)\.strftime\("([^"]+)"\)'
+    stamps = set(re.findall(stamp, source))
+
+    assert len(stamps) == 1, f"the two reads stamp differently: {stamps}"

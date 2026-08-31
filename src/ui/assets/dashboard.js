@@ -45,6 +45,17 @@ const DAY3 = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
 const REFRESH_MS = 30000;
 
+/* Two clocks, because the page is two different reads.
+
+   The ledger is the whole account assembled out of paged fill history, and it
+   only changes when a trade closes, so it is polled slowly and cached on the
+   server for a minute. The pulse is the handful of figures that move with the
+   price — equity, cash, and the mark on every open position — and it is two
+   upstream calls, so it can be asked for often enough that those figures move
+   in front of you rather than jumping a minute at a time. It patches what it
+   knows onto the ledger's picture and leaves the rest alone. */
+const PULSE_MS = 2000;
+
 /* ══ phone ═══════════════════════════════════════════════
 
    The one breakpoint the script shares with the stylesheet. Below it the
@@ -281,6 +292,8 @@ function derive(live) {
   }));
   DAILY.equityBase = live.invested;
 
+  DAILY.liveTip = live.equityDaily.length > 0 && live.equityDaily.at(-1).date === live.today;
+
   const opening = live.intraday.length ? live.intraday[0].equity : live.equity;
   INTRADAY = live.intraday.map((r, i) => ({
     label: r.t,
@@ -289,11 +302,39 @@ function derive(live) {
     before: Math.round(((i ? live.intraday[i - 1].equity : opening) - live.invested) * 100) / 100,
   }));
   INTRADAY.equityBase = live.invested;
+  INTRADAY.liveTip = live.intraday.length > 0 && live.intradayDate === live.today;
+  /* set before the fallback, so an empty intraday series does not label the
+     daily one live under a second name */
   if (!INTRADAY.length) INTRADAY = DAILY;
 
-  ACCOUNT.dayDrawdownPct = live.intraday.length
-    ? Math.abs(Math.min(0, Math.min(...live.intraday.map(r => r.equity)) - opening)) / opening * 100
+  ACCOUNT.dayOpening = live.intraday.length ? opening : 0;
+  ACCOUNT.dayLowEquity = live.intraday.length
+    ? ratchetLow(live.intradayDate, Math.min(...live.intraday.map(r => r.equity), live.equity))
     : 0;
+  ACCOUNT.dayDrawdownPct = drawdownPct();
+}
+
+/* The session's worst equity, and the one figure kept across a ledger poll.
+
+   Everything else is rebuilt from the payload, but the intraday series that
+   payload carries only samples every five minutes, so a low the pulse saw
+   between two samples is not in it. Rebuilding from the series alone would
+   hand back room the drawdown had already spent, and a limit that recovers
+   on its own is not a limit. Only a new session resets it. */
+let SESSION_LOW = { date: "", equity: 0 };
+
+function ratchetLow(date, equity) {
+  if (SESSION_LOW.date !== date) SESSION_LOW = { date, equity };
+  else SESSION_LOW.equity = Math.min(SESSION_LOW.equity, equity);
+  return SESSION_LOW.equity;
+}
+
+/* How much of the day's loss limit has been spent, measured against that worst
+   point rather than against wherever equity happens to stand. */
+function drawdownPct() {
+  if (!ACCOUNT.dayOpening) return 0;
+  const fallen = Math.min(0, ACCOUNT.dayLowEquity - ACCOUNT.dayOpening);
+  return Math.abs(fallen) / ACCOUNT.dayOpening * 100;
 }
 
 /* ══ today panel ═════════════════════════════════════════ */
@@ -2508,6 +2549,111 @@ function renderAll() {
   if (viewReady.strategies) renderRuleStates();
 }
 
+/* ══ pulse ═══════════════════════════════════════════════ */
+
+/* A mark is only half a holding. Which strategy opened it, when it opened, and
+   the fills behind it all come from matching the fill history, which the pulse
+   never reads — so marks are patched onto the rows the ledger built rather than
+   standing in for them. A roster that no longer lines up means a position has
+   opened or closed since that assembly, and the honest answer is not a
+   half-attributed row: say so, and let the ledger redraw. */
+function mergeMarks(marks) {
+  const rows = new Map(OPEN_POSITIONS.map(pos => [pos.symbol, pos]));
+  if (marks.length !== rows.size || marks.some(m => !rows.has(m.symbol))) return false;
+  for (const mark of marks) Object.assign(rows.get(mark.symbol), mark);
+  OPEN_POSITIONS.sort((a, b) => b.value - a.value);
+  return true;
+}
+
+/* The last point of a curve is the account as it stands, so it follows live
+   equity. The points behind it are Alpaca's own readings and are left alone —
+   which is also why the intraday curve still fills in five minutes at a time
+   however often this runs. Only the tip is ours to move. */
+function retipSeries(series, equity) {
+  if (!series.liveTip || !series.length) return;
+  series[series.length - 1].value = Math.round((equity - series.equityBase) * 100) / 100;
+}
+
+function applyPulse(pulsed) {
+  ACCOUNT.portfolio = pulsed.equity;
+  ACCOUNT.cash = pulsed.cash;
+  ACCOUNT.deployed = pulsed.marketValue;
+  ACCOUNT.unrealised = pulsed.unrealised;
+  ACCOUNT.buyingPower = pulsed.buyingPower;
+  ACCOUNT.totalReturn = Math.round((ACCOUNT.portfolio - ACCOUNT.invested) * 100) / 100;
+  ACCOUNT.rateOfReturn = ACCOUNT.invested ? (ACCOUNT.totalReturn / ACCOUNT.invested) * 100 : 0;
+  ACCOUNT.exposurePct = ACCOUNT.portfolio ? (ACCOUNT.deployed / ACCOUNT.portfolio) * 100 : 0;
+
+  if (ACCOUNT.dayOpening) ACCOUNT.dayLowEquity = ratchetLow(SESSION_LOW.date, pulsed.equity);
+  ACCOUNT.dayDrawdownPct = drawdownPct();
+
+  const aligned = mergeMarks(pulsed.positions);
+  ACCOUNT.openPositions = OPEN_POSITIONS.length;
+  ACCOUNT.largestPositionPct = OPEN_POSITIONS.length
+    ? Math.max(...OPEN_POSITIONS.map(p => p.weight)) : 0;
+
+  retipSeries(DAILY, pulsed.equity);
+  retipSeries(INTRADAY, pulsed.equity);
+
+  LIVE.asOf = pulsed.asOf;
+  return aligned;
+}
+
+/* Rebuilding a table under the pointer swallows the click that was landing on
+   it, and a symbol in the open table opens a chart. Two seconds is short
+   enough that waiting for the pointer to leave costs nothing. */
+function hovering(id) {
+  const node = document.getElementById(id);
+  return node !== null && node.matches(":hover");
+}
+
+/* A pulse moves figures, not structure: no trade has closed, no strategy has
+   started or stopped, so the calendar, the log and the rule sheet are left
+   standing and only what reads a mark is repainted. */
+function paintPulse() {
+  renderAccount();
+  if (currentView === "dashboard") {
+    drawChart();
+    if (todayTab === "open" && !hovering("today-table")) renderToday();
+  }
+  if (currentView === "portfolio" && viewReady.portfolio && !hovering("pf-open-table")) {
+    renderPortfolio();
+  }
+}
+
+/* One resync in flight at a time. A roster that stays out of step would
+   otherwise ask for a fresh assembly every two seconds, which is exactly the
+   upstream cost the ledger's cache exists to prevent. */
+let resyncing = false;
+
+/* One read in flight at a time. A pulse that outlasts its own interval would
+   otherwise have a second one launched on top of it, and the older answer
+   landing last would paint figures the page had already moved past. */
+let pulsing = false;
+
+async function pulse() {
+  if (!booted || pulsing) return;       /* the ledger draws the page first */
+  pulsing = true;
+  try {
+    const response = await fetch("/api/pulse", { headers: { Accept: "application/json" } });
+    if (response.status === 401) { location.replace("/login"); return; }
+    if (!response.ok) throw new Error("pulse failed (" + response.status + ")");
+
+    const aligned = applyPulse((await response.json()).data);
+    paintPulse();
+    markFeed("ok");
+
+    if (!aligned && !resyncing) {
+      resyncing = true;
+      refresh().finally(() => { resyncing = false; });
+    }
+  } catch (error) {
+    markFeed("error", "feed unavailable — retrying");
+  } finally {
+    pulsing = false;
+  }
+}
+
 function markFeed(state, detail) {
   const bar = document.getElementById("status");
   bar.dataset.feed = state;
@@ -2688,3 +2834,15 @@ initChartInteraction();
 wireTradeChart();
 refresh();
 setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
+setInterval(() => { if (!document.hidden) pulse(); }, PULSE_MS);
+
+/* Neither clock runs while the tab is in the background, so coming back to it
+   used to mean looking at figures up to half a minute old until the next tick
+   happened to fire. Ask on the way in instead: the pulse answers from a
+   two-second cache, and the ledger from a minute-old one, so a viewer
+   returning costs the upstream nothing it was not already spending. */
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  pulse();
+  refresh();
+});
