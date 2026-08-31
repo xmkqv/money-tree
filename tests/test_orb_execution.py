@@ -7,7 +7,8 @@ from typing import Any
 import pytest
 from pandas import DataFrame, DatetimeIndex
 
-from bot.portfolio import ORB_SIGNAL_CANDLES_MAX, Holding, Strategy
+from bot.portfolio import ORB_ENTRY_EXTENSION_MAX, ORB_SIGNAL_CANDLES_MAX, Holding, Strategy
+from bot.strategies import orb, orb_momentum
 from bot.strategies.shared import TRADING_ZONE, entry_quantity, fractional_allowed
 
 
@@ -550,7 +551,7 @@ RANGE_STOP = 12.925
 
 
 @pytest.mark.parametrize(
-    ("engine", "multiples"), [("orb", (1.5, 2.5, 4.0)), ("orb_momentum", (2.0, 4.0, 8.0))]
+    ("engine", "multiples"), [("orb", (1.5, 2.5, 4.0)), ("orb_momentum", (2.0, 3.0, 5.0))]
 )
 def test_every_target_sits_beyond_a_fill_that_ran_past_the_level(
     engine: str, multiples: tuple[float, ...]
@@ -588,3 +589,64 @@ def test_the_first_target_still_scales_out_when_the_price_reaches_it() -> None:
 
     assert strategy.exits == [("AUR", 50.0)], "half the position at +2R"
     assert strategy._holdings["AUR"].stage == 1
+
+
+# --- an entry too far past the level is not paid for ----------------------
+
+
+def orb_candidate(direction: int, high: float = 12.95, low: float = 12.85) -> Any:
+    from bot.portfolio import OrbCandidate
+
+    return OrbCandidate("AUR", direction, high, low, high if direction == 1 else low)
+
+
+@pytest.mark.parametrize(
+    ("direction", "inside", "outside"),
+    [
+        # range 12.85-12.95, span 0.10, so a quarter of the range is 0.025:
+        # a long may pay up to 12.975, a short down to 12.825.
+        (1, 12.975, 12.9751),
+        (-1, 12.825, 12.8249),
+    ],
+)
+def test_the_ceiling_is_a_quarter_of_the_range_beyond_the_level(
+    direction: int, inside: float, outside: float
+) -> None:
+    strategy = TradedStrategy()
+    candidate = orb_candidate(direction)
+    span = candidate.high - candidate.low
+
+    assert not strategy._too_extended(candidate, inside, span, 0.25), "the boundary is admissible"
+    assert strategy._too_extended(candidate, outside, span, 0.25), "a tick past it is not"
+
+
+def test_only_the_ten_minute_engine_carries_a_ceiling() -> None:
+    """ORB5 is unchanged: it pays whatever the next executable price is."""
+    assert ORB_ENTRY_EXTENSION_MAX["orb"] is None
+    assert ORB_ENTRY_EXTENSION_MAX["orb_momentum"] == 0.25
+    assert orb.Strategy.entry_extension_max is None
+    assert orb_momentum.Strategy.entry_extension_max == ORB_ENTRY_EXTENSION_MAX["orb_momentum"]
+
+
+def test_the_28_august_fill_would_now_be_refused() -> None:
+    """AUR's 13.42 entry sat 4.7 ranges past a 12.95 level, not a quarter of one."""
+    strategy = TradedStrategy()
+    candidate = orb_candidate(1)
+
+    assert strategy._too_extended(candidate, 13.42, candidate.high - candidate.low, 0.25)
+
+
+def test_the_ceiling_and_the_stop_bound_the_entry_from_both_sides() -> None:
+    """Long entries are admissible on (low + 0.75 span, high + 0.25 span].
+
+    The stop refusal is the floor and the extension ceiling is the roof, so the
+    admissible band is half a range wide and straddles the breakout level.
+    """
+    candidate = orb_candidate(1)
+    span = candidate.high - candidate.low
+    floor = candidate.low + 0.75 * span
+    roof = candidate.high + 0.25 * span
+
+    assert floor == pytest.approx(12.925)
+    assert roof == pytest.approx(12.975)
+    assert roof - floor == pytest.approx(0.5 * span)

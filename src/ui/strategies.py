@@ -57,6 +57,15 @@ POSITION_NOTIONAL_MIN = 1
 # engine's own candle.
 ORB_SIGNAL_CANDLES_MAX = {"orb": 2, "orb_momentum": 2}
 
+# How far past the breakout level, as a fraction of the opening range, the price
+# an order would pay may sit, from portfolio.py ORB_ENTRY_EXTENSION_MAX. None is
+# no ceiling. Per engine, like the target multiples.
+ORB_ENTRY_EXTENSION_MAX: dict[str, float | None] = {"orb": None, "orb_momentum": 0.25}
+
+# The three scale-out levels as multiples of the risk the fill took, from
+# portfolio.py ORB_TARGET_MULTIPLES.
+ORB_TARGET_MULTIPLES = {"orb": (1.5, 2.5, 4.0), "orb_momentum": (2.0, 3.0, 5.0)}
+
 # Engines whose register sets no per-trade risk limit, so position size comes
 # from the notional cap alone.
 UNCAPPED_RISK_ENGINES = frozenset({"sma"})
@@ -117,6 +126,8 @@ def _orb(
     per_trade: float,
     ranked: bool,
     signal_candles_max: int,
+    target_multiples: tuple[float, float, float],
+    entry_extension_max: float | None,
 ) -> list[Row]:
     # The opening candle closes at the same instant the first scan runs: the candle
     # stamped 09:30 covers the five minutes up to 09:35, and 09:35 is when it can
@@ -133,33 +144,36 @@ def _orb(
     risk_cap = ORB_RISK_CEILING if minutes == 5 else per_trade
 
     confirmation = (
-        f"Volume traded so far today is at least {volume_multiple:g}x the "
+        f"Volume traded up to the signal candle's close is at least {volume_multiple:g}x the "
         f"{ORB_HISTORY_SESSIONS}-session average at the same time of day, and that average "
         f"session turns over at least 1M shares. All {ORB_HISTORY_SESSIONS} earlier sessions "
         "must be there to compare against — a shorter history is not a weaker signal, it is "
-        "no confirmation at all, and the breakout is passed over."
+        "no confirmation at all, and the breakout is passed over. The reading is taken as the "
+        "signal candle closed rather than as the scan runs, so a breakout read a pass late is "
+        "still confirmed on the moment that made it."
     )
     if uses_macd:
         confirmation += " MACD (12/26/9) must also be rising for a long, falling for a short."
 
     fill_sets = "the entry, the risk and the targets"
-    if minutes == 5:
-        multiples = "1.5x, 2.5x and 4x"
-        reward = "1.5:1 at the first target, then 2.5:1 and 4:1."
-    else:
-        multiples = "2x, 4x and 8x"
-        reward = "2:1 at the first target, then 4:1 and 8:1."
+    first, second, third = target_multiples
+    multiples = f"{first:g}x, {second:g}x and {third:g}x"
+    reward = f"{first:g}:1 at the first target, then {second:g}:1 and {third:g}:1."
     targets = (
         f"Targets are re-cut from the filled price: {multiples} the risk actually taken, so a "
-        "fill away from the signal price carries them with it."
+        "fill away from the signal price carries them with it. Cut from the opening range "
+        "instead, a breakout candle closing well past the level filled above targets already "
+        "counted as reached and scaled the trade out on the spot."
     )
-    if minutes == 10:
-        targets += (
-            " Measured from a fill at the breakout level those are the same half a range, one "
-            "range and two ranges beyond it; measured from the range they were, a breakout "
-            "candle closing well past the level filled above targets already counted as "
-            "reached and scaled the trade out on the spot."
-        )
+
+    extension = (
+        ""
+        if entry_extension_max is None
+        else f" It is also passed over if that live quote sits more than "
+        f"{_pct(entry_extension_max)} of the opening range beyond the breakout level: the stop "
+        "is a fixed distance inside the range, so a price further past it risks more for the "
+        "same setup while leaving less of the move to collect."
+    )
 
     return [
         Row(field="Market", value=UNIVERSE, source="portfolio.py · _discover_eligible_symbols"),
@@ -226,8 +240,10 @@ def _orb(
             "size is worked out from the live quote, falling back to the breakout candle's "
             f"close, and the fill then sets {fill_sets}. It is passed "
             "over if another engine already holds the stock, if the account is at its position "
-            "cap or fully invested, or if the size that fits the risk limits comes to less than "
-            f"${POSITION_NOTIONAL_MIN}.",
+            "cap or fully invested, if the size that fits the risk limits comes to less than "
+            f"${POSITION_NOTIONAL_MIN}, or if that live quote has already run back through the "
+            "stop the breakout would have been given — a position cannot be opened already "
+            f"past its own exit.{extension}",
             source="portfolio.py · on_trading_iteration, _run_orb_variant, _enter",
         ),
         Row(
@@ -236,11 +252,19 @@ def _orb(
             "for a short. Once the first target is hit the stop trails "
             f"{ORB_TRAIL_ATR_MULTIPLE:g}x the 14-period ATR behind the best price the trade has "
             "seen, and never moves back "
-            f"past the entry price. The trail needs {ORB_TRAIL_BARS_MIN} completed candles to read "
-            "that ATR, and holds where it is until they exist. The level rests as a live order at "
+            f"past the entry price. That ATR(14) is calculated from {minutes}-minute candles "
+            "across trading sessions, using available prior-session bars as needed, so overnight "
+            f"gaps contribute to true range. At least {ORB_TRAIL_BARS_MIN} completed "
+            f"{minutes}-minute candles must be available; because prior sessions are included, "
+            "this requirement will normally already be satisfied when the trade begins. "
+            "The level rests as a live order at "
             "the broker, replaced whenever it moves and re-sent if it ever stops covering the "
-            "whole position.",
-            source="portfolio.py · _run_orb_variant, _manage_orb, _resync_stops",
+            "whole position. A level the market has already reached cannot rest as an order, so "
+            "when the stop lands at or beyond the last price the whole position is closed at "
+            "market there and then instead. The move to breakeven after the first target is the "
+            "usual way this happens: price back at the entry is the stop being hit, and the "
+            "position leaves at market rather than waiting for an order that could not be placed.",
+            source="portfolio.py · _run_orb_variant, _manage_orb, _protect, _resync_stops",
         ),
         Row(
             field="Max Risk",
@@ -423,14 +447,32 @@ def strategy_spec(configuration: TradingConfiguration | None) -> dict[str, Any]:
             short="ORB5",
             label=STRATEGY_LABELS["orb"],
             kind="Intraday breakout",
-            rows=_orb(5, 1.3, False, per_trade, True, ORB_SIGNAL_CANDLES_MAX["orb"]),
+            rows=_orb(
+                5,
+                1.3,
+                False,
+                per_trade,
+                True,
+                ORB_SIGNAL_CANDLES_MAX["orb"],
+                ORB_TARGET_MULTIPLES["orb"],
+                ORB_ENTRY_EXTENSION_MAX["orb"],
+            ),
         ),
         StrategyCard(
             id="orb_momentum",
             short="ORB10",
             label=STRATEGY_LABELS["orb_momentum"],
             kind="Intraday breakout",
-            rows=_orb(10, 1.5, True, per_trade, False, ORB_SIGNAL_CANDLES_MAX["orb_momentum"]),
+            rows=_orb(
+                10,
+                1.5,
+                False,
+                per_trade,
+                True,
+                ORB_SIGNAL_CANDLES_MAX["orb_momentum"],
+                ORB_TARGET_MULTIPLES["orb_momentum"],
+                ORB_ENTRY_EXTENSION_MAX["orb_momentum"],
+            ),
         ),
         StrategyCard(
             id="sma",

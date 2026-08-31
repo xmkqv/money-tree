@@ -16,6 +16,7 @@ import pytest
 
 from bot.portfolio import DAILY_EXIT_NEEDS_BOTH as COMPOSER_EXIT_NEEDS_BOTH
 from bot.portfolio import ORB_CLOSE_DEADLINE
+from bot.portfolio import ORB_ENTRY_EXTENSION_MAX as COMPOSER_ENTRY_EXTENSION_MAX
 from bot.portfolio import ORB_SIGNAL_CANDLES_MAX as COMPOSER_SIGNAL_CANDLES_MAX
 from bot.portfolio import ORB_TARGET_MULTIPLES as COMPOSER_TARGET_MULTIPLES
 from bot.portfolio import Strategy as PortfolioStrategy
@@ -48,6 +49,9 @@ from ui.strategies import (
     Row,
     entry_windows,
     strategy_spec,
+)
+from ui.strategies import (
+    ORB_ENTRY_EXTENSION_MAX as PAGE_ENTRY_EXTENSION_MAX,
 )
 from ui.strategies import (
     ORB_SIGNAL_CANDLES_MAX as PAGE_SIGNAL_CANDLES_MAX,
@@ -104,7 +108,7 @@ def test_every_strategy_answers_every_category() -> None:
 
 @pytest.mark.parametrize(
     ("engine", "minutes", "volume_multiple", "uses_macd", "ranked"),
-    [("orb", 5, 1.3, False, True), ("orb_momentum", 10, 1.5, True, False)],
+    [("orb", 5, 1.3, False, True), ("orb_momentum", 10, 1.5, False, True)],
 )
 def test_orb_numbers_match_the_composer(
     engine: str, minutes: int, volume_multiple: float, uses_macd: bool, ranked: bool
@@ -126,7 +130,7 @@ def test_orb_numbers_match_the_composer(
 
 @pytest.mark.parametrize(
     ("engine", "minutes", "volume_multiple", "uses_macd"),
-    [("orb", 5, 1.3, False), ("orb_momentum", 10, 1.5, True)],
+    [("orb", 5, 1.3, False), ("orb_momentum", 10, 1.5, False)],
 )
 def test_the_standalone_orb_classes_still_agree_with_the_composer(
     engine: str, minutes: int, volume_multiple: float, uses_macd: bool
@@ -203,7 +207,9 @@ def test_the_fill_and_not_the_signal_price_sets_the_trade(engine: str) -> None:
     assert "holding.entry = self._entry_price(order, price)" in filled
     assert "holding.risk = abs(holding.entry - holding.stop)" in filled
     assert "avg_fill_price" in inspect.getsource(PortfolioStrategy._entry_price)
-    assert "self._orb_price(candidate)," in inspect.getsource(PortfolioStrategy._run_orb_variant)
+    assert "price = self._orb_price(candidate)" in inspect.getsource(
+        PortfolioStrategy._run_orb_variant
+    )
     assert "return candidate.close" in inspect.getsource(PortfolioStrategy._orb_price)
 
     entry = spec_rows(engine)["Entry"]
@@ -285,7 +291,7 @@ def test_the_breakout_trail_matches_the_composer(engine: str) -> None:
 
     stop = spec_rows(engine)["Stop Loss"]
     assert f"trails {ORB_TRAIL_ATR_MULTIPLE:g}x the 14-period ATR" in stop
-    assert f"{ORB_TRAIL_BARS_MIN} completed candles" in stop
+    assert f"{ORB_TRAIL_BARS_MIN} completed" in stop
 
 
 def spec_row(strategy_id: str, field: str) -> Row:
@@ -320,7 +326,7 @@ def test_a_position_below_the_minimum_notional_is_not_opened(engine: str) -> Non
 
 @pytest.mark.parametrize(
     ("engine", "multiples"),
-    [("orb", "1.5x, 2.5x and 4x"), ("orb_momentum", "2x, 4x and 8x")],
+    [("orb", "1.5x, 2.5x and 4x"), ("orb_momentum", "2x, 3x and 5x")],
 )
 def test_the_targets_are_cut_from_the_fill(engine: str, multiples: str) -> None:
     """Both engines re-read their targets on the fill, so neither quotes the signal price."""
@@ -505,12 +511,13 @@ def test_daily_candidates_compete_on_traded_value_in_both_paths() -> None:
             row["source"] for row in spec_rows_full(engine) if row["field"] == "Sorting"
         )
 
-    orb_sorting = spec_rows("orb")["Sorting"]
-    assert "close times" in orb_sorting and "share volume" in orb_sorting
-    assert "_rank_candidates" in next(
-        row["source"] for row in spec_rows_full("orb") if row["field"] == "Sorting"
-    )
-    assert "Not ranked" in spec_rows("orb_momentum")["Sorting"], "the 10-minute scan is unranked"
+    for engine in ORB_ENGINES:
+        breakout_sorting = spec_rows(engine)["Sorting"]
+        assert "close times" in breakout_sorting and "share volume" in breakout_sorting
+        assert "highest first" in breakout_sorting
+        assert "_rank_candidates" in next(
+            row["source"] for row in spec_rows_full(engine) if row["field"] == "Sorting"
+        )
 
 
 def test_an_empty_earnings_calendar_does_not_hold_an_entry_back() -> None:
@@ -637,33 +644,31 @@ def test_reconstructed_orb_levels_follow_the_composer() -> None:
     assert short["stop"] == pytest.approx(10.125)
 
 
-def test_the_ten_minute_targets_are_the_range_levels_read_off_the_fill() -> None:
-    """A fill on the breakout level puts 2R, 4R and 8R exactly where the range does.
-
-    The register writes ORB10's targets as half a range, one range and two ranges
-    beyond the level, over a stop three quarters of the way back into it. That is
-    2R, 4R and 8R — but only from a fill at the level, which is why the composer
-    counts them from the fill instead.
-    """
+def test_the_ten_minute_targets_are_counted_off_the_fill() -> None:
+    """A 10.00-10.50 range: the stop sits three quarters back, R is the rest."""
     levels = orb_levels("orb_momentum", 1, entry=10.50, high=10.50, low=10.00)
 
     assert levels["stop"] == pytest.approx(10.375)
-    assert levels["targets"] == pytest.approx([10.75, 11.0, 11.5])
+    risk = 10.50 - 10.375
+    assert levels["targets"] == pytest.approx(
+        [10.50 + risk * m for m in COMPOSER_TARGET_MULTIPLES["orb_momentum"]]
+    )
 
 
-def test_a_ten_minute_fill_past_the_level_carries_its_targets_with_it() -> None:
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_a_fill_past_the_level_carries_its_targets_with_it(engine: str) -> None:
     """A breakout candle closing past the level used to fill above its own targets.
 
-    Range targets sat at 10.75, 11.00 and 11.50, so a 11.60 fill was through all
-    three the moment it landed: the position scaled itself out within a minute of
-    opening, nowhere near its 10.375 stop. Counting from the fill keeps every
-    target ahead of the entry.
+    ORB10's range targets sat at 10.75, 11.00 and 11.50, so an 11.60 fill was
+    through all three the moment it landed: the position scaled itself out within a
+    minute of opening, nowhere near its 10.375 stop. Counting from the fill keeps
+    every target ahead of the entry, whatever the multiples are set to.
     """
-    levels = orb_levels("orb_momentum", 1, entry=11.60, high=10.50, low=10.00)
+    levels = orb_levels(engine, 1, entry=11.60, high=10.50, low=10.00)
 
     assert min(levels["targets"]) > 11.60
     assert levels["targets"] == pytest.approx(
-        [11.60 + (11.60 - 10.375) * m for m in (2.0, 4.0, 8.0)]
+        [11.60 + (11.60 - 10.375) * m for m in COMPOSER_TARGET_MULTIPLES[engine]]
     )
 
 
@@ -818,3 +823,116 @@ def test_each_engine_quotes_its_own_signal_age_bound(engine: str, minutes: int) 
     setup = spec_rows(engine)["Setup"]
     assert f"one of the last {bound} completed candles" in setup
     assert f"{bound * minutes} minutes of the move" in setup
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_a_stop_the_market_has_reached_is_quoted_as_a_market_exit(engine: str) -> None:
+    """A stop at or past the last price cannot rest, so the position leaves at market.
+
+    This is a real exit path, not a detail: it is how a trade back at breakeven
+    after its first scale-out actually closes, and the page described only the
+    resting order until now.
+    """
+    protect = inspect.getsource(PortfolioStrategy._protect)
+
+    assert "holding.direction == 1 and stop >= price" in protect
+    assert "holding.direction == -1 and stop <= price" in protect
+    assert "self._exit(holding)" in protect
+
+    stop = spec_rows_full(engine)
+    stop_row = next(row for row in stop if row["field"] == "Stop Loss")
+    assert "cannot rest as an order" in stop_row["value"]
+    assert "closed at market there and then" in stop_row["value"]
+    assert "_protect" in stop_row["source"]
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_an_entry_already_through_its_stop_is_quoted_as_refused(engine: str) -> None:
+    """Sizing on the live quote is what gives this guard teeth.
+
+    Against the breakout candle's close it could never fire — that close is outside
+    the range by construction and the stop sits inside it, for a long and a short
+    alike. Against the live quote the market can have run back through the level
+    before the order goes in, and then there is no position to open.
+    """
+    assert "direction * (price - stop) <= 0" in inspect.getsource(PortfolioStrategy._enter)
+    assert "self._orb_price(candidate)" in inspect.getsource(PortfolioStrategy._run_orb_variant)
+
+    entry = spec_rows(engine)["Entry"]
+    assert "already run back through the stop" in entry
+    assert "cannot be opened already past its own exit" in entry
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_confirmation_is_quoted_as_of_the_signal_candle(engine: str) -> None:
+    """The gates confirm the breakout, so they read the moment that made it."""
+    variant = inspect.getsource(PortfolioStrategy._run_orb_variant)
+    confirm = inspect.getsource(PortfolioStrategy._orb_confirm)
+
+    assert "completed[cast(Any, completed.index) <= candidate.at]" in variant
+    assert "cast(Timestamp, frame.index[-1]).time()" in confirm
+
+    confirmation = spec_rows(engine)["Confirmation"]
+    assert "up to the signal candle's close" in confirmation
+    assert "rather than as the scan runs" in confirmation
+
+
+def test_the_entry_ceiling_is_quoted_where_it_applies() -> None:
+    """Only ORB10 has one, so only ORB10's Entry row may mention it."""
+    assert PAGE_ENTRY_EXTENSION_MAX == COMPOSER_ENTRY_EXTENSION_MAX
+    assert "self._too_extended(candidate, price, span, limit)" in inspect.getsource(
+        PortfolioStrategy._run_orb_variant
+    )
+    assert "self.entry_extension_max" in inspect.getsource(orb_base.OrbStrategy._scan)
+
+    limit = COMPOSER_ENTRY_EXTENSION_MAX["orb_momentum"]
+    assert limit is not None
+    entry = spec_rows("orb_momentum")["Entry"]
+    assert f"more than {limit * 100:g}% of the opening range beyond the breakout level" in entry
+
+    assert "of the opening range beyond the breakout level" not in spec_rows("orb")["Entry"]
+
+
+def test_no_engine_claims_a_macd_filter_it_does_not_run() -> None:
+    """ORB10's MACD gate is off, so neither card may still advertise one."""
+    assert orb.Strategy.uses_macd is False
+    assert orb_momentum.Strategy.uses_macd is False
+    assert all(arguments[3] is False for arguments in orb_variant_arguments().values())
+
+    for engine in ORB_ENGINES:
+        assert "MACD" not in spec_rows(engine)["Confirmation"], engine
+
+
+@pytest.mark.parametrize("engine", ORB_ENGINES)
+def test_the_reward_ratios_are_derived_from_the_multiples(engine: str) -> None:
+    """The page formats the ratios from the tuple, so they cannot drift from it."""
+    first, second, third = COMPOSER_TARGET_MULTIPLES[engine]
+
+    reward = spec_rows(engine)["Min. R:R"]
+    assert f"{first:g}:1 at the first target, then {second:g}:1 and {third:g}:1" in reward
+    assert f"{first:g}x, {second:g}x and {third:g}x the risk actually taken" in reward
+
+
+@pytest.mark.parametrize(("engine", "minutes"), [("orb", 5), ("orb_momentum", 10)])
+def test_the_trail_atr_is_quoted_as_reaching_across_sessions(engine: str, minutes: int) -> None:
+    """The ATR window spans days, and the page has to say so.
+
+    _manage_orb asks for five calendar days of candles and filters them to regular
+    hours only — not to today — so a 14-period ATR necessarily reads prior sessions.
+    Two things follow that a reader would otherwise be surprised by: each session's
+    first candle sits directly after the previous session's last, so the overnight
+    gap counts as a true range; and the 15-candle minimum is satisfied long before
+    the trail can arm, rather than holding it back.
+    """
+    manage = inspect.getsource(PortfolioStrategy._manage_orb)
+
+    assert "now - timedelta(days=5)" in manage, "the window is days, not one session"
+    assert 'between_time("09:30", "15:59")' in manage, "regular hours, not one date"
+    assert f"len(frame) < {ORB_TRAIL_BARS_MIN}" in manage
+
+    stop = spec_rows(engine)["Stop Loss"]
+    assert f"ATR(14) is calculated from {minutes}-minute candles across trading sessions" in stop
+    assert "prior-session bars as needed" in stop
+    assert "overnight gaps contribute to true range" in stop
+    assert f"At least {ORB_TRAIL_BARS_MIN} completed {minutes}-minute candles" in stop
+    assert "normally already be satisfied" in stop

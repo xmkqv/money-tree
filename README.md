@@ -93,6 +93,7 @@ setup
     opening range = 09:30-09:35 ET
     marks = opening range high, midpoint, and low
     volume = cumulative volume >= 1.3 * 20-day average cumulative volume at the same time
+    volume is read as of the signal candle's close
     other filters = none
 
 sorting
@@ -105,6 +106,7 @@ entry
     short signal = first candle close below the opening range low
     signal candle = the first such candle since the range, within the last 2 completed candles
     order = next 5-minute candle open, directly after the signal candle
+    entry block = live quote already through the initial stop
     earnings block = none
     open positions may remain after the entry window
 
@@ -118,7 +120,11 @@ risk
     short initial stop = opening range level(0.25)
     at +1.5R set stop = breakeven
     at +1.5R enable trailing stop = 1.5 * ATR(14) on 5-minute candles
+    ATR(14) window = 5-minute candles across sessions, prior-session bars used as needed
+    overnight gaps contribute to true range
+    ATR(14) needs 15 completed 5-minute candles, normally already available at entry
     active stop cannot move past breakeven into a loss
+    stop at or beyond the last price = close the position at market
 
 exit
     at +1.5R close = 50% of original position
@@ -148,12 +154,12 @@ setup
     opening range = 09:30-09:40 ET
     marks = opening range high, midpoint, and low
     volume = cumulative volume >= 1.5 * 20-day average cumulative volume at the same time
-    long MACD = increasing
-    short MACD = decreasing
-    remove the MACD filter if it reduces trade count without raising average return
+    volume is read as of the signal candle's close
+    other filters = none
 
 sorting
-    rank = none, breakouts are taken in symbol order as the scan meets them
+    rank = last completed daily session close * volume, highest first
+    applies when more breakouts fire than there is room to hold
 
 entry
     window = 09:40-10:30 ET
@@ -161,6 +167,9 @@ entry
     short signal = first candle close below the opening range low
     signal candle = the first such candle since the range, within the last 2 completed candles
     order = next 10-minute candle open, directly after the signal candle
+    entry block = live quote already through the initial stop
+    long max entry price = opening range high + 0.25 * opening range size
+    short min entry price = opening range low - 0.25 * opening range size
     earnings block = none
     open positions may remain after the entry window
 
@@ -174,12 +183,16 @@ risk
     short initial stop = opening range level(0.25)
     at +2R set stop = breakeven
     at +2R enable trailing stop = 1.5 * ATR(14) on 10-minute candles
+    ATR(14) window = 10-minute candles across sessions, prior-session bars used as needed
+    overnight gaps contribute to true range
+    ATR(14) needs 15 completed 10-minute candles, normally already available at entry
     active stop cannot move past breakeven into a loss
+    stop at or beyond the last price = close the position at market
 
 exit
     at +2R close = 50% of original position
-    at +4R close = 25% of original position
-    at +8R close = remaining 25% of original position
+    at +3R close = 25% of original position
+    at +5R close = remaining 25% of original position
     signal exit = none
     earnings exit = none
     deadline = close any remaining position before 15:55 ET

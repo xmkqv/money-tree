@@ -4,10 +4,11 @@ from bot.strategies.orb_base import OrbStrategy
 class Strategy(OrbStrategy):
     candle_minutes = 10
     volume_multiple = 1.5
-    uses_macd = True
+    uses_macd = False
     risk_fraction_max = None
-    # Half a range, one range and two ranges beyond the breakout level, written as
-    # multiples of the risk a fill at that level would take. See _filled_targets.
-    target_multiples = (2.0, 4.0, 8.0)
+    target_multiples = (2.0, 3.0, 5.0)
     # The newest completed candle, or the one before it — twenty minutes of a move.
     signal_candles_max = 2
+    # A quarter of the opening range beyond the breakout level is as far past it as
+    # an entry may be paid for.
+    entry_extension_max = 0.25

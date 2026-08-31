@@ -231,7 +231,7 @@ def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, 
 ATR_PERIOD = 14
 DAILY_STOP_MULTIPLES = {"sma": 1.5, "tfb_50": 2.0}
 ORB_OPENING_MINUTES = {"orb": 5, "orb_momentum": 10}
-ORB_TARGET_MULTIPLES = {"orb": (1.5, 2.5, 4.0), "orb_momentum": (2.0, 4.0, 8.0)}
+ORB_TARGET_MULTIPLES = {"orb": (1.5, 2.5, 4.0), "orb_momentum": (2.0, 3.0, 5.0)}
 ORB_STOP_FRACTION = {1: 0.75, -1: 0.25}
 
 

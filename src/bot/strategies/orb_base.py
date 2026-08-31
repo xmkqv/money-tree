@@ -102,6 +102,7 @@ class OrbStrategy(StrategyBase):
     risk_fraction_max: ClassVar[float | None]
     target_multiples: ClassVar[tuple[float, float, float]]
     signal_candles_max: ClassVar[int]
+    entry_extension_max: ClassVar[float | None]
 
     _baseline_equity: float
     _day: date | None
@@ -300,6 +301,14 @@ class OrbStrategy(StrategyBase):
                 return
         span = high - low
         stop = low + span * (0.75 if direction == 1 else 0.25)
+        # The stop sits a fixed distance inside the range, so a price further past
+        # the level risks more for the same setup and has already given away that
+        # much of the move. Past the ceiling the breakout is left alone.
+        limit = self.entry_extension_max
+        if limit is not None and (
+            close > high + limit * span if direction == 1 else close < low - limit * span
+        ):
+            return
         stop_distance = abs(close - stop)
         risk_limit = float(self.parameters["risk_per_trade_max"])
         if self.risk_fraction_max is not None:
