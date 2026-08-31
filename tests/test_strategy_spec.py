@@ -291,7 +291,7 @@ def test_the_breakout_trail_matches_the_composer(engine: str) -> None:
 
     stop = spec_rows(engine)["Stop Loss"]
     assert f"trails {ORB_TRAIL_ATR_MULTIPLE:g}x the 14-period ATR" in stop
-    assert f"{ORB_TRAIL_BARS_MIN} completed candles" in stop
+    assert f"{ORB_TRAIL_BARS_MIN} completed" in stop
 
 
 def spec_row(strategy_id: str, field: str) -> Row:
@@ -911,3 +911,28 @@ def test_the_reward_ratios_are_derived_from_the_multiples(engine: str) -> None:
     reward = spec_rows(engine)["Min. R:R"]
     assert f"{first:g}:1 at the first target, then {second:g}:1 and {third:g}:1" in reward
     assert f"{first:g}x, {second:g}x and {third:g}x the risk actually taken" in reward
+
+
+@pytest.mark.parametrize(("engine", "minutes"), [("orb", 5), ("orb_momentum", 10)])
+def test_the_trail_atr_is_quoted_as_reaching_across_sessions(engine: str, minutes: int) -> None:
+    """The ATR window spans days, and the page has to say so.
+
+    _manage_orb asks for five calendar days of candles and filters them to regular
+    hours only — not to today — so a 14-period ATR necessarily reads prior sessions.
+    Two things follow that a reader would otherwise be surprised by: each session's
+    first candle sits directly after the previous session's last, so the overnight
+    gap counts as a true range; and the 15-candle minimum is satisfied long before
+    the trail can arm, rather than holding it back.
+    """
+    manage = inspect.getsource(PortfolioStrategy._manage_orb)
+
+    assert "now - timedelta(days=5)" in manage, "the window is days, not one session"
+    assert 'between_time("09:30", "15:59")' in manage, "regular hours, not one date"
+    assert f"len(frame) < {ORB_TRAIL_BARS_MIN}" in manage
+
+    stop = spec_rows(engine)["Stop Loss"]
+    assert f"ATR(14) is calculated from {minutes}-minute candles across trading sessions" in stop
+    assert "prior-session bars as needed" in stop
+    assert "overnight gaps contribute to true range" in stop
+    assert f"At least {ORB_TRAIL_BARS_MIN} completed {minutes}-minute candles" in stop
+    assert "normally already be satisfied" in stop

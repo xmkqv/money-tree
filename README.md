@@ -120,6 +120,9 @@ risk
     short initial stop = opening range level(0.25)
     at +1.5R set stop = breakeven
     at +1.5R enable trailing stop = 1.5 * ATR(14) on 5-minute candles
+    ATR(14) window = 5-minute candles across sessions, prior-session bars used as needed
+    overnight gaps contribute to true range
+    ATR(14) needs 15 completed 5-minute candles, normally already available at entry
     active stop cannot move past breakeven into a loss
     stop at or beyond the last price = close the position at market
 
@@ -180,6 +183,9 @@ risk
     short initial stop = opening range level(0.25)
     at +2R set stop = breakeven
     at +2R enable trailing stop = 1.5 * ATR(14) on 10-minute candles
+    ATR(14) window = 10-minute candles across sessions, prior-session bars used as needed
+    overnight gaps contribute to true range
+    ATR(14) needs 15 completed 10-minute candles, normally already available at entry
     active stop cannot move past breakeven into a loss
     stop at or beyond the last price = close the position at market
 
