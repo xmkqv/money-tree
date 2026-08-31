@@ -63,7 +63,15 @@ DAILY_EXIT_NEEDS_BOTH: dict[StrategyName, bool] = {"sma": False, "tfb_50": True}
 # target ahead of the entry wherever it lands.
 ORB_TARGET_MULTIPLES: dict[StrategyName, tuple[float, float, float]] = {
     "orb": (1.5, 2.5, 4.0),
-    "orb_momentum": (2.0, 4.0, 8.0),
+    "orb_momentum": (2.0, 3.0, 5.0),
+}
+# How far beyond the breakout level, as a fraction of the opening range, the price
+# an order would pay may sit before the breakout is left alone. The stop is a
+# fixed distance *inside* the range, so every tick past the level risks more for
+# the same setup while leaving less of the move to collect. None is no ceiling.
+ORB_ENTRY_EXTENSION_MAX: dict[StrategyName, float | None] = {
+    "orb": None,
+    "orb_momentum": 0.25,
 }
 # How far back a breakout close may sit and still be worth taking, counted in
 # candles ending at the newest completed one. 1 is the candle that has just
@@ -638,7 +646,7 @@ class Strategy(StrategyBase):
         self._run_orb_variant("orb", now, 5, 1.3, False, True)
 
     def _run_orb_momentum(self, now: datetime) -> None:
-        self._run_orb_variant("orb_momentum", now, 10, 1.5, True, False)
+        self._run_orb_variant("orb_momentum", now, 10, 1.5, False, True)
 
     def _rank_candidates(self, candidates: list[OrbCandidate], now: datetime) -> list[OrbCandidate]:
         """Breakouts by the value traded in their last completed daily session.
@@ -744,16 +752,42 @@ class Strategy(StrategyBase):
                 continue
             span = candidate.high - candidate.low
             stop = candidate.low + span * (0.75 if candidate.direction == 1 else 0.25)
+            price = self._orb_price(candidate)
+            limit = ORB_ENTRY_EXTENSION_MAX.get(engine)
+            if limit is not None and self._too_extended(candidate, price, span, limit):
+                self._event(
+                    f"extended-{candidate.symbol}-{now.date()}",
+                    "warning",
+                    f"{candidate.symbol} entry skipped: price is more than "
+                    f"{limit:g} of the opening range beyond the breakout level",
+                    engine,
+                )
+                continue
             self._enter(
                 engine,
                 candidate.symbol,
                 candidate.symbol,
-                self._orb_price(candidate),
+                price,
                 stop,
                 now,
                 direction=candidate.direction,
                 risk_fraction_max=0.01 if engine == "orb" else None,
             )
+
+    def _too_extended(
+        self, candidate: OrbCandidate, price: float, span: float, limit: float
+    ) -> bool:
+        """Whether the price an order would pay sits too far beyond the level.
+
+        The stop sits a fixed distance *inside* the opening range, so a fill
+        further past the level is a worse trade twice over: it risks more for the
+        same setup, and it has already given away that much of the move. Past the
+        ceiling the trade is no longer the breakout the rule named, and no entry
+        is better than a stretched one.
+        """
+        if candidate.direction == 1:
+            return price > candidate.high + limit * span
+        return price < candidate.low - limit * span
 
     def _orb_signal(
         self, candles: DataFrame, high: float, low: float

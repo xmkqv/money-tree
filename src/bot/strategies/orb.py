@@ -9,3 +9,5 @@ class Strategy(OrbStrategy):
     target_multiples = (1.5, 2.5, 4.0)
     # The newest completed candle, or the one before it — ten minutes of a move.
     signal_candles_max = 2
+    # No ceiling on how far past the level an entry may be paid for.
+    entry_extension_max = None

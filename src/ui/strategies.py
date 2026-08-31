@@ -57,6 +57,15 @@ POSITION_NOTIONAL_MIN = 1
 # engine's own candle.
 ORB_SIGNAL_CANDLES_MAX = {"orb": 2, "orb_momentum": 2}
 
+# How far past the breakout level, as a fraction of the opening range, the price
+# an order would pay may sit, from portfolio.py ORB_ENTRY_EXTENSION_MAX. None is
+# no ceiling. Per engine, like the target multiples.
+ORB_ENTRY_EXTENSION_MAX: dict[str, float | None] = {"orb": None, "orb_momentum": 0.25}
+
+# The three scale-out levels as multiples of the risk the fill took, from
+# portfolio.py ORB_TARGET_MULTIPLES.
+ORB_TARGET_MULTIPLES = {"orb": (1.5, 2.5, 4.0), "orb_momentum": (2.0, 3.0, 5.0)}
+
 # Engines whose register sets no per-trade risk limit, so position size comes
 # from the notional cap alone.
 UNCAPPED_RISK_ENGINES = frozenset({"sma"})
@@ -117,6 +126,8 @@ def _orb(
     per_trade: float,
     ranked: bool,
     signal_candles_max: int,
+    target_multiples: tuple[float, float, float],
+    entry_extension_max: float | None,
 ) -> list[Row]:
     # The opening candle closes at the same instant the first scan runs: the candle
     # stamped 09:30 covers the five minutes up to 09:35, and 09:35 is when it can
@@ -145,23 +156,24 @@ def _orb(
         confirmation += " MACD (12/26/9) must also be rising for a long, falling for a short."
 
     fill_sets = "the entry, the risk and the targets"
-    if minutes == 5:
-        multiples = "1.5x, 2.5x and 4x"
-        reward = "1.5:1 at the first target, then 2.5:1 and 4:1."
-    else:
-        multiples = "2x, 4x and 8x"
-        reward = "2:1 at the first target, then 4:1 and 8:1."
+    first, second, third = target_multiples
+    multiples = f"{first:g}x, {second:g}x and {third:g}x"
+    reward = f"{first:g}:1 at the first target, then {second:g}:1 and {third:g}:1."
     targets = (
         f"Targets are re-cut from the filled price: {multiples} the risk actually taken, so a "
-        "fill away from the signal price carries them with it."
+        "fill away from the signal price carries them with it. Cut from the opening range "
+        "instead, a breakout candle closing well past the level filled above targets already "
+        "counted as reached and scaled the trade out on the spot."
     )
-    if minutes == 10:
-        targets += (
-            " Measured from a fill at the breakout level those are the same half a range, one "
-            "range and two ranges beyond it; measured from the range they were, a breakout "
-            "candle closing well past the level filled above targets already counted as "
-            "reached and scaled the trade out on the spot."
-        )
+
+    extension = (
+        ""
+        if entry_extension_max is None
+        else f" It is also passed over if that live quote sits more than "
+        f"{_pct(entry_extension_max)} of the opening range beyond the breakout level: the stop "
+        "is a fixed distance inside the range, so a price further past it risks more for the "
+        "same setup while leaving less of the move to collect."
+    )
 
     return [
         Row(field="Market", value=UNIVERSE, source="portfolio.py · _discover_eligible_symbols"),
@@ -231,7 +243,7 @@ def _orb(
             "cap or fully invested, if the size that fits the risk limits comes to less than "
             f"${POSITION_NOTIONAL_MIN}, or if that live quote has already run back through the "
             "stop the breakout would have been given — a position cannot be opened already "
-            "past its own exit.",
+            f"past its own exit.{extension}",
             source="portfolio.py · on_trading_iteration, _run_orb_variant, _enter",
         ),
         Row(
@@ -431,14 +443,32 @@ def strategy_spec(configuration: TradingConfiguration | None) -> dict[str, Any]:
             short="ORB5",
             label=STRATEGY_LABELS["orb"],
             kind="Intraday breakout",
-            rows=_orb(5, 1.3, False, per_trade, True, ORB_SIGNAL_CANDLES_MAX["orb"]),
+            rows=_orb(
+                5,
+                1.3,
+                False,
+                per_trade,
+                True,
+                ORB_SIGNAL_CANDLES_MAX["orb"],
+                ORB_TARGET_MULTIPLES["orb"],
+                ORB_ENTRY_EXTENSION_MAX["orb"],
+            ),
         ),
         StrategyCard(
             id="orb_momentum",
             short="ORB10",
             label=STRATEGY_LABELS["orb_momentum"],
             kind="Intraday breakout",
-            rows=_orb(10, 1.5, True, per_trade, False, ORB_SIGNAL_CANDLES_MAX["orb_momentum"]),
+            rows=_orb(
+                10,
+                1.5,
+                False,
+                per_trade,
+                True,
+                ORB_SIGNAL_CANDLES_MAX["orb_momentum"],
+                ORB_TARGET_MULTIPLES["orb_momentum"],
+                ORB_ENTRY_EXTENSION_MAX["orb_momentum"],
+            ),
         ),
         StrategyCard(
             id="sma",

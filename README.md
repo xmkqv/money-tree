@@ -151,13 +151,12 @@ setup
     opening range = 09:30-09:40 ET
     marks = opening range high, midpoint, and low
     volume = cumulative volume >= 1.5 * 20-day average cumulative volume at the same time
-    volume and MACD are read as of the signal candle's close
-    long MACD = increasing
-    short MACD = decreasing
-    remove the MACD filter if it reduces trade count without raising average return
+    volume is read as of the signal candle's close
+    other filters = none
 
 sorting
-    rank = none, breakouts are taken in symbol order as the scan meets them
+    rank = last completed daily session close * volume, highest first
+    applies when more breakouts fire than there is room to hold
 
 entry
     window = 09:40-10:30 ET
@@ -166,6 +165,8 @@ entry
     signal candle = the first such candle since the range, within the last 2 completed candles
     order = next 10-minute candle open, directly after the signal candle
     entry block = live quote already through the initial stop
+    long max entry price = opening range high + 0.25 * opening range size
+    short min entry price = opening range low - 0.25 * opening range size
     earnings block = none
     open positions may remain after the entry window
 
@@ -184,8 +185,8 @@ risk
 
 exit
     at +2R close = 50% of original position
-    at +4R close = 25% of original position
-    at +8R close = remaining 25% of original position
+    at +3R close = 25% of original position
+    at +5R close = remaining 25% of original position
     signal exit = none
     earnings exit = none
     deadline = close any remaining position before 15:55 ET
