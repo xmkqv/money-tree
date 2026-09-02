@@ -15,13 +15,18 @@ from typing import Any
 import pytest
 
 from bot.portfolio import DAILY_EXIT_NEEDS_BOTH as COMPOSER_EXIT_NEEDS_BOTH
-from bot.portfolio import ORB_CLOSE_DEADLINE
+from bot.portfolio import ORB_CLOSE_DEADLINE, UNIVERSE_CAP_MIN, UNIVERSE_TURNOVER_MIN
 from bot.portfolio import ORB_ENTRY_EXTENSION_MAX as COMPOSER_ENTRY_EXTENSION_MAX
 from bot.portfolio import ORB_SIGNAL_CANDLES_MAX as COMPOSER_SIGNAL_CANDLES_MAX
 from bot.portfolio import ORB_TARGET_MULTIPLES as COMPOSER_TARGET_MULTIPLES
 from bot.portfolio import Strategy as PortfolioStrategy
 from bot.strategies import orb, orb_base, orb_momentum, shared, sma, tfb_50
 from bot.strategies.daily import DailyStrategy
+from bot.strategies.orb_base import (
+    ORB_PRICE_MIN,
+    ORB_RISK_CEILING,
+    ORB_TURNOVER_MIN,
+)
 from bot.strategies.shared import MIN_NOTIONAL_USD, entry_quantity, fractional_allowed
 from bot.types import TradingConfiguration
 from tests.test_ledger import _snapshot
@@ -39,7 +44,6 @@ from ui.strategies import (
     DAILY_EXIT_NEEDS_BOTH,
     FIELDS,
     ORB_HISTORY_SESSIONS,
-    ORB_RISK_CEILING,
     ORB_TRAIL_ATR_MULTIPLE,
     ORB_TRAIL_BARS_MIN,
     POSITION_FRACTION_CEILING,
@@ -256,11 +260,12 @@ def test_only_the_engines_that_can_short_state_the_rounding_rule() -> None:
 @pytest.mark.parametrize("engine", ORB_ENGINES)
 def test_relative_volume_needs_a_full_history_to_confirm(engine: str) -> None:
     """A short history is no confirmation, so the page must not promise an average."""
+    history_source = inspect.getsource(orb_base.session_volume)
     source = inspect.getsource(orb_base.relative_volume_ready)
 
-    assert f"if len(history) != {ORB_HISTORY_SESSIONS}" in source
-    assert f".tail({ORB_HISTORY_SESSIONS})" in source
-    assert "historical_daily_average >= 1_000_000" in source
+    assert f"if len(history) != {ORB_HISTORY_SESSIONS}" in history_source
+    assert f".tail({ORB_HISTORY_SESSIONS})" in history_source
+    assert "volume.turnover >= ORB_TURNOVER_MIN" in source
 
     confirmation = spec_rows(engine)["Confirmation"]
     assert f"All {ORB_HISTORY_SESSIONS} earlier sessions" in confirmation
@@ -271,9 +276,10 @@ def test_relative_volume_needs_a_full_history_to_confirm(engine: str) -> None:
 def test_a_traded_stock_is_off_limits_to_both_breakout_engines(engine: str) -> None:
     """_orb_traded is keyed by day and symbol alone, so the ban crosses engines."""
     variant = inspect.getsource(PortfolioStrategy._run_orb_variant)
+    unscanned = inspect.getsource(PortfolioStrategy._orb_unscanned)
 
     assert "self._orb_scanned.add(key)" in variant
-    assert "(now.date(), symbol) in self._orb_traded" in variant
+    assert "(day, symbol) not in self._orb_traded" in unscanned
     assert "key = (now.date(), engine, symbol)" in variant
 
     setup = spec_rows(engine)["Setup"]
@@ -353,10 +359,10 @@ def test_the_scale_out_fractions_match_the_composer(engine: str) -> None:
 
 
 def test_the_five_minute_engine_states_its_own_risk_ceiling() -> None:
-    """ORB declares 1% in the register, so the configured limit does not override it."""
+    """ORB declares its own ceiling in the register, so the configured limit does not win."""
     source = inspect.getsource(PortfolioStrategy._run_orb_variant)
 
-    assert f'risk_fraction_max={ORB_RISK_CEILING} if engine == "orb" else None' in source
+    assert 'risk_fraction_max=ORB_RISK_CEILING if engine == "orb" else None' in source
     assert orb.Strategy.risk_fraction_max == ORB_RISK_CEILING
     assert orb_momentum.Strategy.risk_fraction_max is None
     assert "risk_fraction = risk_fraction_max" in inspect.getsource(PortfolioStrategy._enter)
@@ -365,12 +371,13 @@ def test_the_five_minute_engine_states_its_own_risk_ceiling() -> None:
         card["id"]: next(row for row in card["rows"] if row["field"] == "Max Risk")["value"]
         for card in strategy_spec(configuration(per_trade=0.02))["strategies"]
     }
-    assert risk["orb"].startswith("1% of account equity per trade")
+    ceiling = f"{ORB_RISK_CEILING * 100:g}% of account equity per trade"
+    assert risk["orb"].startswith(ceiling)
     assert risk["orb_momentum"].startswith("2% of account equity per trade")
 
-    # A tighter configured limit must not drag the published ORB figure down with it,
+    # A looser configured limit must not drag the published ORB figure up with it,
     # because the bot no longer applies it to this engine.
-    assert spec_rows("orb")["Max Risk"].startswith("1% of account equity per trade")
+    assert spec_rows("orb")["Max Risk"].startswith(ceiling)
     assert spec_rows("orb_momentum")["Max Risk"].startswith("0.5% of account equity per trade")
 
 
@@ -540,11 +547,14 @@ def test_the_daily_stop_only_trails_closes_made_since_entry() -> None:
 def test_the_universe_screen_matches_the_discovery_query() -> None:
     source = inspect.getsource(PortfolioStrategy._discover_eligible_symbols)
 
-    assert "500_000_000" in source
-    assert "cap >= 5e8 and volume >= 1e6" in source
+    assert "cap >= UNIVERSE_CAP_MIN" in source
+    assert "price >= ORB_PRICE_MIN" in source
+    assert "volume * price >= UNIVERSE_TURNOVER_MIN" in source
+    assert UNIVERSE_CAP_MIN == 500_000_000.0
+    assert UNIVERSE_TURNOVER_MIN == ORB_TURNOVER_MIN
 
     market = spec_rows("orb")["Market"]
-    assert "$500M" in market and "1M shares" in market
+    assert "$500M" in market and "$20M" in market and f"${ORB_PRICE_MIN:.0f}" in market
 
 
 def test_the_page_describes_the_module_the_bot_actually_runs() -> None:

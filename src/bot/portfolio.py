@@ -19,7 +19,15 @@ from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 from bot.attribution import STRATEGY_CODES, find_order_strategy
 from bot.config import settings
 from bot.strategies.base import StrategyBase
-from bot.strategies.orb_base import relative_volume_ready
+from bot.strategies.orb_base import (
+    ORB_POSITIONS_MAX,
+    ORB_PRICE_MIN,
+    ORB_RISK_CEILING,
+    ORB_TURNOVER_MIN,
+    orb_setup,
+    relative_volume_ready,
+    round_stop,
+)
 from bot.strategies.shared import (
     TRADING_ZONE,
     Direction,
@@ -43,6 +51,17 @@ from bot.types import STRATEGY_LABELS, EventLevel, StrategyName, active_strategi
 
 FIVE_MINUTES = TimeFrame(5, cast(TimeFrameUnit, TimeFrameUnit.Minute))
 TEN_MINUTES = TimeFrame(10, cast(TimeFrameUnit, TimeFrameUnit.Minute))
+# IEX carries a small slice of the tape, so bars built from it understate both
+# volume and the width of an opening range. SIP is the consolidated tape.
+DATA_FEEDS: dict[str, DataFeed] = {"sip": DataFeed.SIP, "iex": DataFeed.IEX}
+# One request per fifty symbols turns a universe-wide scan into dozens of round
+# trips, and the breakout window is minutes long. Alpaca accepts far more.
+SYMBOLS_PER_REQUEST = 200
+# The screen reads market cap and turnover, so its volume floor is expressed in
+# dollars for the same reason the breakout rules are: a share count means
+# different things at $3 and at $300.
+UNIVERSE_CAP_MIN = 500_000_000.0
+UNIVERSE_TURNOVER_MIN = ORB_TURNOVER_MIN
 UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
 PREPARATION_ATTEMPTS_MAX = 2
 STOP_COVERAGE_TOLERANCE = 1e-6
@@ -471,7 +490,7 @@ class Strategy(StrategyBase):
             "and",
             [
                 Query("eq", ["region", "us"]),
-                Query("gte", ["intradaymarketcap", 500_000_000]),
+                Query("gte", ["intradaymarketcap", UNIVERSE_CAP_MIN]),
             ],
         )
         quotes: list[dict[str, Any]] = []
@@ -499,6 +518,7 @@ class Strategy(StrategyBase):
                 str(value.get("symbol", "")).replace("-", "."),
                 float(value.get("marketCap") or 0),
                 float(value.get("averageDailyVolume3Month") or 0),
+                float(value.get("regularMarketPrice") or 0),
             )
             for value in quotes
             if value.get("quoteType") == "EQUITY"
@@ -506,8 +526,11 @@ class Strategy(StrategyBase):
         return sorted(
             {
                 symbol
-                for symbol, cap, volume in rows
-                if symbol in assets and cap >= 5e8 and volume >= 1e6
+                for symbol, cap, volume, price in rows
+                if symbol in assets
+                and cap >= UNIVERSE_CAP_MIN
+                and price >= ORB_PRICE_MIN
+                and volume * price >= UNIVERSE_TURNOVER_MIN
             }
         )
 
@@ -540,14 +563,14 @@ class Strategy(StrategyBase):
         self, symbols: list[str], start: datetime, timeframe: TimeFrame, end: datetime | None = None
     ) -> dict[str, DataFrame]:
         frames: dict[str, DataFrame] = {}
-        for offset in range(0, len(symbols), 50):
+        for offset in range(0, len(symbols), SYMBOLS_PER_REQUEST):
             request = StockBarsRequest(
-                symbol_or_symbols=symbols[offset : offset + 50],
+                symbol_or_symbols=symbols[offset : offset + SYMBOLS_PER_REQUEST],
                 start=start.astimezone(UTC),
                 end=None if end is None else end.astimezone(UTC),
                 timeframe=timeframe,
                 adjustment=Adjustment.ALL,
-                feed=DataFeed.IEX,
+                feed=DATA_FEEDS[settings.alpaca_data_feed],
             )
             values = cast(DataFrame, cast(Any, self._data.get_stock_bars(request)).df)
             if values.empty:
@@ -685,18 +708,23 @@ class Strategy(StrategyBase):
             or not self._eligible_symbols
         ):
             return
-        frames = self._intraday(self._eligible_symbols, now, minutes)
+        if self._orb_position_count() >= ORB_POSITIONS_MAX:
+            self._event(
+                f"orb-capacity-{now.date()}",
+                "info",
+                f"Breakout entries paused: {ORB_POSITIONS_MAX} positions already open",
+                engine,
+            )
+            return
+        symbols = self._orb_unscanned(engine, now.date())
+        if not symbols:
+            return
+        frames = self._intraday(symbols, now, minutes)
         candidates: list[OrbCandidate] = []
-        for symbol in self._eligible_symbols:
+        for symbol in symbols:
             key = (now.date(), engine, symbol)
             frame = frames.get(symbol)
-            if (
-                key in self._orb_scanned
-                or (now.date(), symbol) in self._orb_traded
-                or frame is None
-                or frame.empty
-                or self._claimed(symbol)
-            ):
+            if frame is None or frame.empty:
                 continue
             opening = cast(
                 DataFrame,
@@ -716,7 +744,11 @@ class Strategy(StrategyBase):
             if signal is None:
                 continue
             position, direction, close = signal
+            # The range is fixed for the day, so a break that fails the setup
+            # rules can never pass later: the signal is recorded either way.
             self._orb_scanned.add(key)
+            if orb_setup(high, low, close) is None:
+                continue
             if len(after) - position > ORB_SIGNAL_CANDLES_MAX[engine]:
                 continue
             candidates.append(
@@ -736,6 +768,8 @@ class Strategy(StrategyBase):
             now,
         )
         for candidate in candidates:
+            if self._orb_position_count() >= ORB_POSITIONS_MAX:
+                return
             frame = histories.get(candidate.symbol)
             if frame is None:
                 continue
@@ -771,8 +805,38 @@ class Strategy(StrategyBase):
                 stop,
                 now,
                 direction=candidate.direction,
-                risk_fraction_max=0.01 if engine == "orb" else None,
+                risk_fraction_max=ORB_RISK_CEILING if engine == "orb" else None,
             )
+
+    def _orb_position_count(self) -> int:
+        """Breakout positions held or ordered, across both breakout engines.
+
+        Every breakout is the same bet on the same half hour, so the two engines
+        share one allowance rather than each taking their own.
+        """
+        engines = {"orb", "orb_momentum"}
+        held = sum(1 for holding in self._holdings.values() if holding.engine in engines)
+        ordered = sum(
+            1
+            for asset, pending in self._pending.items()
+            if pending.holding.engine in engines and asset not in self._holdings
+        )
+        return held + ordered
+
+    def _orb_unscanned(self, engine: StrategyName, day: date) -> list[str]:
+        """Symbols still worth pulling bars for, filtered before the fetch.
+
+        The scan runs inside a window minutes wide, so pulling bars for names
+        already scanned, traded or held is latency spent on an answer that
+        cannot change.
+        """
+        return [
+            symbol
+            for symbol in self._eligible_symbols
+            if (day, engine, symbol) not in self._orb_scanned
+            and (day, symbol) not in self._orb_traded
+            and not self._claimed(symbol)
+        ]
 
     def _too_extended(
         self, candidate: OrbCandidate, price: float, span: float, limit: float
@@ -1046,12 +1110,27 @@ class Strategy(StrategyBase):
             return
         amount = self._quantity(holding.asset) if quantity is None else quantity
         price = float(self.get_last_price(holding.asset))
-        stop = round(holding.stop, 2)
+        stop = round_stop(holding.direction, holding.stop)
         if amount <= 0 or stop <= 0:
+            # A fill can arrive before the position is readable. _resync_stops
+            # retries every iteration, but a position with no resting stop is
+            # worth saying out loud rather than leaving to the next pass.
+            self._event(
+                f"unprotected-{holding.asset}-{holding.entered_at.date()}",
+                "warning",
+                f"{holding.asset} has no resting stop yet: position not readable",
+                holding.engine,
+            )
             return
         if (holding.direction == 1 and stop >= price) or (
             holding.direction == -1 and stop <= price
         ):
+            self._event(
+                f"through-stop-{holding.asset}-{holding.entered_at.date()}",
+                "warning",
+                f"{holding.asset} is already through its stop at {price:.2f}: closing at market",
+                holding.engine,
+            )
             self._exit(holding)
             return
         size = quantity_value(

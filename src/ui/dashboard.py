@@ -5,7 +5,7 @@ from collections import OrderedDict
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dtime
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 import httpx
 from fastapi import APIRouter, Query, Request, Response
@@ -15,6 +15,8 @@ from itsdangerous import BadSignature, SignatureExpired, TimestampSigner
 from pydantic import AwareDatetime, ValidationError
 from starlette.responses import FileResponse
 
+from bot.strategies.orb_base import range_stop
+from bot.strategies.shared import Direction
 from bot.types import STATE_SIGNATURE_SALT, RuntimeSnapshot
 from ui.alpaca import AlpacaMarketDataClient, AlpacaReadClient
 from ui.config import WebSettings
@@ -239,7 +241,6 @@ ATR_PERIOD = 14
 DAILY_STOP_MULTIPLES = {"sma": 1.5, "tfb_50": 2.0}
 ORB_OPENING_MINUTES = {"orb": 5, "orb_momentum": 10}
 ORB_TARGET_MULTIPLES = {"orb": (1.5, 2.5, 4.0), "orb_momentum": (2.0, 3.0, 5.0)}
-ORB_STOP_FRACTION = {1: 0.75, -1: 0.25}
 
 
 def wilder_atr(bars: list[dict[str, Any]], period: int = ATR_PERIOD) -> float | None:
@@ -287,8 +288,7 @@ def orb_levels(
     engine: str, direction: int, entry: float, high: float, low: float
 ) -> dict[str, Any]:
     """The stop and the three targets the composer would have set on this range."""
-    span = high - low
-    stop = low + span * ORB_STOP_FRACTION[direction]
+    stop = range_stop(cast(Direction, direction), high, low)
     # Both engines re-cut their targets from the filled price. The ten-minute
     # register writes its own as fractions of the range measured from the breakout
     # level, which is these multiples of the risk a fill at that level would take.

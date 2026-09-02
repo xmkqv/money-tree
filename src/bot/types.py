@@ -19,6 +19,9 @@ type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
 type EventLevel = Literal["info", "warning", "error"]
 type StrategyName = Literal["noop", "orb", "sma", "tfb_50", "orb_momentum"]
+# IEX carries a small slice of the tape, so bars built from it understate both
+# volume and the extent of a price range. Only choose it when SIP is unavailable.
+type DataFeedName = Literal["sip", "iex"]
 
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
 STRATEGY_LABELS: dict[StrategyName, str] = {
@@ -55,6 +58,7 @@ class Settings(BaseSettings):
     alpaca_api_key: SecretStr | None = None
     alpaca_api_secret: SecretStr | None = None
     alpaca_is_paper: bool = True
+    alpaca_data_feed: DataFeedName = "sip"
     state_export_url: AnyHttpUrl | None = None
     state_export_secret: SigningSecret | None = None
     fractional_orders: bool = True

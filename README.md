@@ -84,7 +84,8 @@ status
 market
     asset = US stocks
     market cap >= $500 million
-    average daily volume >= 1 million shares
+    share price >= $5
+    average daily turnover >= $20 million
     market state = none
     direction = long or short
 
@@ -93,6 +94,8 @@ setup
     opening range = 09:30-09:35 ET
     marks = opening range high, midpoint, and low
     volume = cumulative volume >= 1.3 * 20-day average cumulative volume at the same time
+    opening range size >= 0.4% of price
+    initial stop distance = 1% to 5% of price
     volume is read as of the signal candle's close
     other filters = none
 
@@ -113,7 +116,8 @@ entry
 risk
     position size = 10% of account
     short position size = whole shares only
-    risk per trade = 10% of position value
+    risk per trade = 0.15% of account equity
+    concurrent breakout positions = 3, shared across both intraday engines
     risk-to-reward ratio = not set
     R = absolute(entry price - initial stop)
     long initial stop = opening range level(0.75)
@@ -145,7 +149,8 @@ status
 market
     asset = US stocks
     market cap >= $500 million
-    average daily volume >= 1 million shares
+    share price >= $5
+    average daily turnover >= $20 million
     market state = none
     direction = long or short
 
@@ -154,6 +159,8 @@ setup
     opening range = 09:30-09:40 ET
     marks = opening range high, midpoint, and low
     volume = cumulative volume >= 1.5 * 20-day average cumulative volume at the same time
+    opening range size >= 0.4% of price
+    initial stop distance = 1% to 5% of price
     volume is read as of the signal candle's close
     other filters = none
 
@@ -177,6 +184,7 @@ risk
     position size = 10% of account
     short position size = whole shares only
     risk per trade = not set
+    concurrent breakout positions = 3, shared across both intraday engines
     risk-to-reward ratio = 1:2
     R = absolute(entry price - initial stop)
     long initial stop = opening range level(0.75)
@@ -208,7 +216,8 @@ status
 market
     asset = US stocks
     market cap >= $500 million
-    average daily volume >= 1 million shares
+    share price >= $5
+    average daily turnover >= $20 million
     market state = SPX > SMA(20)
     direction = long
 
@@ -260,7 +269,8 @@ status
 market
     asset = US stocks
     market cap >= $500 million
-    average daily volume >= 1 million shares
+    share price >= $5
+    average daily turnover >= $20 million
     market state = SPX > SMA(20)
     direction = long
 
