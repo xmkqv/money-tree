@@ -26,7 +26,12 @@ EXPORT_INTERVAL_SECONDS = 5
 
 class StateExporter:
     def __init__(
-        self, url: str, secret: str, strategies: list[str], configuration: TradingConfiguration
+        self,
+        url: str,
+        secret: str,
+        strategies: list[str],
+        paused: list[str],
+        configuration: TradingConfiguration,
     ) -> None:
         self.url = url
         self.signer = TimestampSigner(
@@ -35,6 +40,7 @@ class StateExporter:
             digest_method=hashlib.sha256,
         )
         self.strategies = strategies
+        self.paused = paused
         self.configuration = configuration
         self.run_id = uuid4()
         self.started_at = datetime.now(UTC)
@@ -89,6 +95,7 @@ class StateExporter:
             sequence=self.sequence,
             status=self.status,
             strategies=self.strategies,
+            paused=self.paused,
             started_at=self.started_at,
             heartbeat_at=datetime.now(UTC),
             configuration=self.configuration,

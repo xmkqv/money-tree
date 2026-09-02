@@ -3,7 +3,7 @@ import signal
 from bot.broker import build_alpaca_broker
 from bot.config import settings
 from bot.export import StateExporter
-from bot.types import PAUSED_STRATEGIES, STRATEGY_LABELS, StrategyName
+from bot.types import StrategyName, published_roster
 
 
 def run(strategy_names: list[StrategyName]) -> None:
@@ -12,16 +12,14 @@ def run(strategy_names: list[StrategyName]) -> None:
     from bot.portfolio import Strategy
 
     configuration = settings.trading_configuration
-    labels = [
-        f"{STRATEGY_LABELS[name]} (paused)" if name in PAUSED_STRATEGIES else STRATEGY_LABELS[name]
-        for name in strategy_names
-    ]
+    labels, paused = published_roster(strategy_names)
     exporter = None
     if settings.state_export_url is not None and settings.state_export_secret is not None:
         exporter = StateExporter(
             str(settings.state_export_url),
             settings.state_export_secret.get_secret_value(),
             labels,
+            paused,
             configuration,
         )
         exporter.start()
