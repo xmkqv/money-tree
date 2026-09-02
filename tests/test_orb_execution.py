@@ -5,10 +5,21 @@ from decimal import ROUND_DOWN, Decimal
 from typing import Any
 
 import pytest
+from alpaca.data.enums import DataFeed
 from pandas import DataFrame, DatetimeIndex
 
-from bot.portfolio import ORB_ENTRY_EXTENSION_MAX, ORB_SIGNAL_CANDLES_MAX, Holding, Strategy
+from bot.config import settings
+from bot.portfolio import (
+    DATA_FEEDS,
+    ORB_ENTRY_EXTENSION_MAX,
+    ORB_SIGNAL_CANDLES_MAX,
+    SYMBOLS_PER_REQUEST,
+    Holding,
+    Pending,
+    Strategy,
+)
 from bot.strategies import orb, orb_momentum
+from bot.strategies.orb_base import ORB_POSITIONS_MAX
 from bot.strategies.shared import TRADING_ZONE, entry_quantity, fractional_allowed
 
 
@@ -382,10 +393,9 @@ def test_the_scan_skips_a_symbol_already_traded_today() -> None:
     The ledger is keyed by (day, symbol) with no engine, so one breakout engine
     entering a name closes it to the other for the rest of the session.
     """
-    source = inspect.getsource(Strategy._run_orb_variant)
-
-    assert "(now.date(), symbol) in self._orb_traded" in source
+    assert "(day, symbol) not in self._orb_traded" in inspect.getsource(Strategy._orb_unscanned)
     assert "self._orb_traded: set[tuple[date, str]]" in inspect.getsource(Strategy.initialize)
+    assert "self._orb_unscanned(engine, now.date())" in inspect.getsource(Strategy._run_orb_variant)
 
 
 def test_a_position_restored_mid_session_still_blocks_re_entry() -> None:
@@ -650,3 +660,88 @@ def test_the_ceiling_and_the_stop_bound_the_entry_from_both_sides() -> None:
     assert floor == pytest.approx(12.925)
     assert roof == pytest.approx(12.975)
     assert roof - floor == pytest.approx(0.5 * span)
+
+
+# --- how many breakouts may run at once, and which names get looked at ----
+
+
+class BreakoutStrategy(SizingStrategy):
+    """SizingStrategy with both breakout engines and a small eligible list."""
+
+    def __init__(self) -> None:
+        super().__init__(risk_per_trade_max=0.005)
+        self._enabled = {"orb", "orb_momentum"}
+        self._eligible_symbols = ["AAA", "BBB", "CCC"]
+
+
+NOW = datetime(2026, 8, 31, 13, 45, tzinfo=UTC)
+
+
+def breakout_holding(engine: str, symbol: str) -> Holding:
+    return Holding(engine, symbol, symbol, 10.0, 9.5, 0.5, 10.0, NOW)
+
+
+def test_breakout_positions_are_counted_across_both_intraday_engines() -> None:
+    strategy = BreakoutStrategy()
+    strategy._holdings = {
+        "AAA": breakout_holding("orb", "AAA"),
+        "BBB": breakout_holding("orb_momentum", "BBB"),
+        "CCC": breakout_holding("sma", "CCC"),
+    }
+
+    assert strategy._orb_position_count() == 2
+
+
+def test_an_order_not_yet_filled_still_counts_against_the_breakout_cap() -> None:
+    strategy = BreakoutStrategy()
+    holding = breakout_holding("orb", "AAA")
+    strategy._pending = {"AAA": Pending(holding, NOW, 1000.0)}
+
+    assert strategy._orb_position_count() == 1
+
+
+def test_the_cap_is_the_register_figure_and_stops_the_next_entry() -> None:
+    """Every breakout is the same bet on the same half hour, so they share one allowance."""
+    strategy = BreakoutStrategy()
+    for symbol in ("AAA", "BBB", "CCC"):
+        strategy._holdings[symbol] = breakout_holding("orb", symbol)
+
+    assert strategy._orb_position_count() == ORB_POSITIONS_MAX
+    variant = inspect.getsource(Strategy._run_orb_variant)
+    assert "self._orb_position_count() >= ORB_POSITIONS_MAX" in variant
+
+
+def test_only_symbols_that_could_still_trade_are_pulled_for_bars() -> None:
+    """The scan window is minutes wide, so a fetch that cannot change an answer is waste."""
+    strategy = BreakoutStrategy()
+    day = NOW.date()
+    strategy._orb_scanned.add((day, "orb", "AAA"))
+    strategy._orb_traded.add((day, "BBB"))
+
+    assert strategy._orb_unscanned("orb", day) == ["CCC"]
+    # scanned is per engine; the ten-minute engine has not looked at AAA yet
+    assert strategy._orb_unscanned("orb_momentum", day) == ["AAA", "CCC"]
+
+
+def test_a_claimed_symbol_is_left_to_the_engine_holding_it() -> None:
+    strategy = BreakoutStrategy()
+    strategy._claims["AAA"] = "sma"
+
+    assert strategy._orb_unscanned("orb", NOW.date()) == ["BBB", "CCC"]
+
+
+def test_a_narrow_opening_range_never_reaches_the_candidate_list() -> None:
+    assert "if orb_setup(high, low, close) is None:" in inspect.getsource(Strategy._run_orb_variant)
+
+
+def test_bars_are_read_from_the_consolidated_tape_by_default() -> None:
+    """IEX bars understate both volume and the width of an opening range."""
+    assert settings.alpaca_data_feed == "sip"
+    assert DATA_FEEDS["sip"] is DataFeed.SIP
+    assert "feed=DATA_FEEDS[settings.alpaca_data_feed]" in inspect.getsource(Strategy._frames)
+
+
+def test_a_universe_wide_scan_is_not_paged_fifty_at_a_time() -> None:
+    """A page per fifty symbols was dozens of round trips inside a minutes-wide window."""
+    assert SYMBOLS_PER_REQUEST >= 200
+    assert "range(0, len(symbols), SYMBOLS_PER_REQUEST)" in inspect.getsource(Strategy._frames)

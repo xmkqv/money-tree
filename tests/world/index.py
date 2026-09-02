@@ -126,7 +126,16 @@ def market_frame(rows: int = 20) -> DataFrame:
     )
 
 
-def relative_volume_frame(day: date, history_sessions: int = 20) -> DataFrame:
+# 1M shares a session at this price is $25M of turnover, clear of the liquidity
+# floor the breakout rules apply, so these frames exercise the pace test alone.
+RELATIVE_VOLUME_CLOSE = 25.0
+
+
+def relative_volume_frame(
+    day: date,
+    history_sessions: int = 20,
+    close: float = RELATIVE_VOLUME_CLOSE,
+) -> DataFrame:
     rows: list[dict[str, float]] = []
     timestamps: list[datetime] = []
     for session_offset in range(history_sessions, 0, -1):
@@ -137,14 +146,14 @@ def relative_volume_frame(day: date, history_sessions: int = 20) -> DataFrame:
                 datetime.combine(session, time(10, 0), TRADING_ZONE),
             ]
         )
-        rows.extend([{"volume": 500_000.0}, {"volume": 500_000.0}])
+        rows.extend([{"volume": 500_000.0, "close": close}, {"volume": 500_000.0, "close": close}])
     timestamps.extend(
         [
             datetime.combine(day, time(9, 30), TRADING_ZONE),
             datetime.combine(day, time(10, 0), TRADING_ZONE),
         ]
     )
-    rows.extend([{"volume": 700_000.0}, {"volume": 300_000.0}])
+    rows.extend([{"volume": 700_000.0, "close": close}, {"volume": 300_000.0, "close": close}])
     return DataFrame(rows, index=DatetimeIndex(timestamps))
 
 

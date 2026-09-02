@@ -14,6 +14,15 @@ following it fails those tests rather than quietly leaving the page wrong.
 from datetime import datetime, time, timedelta
 from typing import Any, TypedDict
 
+from bot.strategies.orb_base import (
+    ORB_POSITIONS_MAX,
+    ORB_PRICE_MIN,
+    ORB_RANGE_FRACTION_MIN,
+    ORB_RISK_CEILING,
+    ORB_STOP_FRACTION_MAX,
+    ORB_STOP_FRACTION_MIN,
+    ORB_TURNOVER_MIN,
+)
 from bot.types import STRATEGY_LABELS, TradingConfiguration
 
 
@@ -41,7 +50,6 @@ POSITION_FRACTION_DEFAULT = 0.20
 # portfolio.py caps the notional fraction at this regardless of configuration.
 POSITION_FRACTION_CEILING = 0.10
 POSITIONS_MAX = 10
-ORB_RISK_CEILING = 0.01
 
 # Breakout figures the composer hard-codes: relative volume needs exactly this
 # many earlier sessions to compare against, the trail reads this ATR multiple
@@ -94,9 +102,16 @@ def entry_windows() -> dict[str, dict[str, str]]:
     }
 
 
+def _millions(value: float) -> str:
+    return f"${value / 1_000_000:g}M"
+
+
+# Turnover rather than share count: a share-count floor scales with the inverse
+# of price, so it admits $3 stocks and rejects $300 ones at the same liquidity.
 UNIVERSE = (
-    "US equities screened daily: market cap $500M or more, 3-month average "
-    "daily volume 1M shares or more, and tradable and fractionable at Alpaca."
+    f"US equities screened daily: market cap {_millions(500_000_000)} or more, share price "
+    f"${ORB_PRICE_MIN:.0f} or more, 3-month average daily turnover "
+    f"{_millions(ORB_TURNOVER_MIN)} or more, and tradable and fractionable at Alpaca."
 )
 
 
@@ -146,7 +161,8 @@ def _orb(
     confirmation = (
         f"Volume traded up to the signal candle's close is at least {volume_multiple:g}x the "
         f"{ORB_HISTORY_SESSIONS}-session average at the same time of day, and that average "
-        f"session turns over at least 1M shares. All {ORB_HISTORY_SESSIONS} earlier sessions "
+        f"session turns over at least {_millions(ORB_TURNOVER_MIN)}. All {ORB_HISTORY_SESSIONS} "
+        "earlier sessions "
         "must be there to compare against — a shorter history is not a weaker signal, it is "
         "no confirmation at all, and the breakout is passed over. The reading is taken as the "
         "signal candle closed rather than as the scan runs, so a breakout read a pass late is "
@@ -209,8 +225,11 @@ def _orb(
             f"{signal_candles_max * minutes} minutes of the move. A close further back than that "
             "has already run, and is passed over rather than chased. "
             "Once either breakout engine has traded a stock, both leave it alone for the rest "
-            "of the session.",
-            source="portfolio.py · _run_orb_variant",
+            f"of the session. The range itself must be at least {_pct(ORB_RANGE_FRACTION_MIN)} of "
+            f"the price, and the stop cut from it between {_pct(ORB_STOP_FRACTION_MIN)} and "
+            f"{_pct(ORB_STOP_FRACTION_MAX)} of the price — a narrower range puts the stop inside "
+            "the spread, where the next tick decides the trade.",
+            source="portfolio.py · _run_orb_variant, orb_base.py · orb_setup",
         ),
         Row(field="Confirmation", value=confirmation, source="portfolio.py · _orb_confirm"),
         Row(
@@ -409,6 +428,13 @@ def portfolio_rules(daily_loss: float) -> list[Row]:
             value=f"At most {POSITIONS_MAX} positions open at once, counting orders already "
             "placed but not yet filled.",
             source="portfolio.py · _enter",
+        ),
+        Row(
+            field="Breakout cap",
+            value=f"At most {ORB_POSITIONS_MAX} breakout positions open at once across both "
+            "intraday engines. Every breakout is the same bet on the same half hour, so "
+            "the two engines share one allowance rather than each taking their own.",
+            source="portfolio.py · _orb_position_count",
         ),
         Row(
             field="Exposure",

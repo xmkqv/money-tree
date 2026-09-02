@@ -1,6 +1,12 @@
+"""Opening-range breakout rules shared by the composer and the standalone class.
+
+The thresholds a breakout setup is judged against live here so `portfolio.py`
+(the module the bot actually runs) and `OrbStrategy` below cannot drift apart.
+"""
+
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
-from math import isfinite
+from math import ceil, floor, isfinite
 from typing import Any, ClassVar, cast
 
 from pandas import DataFrame, DatetimeIndex, Series, Timestamp
@@ -38,61 +44,162 @@ class OrbPending:
     stop: float
 
 
+# A share-count floor reads as liquidity but scales with the inverse of price, so
+# it selects $3 stocks over $300 ones. Turnover is what a position actually has
+# to get in and out of, and it does not care what one share costs.
+ORB_TURNOVER_MIN = 20_000_000.0
+
+# Below $5 a one-cent tick is too large a share of any stop this engine places.
+ORB_PRICE_MIN = 5.0
+
+# The opening range, and the stop cut from it, as fractions of price. A range
+# narrower than this puts the 0.75/0.25 stop inside the spread. The stop floor is
+# also what makes risk-based sizing bind instead of the notional cap: at a 10%
+# notional ceiling, a stop narrower than this cannot reach the risk budget.
+ORB_RANGE_FRACTION_MIN = 0.004
+ORB_STOP_FRACTION_MIN = 0.01
+ORB_STOP_FRACTION_MAX = 0.05
+
+# Fraction of equity at risk per breakout trade, and how many may run at once.
+# Every breakout is the same bet on the same half hour, so the concurrency cap is
+# what stops one choppy open from arriving as six simultaneous losses.
+ORB_RISK_CEILING = 0.0015
+ORB_POSITIONS_MAX = 3
+
+
+@dataclass(frozen=True, slots=True)
+class OrbSetup:
+    """A breakout that has passed every rule judgeable from the range alone."""
+
+    direction: Direction
+    high: float
+    low: float
+    close: float
+    stop: float
+
+    @property
+    def risk(self) -> float:
+        return abs(self.close - self.stop)
+
+
+@dataclass(frozen=True, slots=True)
+class SessionVolume:
+    """Today's pace against the same point in the last twenty sessions."""
+
+    ratio: float
+    turnover: float
+
+
+def range_stop(direction: Direction, high: float, low: float) -> float:
+    """Three quarters back into the range for a long, a quarter for a short."""
+    return low + (high - low) * (0.75 if direction == 1 else 0.25)
+
+
+def range_break(high: float, low: float, close: float) -> Direction | None:
+    """Which way a completed candle closed out of the opening range, if either."""
+    if not all(isfinite(value) for value in (high, low, close)):
+        return None
+    return 1 if close > high else -1 if close < low else None
+
+
+def orb_setup(high: float, low: float, close: float) -> OrbSetup | None:
+    """The setup for a completed candle, or None when it is not worth trading.
+
+    Rejecting here rather than at the order keeps every reason in one place: the
+    candle must break the range, the stock must be priced where a cent is small
+    against the stop, and the range must be wide enough that the stop cut from it
+    is a real level rather than a rounding artefact.
+    """
+    direction = range_break(high, low, close)
+    if direction is None or close < ORB_PRICE_MIN:
+        return None
+    if high - low < ORB_RANGE_FRACTION_MIN * close:
+        return None
+    stop = range_stop(direction, high, low)
+    fraction = abs(close - stop) / close
+    if not ORB_STOP_FRACTION_MIN <= fraction <= ORB_STOP_FRACTION_MAX:
+        return None
+    return OrbSetup(direction, high, low, close, stop)
+
+
+def round_stop(direction: Direction, stop: float) -> float:
+    """Round a stop to the penny it trades on, always away from the position.
+
+    Rounding to nearest moves the stop closer as often as not, and on a narrow
+    range it can land the level on the wrong side of the entry, which turns the
+    protective order into an immediate market exit. Rounding the pennies first
+    keeps a level that is already whole from being nudged by binary
+    representation: 4.68 * 100 is 467.99999999999994.
+    """
+    pennies = round(stop * 100.0, 6)
+    return (floor(pennies) if direction == 1 else ceil(pennies)) / 100.0
+
+
+def session_volume(frame: DataFrame, day: date, clock: time) -> SessionVolume | None:
+    """Cumulative volume so far today against the twenty-session average.
+
+    Turnover comes back alongside the ratio because the pace of a session says
+    nothing about whether the stock is liquid enough to trade.
+    """
+    regular = cast(DataFrame, cast(Any, frame).between_time("09:30", "15:59"))
+    index = cast(DatetimeIndex, regular.index)
+    pandas_index = cast(Any, index)
+    session_dates = cast(DatetimeIndex, pandas_index.normalize())
+    current_session = Timestamp(day, tz=TRADING_ZONE)
+    is_relevant = (cast(Any, session_dates) == current_session) | (
+        cast(Any, session_dates) < current_session
+    )
+    volume = cast(Series, regular["volume"])
+    aggregates = DataFrame(
+        {
+            "session_date": session_dates,
+            "daily_turnover": volume * cast(Series, regular["close"]),
+            "cumulative_volume": cast(
+                Series,
+                cast(Any, volume).where(pandas_index.time <= clock, 0.0),
+            ),
+        },
+        index=index,
+    )
+    columns = ["daily_turnover", "cumulative_volume"]
+    grouped = cast(
+        DataFrame,
+        cast(Any, aggregates).loc[is_relevant].groupby("session_date", sort=True)[columns].sum(),
+    )
+    if current_session not in grouped.index:
+        return None
+    grouped_index = cast(Any, cast(DatetimeIndex, grouped.index))
+    history = cast(DataFrame, cast(Any, grouped).loc[grouped_index < current_session].tail(20))
+    if len(history) != 20:
+        return None
+    clock_average = float(cast(Any, history["cumulative_volume"]).mean())
+    turnover = float(cast(Any, history["daily_turnover"]).mean())
+    current = float(cast(Any, grouped).loc[current_session, "cumulative_volume"])
+    if not all(isfinite(value) for value in (clock_average, turnover, current)):
+        return None
+    if clock_average <= 0:
+        return None
+    return SessionVolume(current / clock_average, turnover)
+
+
 def relative_volume_ready(
     frame: DataFrame,
     day: date,
     clock: time,
     multiple: float,
 ) -> bool:
-    regular = cast(DataFrame, cast(Any, frame).between_time("09:30", "15:59"))
-    index = cast(DatetimeIndex, regular.index)
-    pandas_index = cast(Any, index)
-    session_dates = cast(DatetimeIndex, pandas_index.normalize())
-    current_session = Timestamp(day, tz=TRADING_ZONE)
-    is_current = cast(Any, session_dates) == current_session
-    is_earlier = cast(Any, session_dates) < current_session
-    is_relevant = is_current | is_earlier
-    volume = cast(Series, regular["volume"])
-    cumulative_volume = cast(
-        Series,
-        cast(Any, volume).where(pandas_index.time <= clock, 0.0),
-    )
-    aggregates = DataFrame(
-        {
-            "session_date": session_dates,
-            "daily_volume": volume,
-            "cumulative_volume": cumulative_volume,
-        },
-        index=index,
-    )
-    grouped = cast(
-        DataFrame,
-        cast(Any, aggregates)
-        .loc[is_relevant]
-        .groupby("session_date", sort=True)[["daily_volume", "cumulative_volume"]]
-        .sum(),
-    )
-    if current_session not in grouped.index:
+    """Whether today is trading fast enough, in a stock liquid enough to bother.
+
+    The liquidity floor is turnover rather than share count so it means the same
+    thing at $3 and at $300, and so it cannot be satisfied by a cheap stock whose
+    share count is large only because each share is small.
+    """
+    if frame.empty:
         return False
-    grouped_index = cast(Any, cast(DatetimeIndex, grouped.index))
-    history = cast(DataFrame, cast(Any, grouped).loc[grouped_index < current_session].tail(20))
-    if len(history) != 20:
+    volume = session_volume(frame, day, clock)
+    if volume is None:
         return False
-    historical_daily_average = float(cast(Any, history["daily_volume"]).mean())
-    historical_clock_average = float(cast(Any, history["cumulative_volume"]).mean())
-    current_clock_volume = float(cast(Any, grouped).loc[current_session, "cumulative_volume"])
-    return (
-        all(
-            isfinite(value)
-            for value in (
-                historical_daily_average,
-                historical_clock_average,
-                current_clock_volume,
-            )
-        )
-        and historical_daily_average >= 1_000_000
-        and current_clock_volume >= multiple * historical_clock_average
-    )
+    return volume.turnover >= ORB_TURNOVER_MIN and volume.ratio >= multiple
 
 
 class OrbStrategy(StrategyBase):
@@ -282,6 +389,11 @@ class OrbStrategy(StrategyBase):
             return
         position, direction, close = signal
         self._signaled.add(key)
+        # The range is fixed for the day, so a break that fails the setup rules can
+        # never pass later: the signal is recorded above either way.
+        setup = orb_setup(high, low, close)
+        if setup is None:
+            return
         # The breakout is taken at the open of the candle after the one that closed
         # outside the range. A close found further back than this engine's own bound
         # has already run, and buying it now would be a chase rather than the entry
@@ -300,7 +412,7 @@ class OrbStrategy(StrategyBase):
             if not does_macd_confirm(cast(Series, history["close"]), direction):
                 return
         span = high - low
-        stop = low + span * (0.75 if direction == 1 else 0.25)
+        stop = setup.stop
         # The stop sits a fixed distance inside the range, so a price further past
         # the level risks more for the same setup and has already given away that
         # much of the move. Past the ceiling the breakout is left alone.
@@ -388,7 +500,7 @@ class OrbStrategy(StrategyBase):
                 symbol,
                 size,
                 side,
-                stop_price=round(holding.stop, 2),
+                stop_price=round_stop(holding.direction, holding.stop),
                 time_in_force="day",
             )
         )
