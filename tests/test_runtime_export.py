@@ -23,6 +23,7 @@ def test_exporter_keeps_latest_snapshot_and_fifty_events_when_published_repeated
         "https://web.test/internal/state",
         STATE_EXPORT_SECRET,
         ["No-op"],
+        [],
         trading_configuration(),
     )
 
@@ -47,6 +48,7 @@ def test_exporter_sends_signed_snapshot_when_endpoint_accepts_request() -> None:
         "https://web.test/internal/state",
         STATE_EXPORT_SECRET,
         ["No-op"],
+        [],
         trading_configuration(),
     )
     snapshot = runtime_snapshot()
@@ -72,6 +74,7 @@ def test_exporter_logs_and_continues_when_endpoint_is_unavailable() -> None:
         "https://web.test/internal/state",
         STATE_EXPORT_SECRET,
         ["No-op"],
+        [],
         trading_configuration(),
     )
     with (
@@ -107,6 +110,7 @@ def test_exporter_stops_after_final_snapshot_when_closed() -> None:
         "https://web.test/internal/state",
         STATE_EXPORT_SECRET,
         ["No-op"],
+        [],
         trading_configuration(),
     )
     with pytest.MonkeyPatch.context() as monkeypatch:

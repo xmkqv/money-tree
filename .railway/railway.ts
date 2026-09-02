@@ -68,6 +68,13 @@ export default defineRailway(() => {
       RISK_PER_TRADE_MAX: preserve(),
       STATE_EXPORT_SECRET: preserve(),
       STATE_EXPORT_URL: preserve(),
+      // SIP is the consolidated tape and the feed the breakout rules are written
+      // for, but reading it for the session in progress needs a data subscription
+      // this account does not have: those requests come back 403 and the scan
+      // stands down for the day. Pinned to iex so the engine trades, accepting
+      // narrower opening ranges and a share-count view of volume. Change this one
+      // literal back to sip once the subscription covers real-time SIP.
+      ALPACA_DATA_FEED: "iex",
       STRATEGIES: "orb,sma",
     },
   });

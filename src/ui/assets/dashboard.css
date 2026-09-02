@@ -28,6 +28,10 @@
   --loss-mark: #A82230;
   --loss-ink:  #A82230;
   --flat-ink:  #8A929E;
+  /* held state: amber, clear of both polarity hues and apart from each in
+     lightness, so paused never reads as a gain or a loss */
+  --hold-mark: #B87503;
+  --hold-ink:  #8A5800;
 
   /* strategy identity — categorical, clear of both polarity hues */
   --s-orb5:     #2A72CC;
@@ -77,6 +81,8 @@
     --loss-mark: #CB3B45;
     --loss-ink:  #FF7B80;
     --flat-ink:  #79818D;
+    --hold-mark: #D18F1C;
+    --hold-ink:  #E8AE45;
     --s-orb5:     #3A8AE8;
     --s-orb10:    #C08820;
     --s-momentum: #7F6EE0;
@@ -113,6 +119,8 @@
   --loss-mark: #CB3B45;
   --loss-ink:  #FF7B80;
   --flat-ink:  #79818D;
+  --hold-mark: #D18F1C;
+  --hold-ink:  #E8AE45;
   --s-orb5:     #3A8AE8;
   --s-orb10:    #C08820;
   --s-momentum: #7F6EE0;
@@ -642,7 +650,7 @@ table.data .r { text-align: right; padding-left: 12px; }
 .strat .name { font-weight: 500; letter-spacing: -0.01em; }
 
 /* Run state. The word carries the meaning; colour only reinforces it, so the
-   three states stay distinguishable without colour vision. */
+   four states stay distinguishable without colour vision. */
 .run-state {
   flex: none;
   font-size: 10px;
@@ -662,6 +670,11 @@ table.data .r { text-align: right; padding-left: 12px; }
   color: var(--gain-ink);
   background: color-mix(in oklab, var(--gain-mark) 15%, var(--surface));
   border-color: color-mix(in oklab, var(--gain-mark) 32%, transparent);
+}
+.run-state.switch.is-paused {
+  color: var(--hold-ink);
+  background: color-mix(in oklab, var(--hold-mark) 15%, var(--surface));
+  border-color: color-mix(in oklab, var(--hold-mark) 32%, transparent);
 }
 .run-state.switch.is-offline {
   color: var(--loss-ink);

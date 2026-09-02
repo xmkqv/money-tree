@@ -55,13 +55,16 @@ def runtime_snapshot(
     run_id: UUID = RUN_ID,
     started_at: datetime | None = None,
     heartbeat_at: datetime | None = None,
+    strategies: list[str] | None = None,
+    paused: list[str] | None = None,
 ) -> RuntimeSnapshot:
     now = datetime.now(UTC)
     return RuntimeSnapshot(
         run_id=run_id,
         sequence=sequence,
         status="running",
-        strategies=["No-op"],
+        strategies=strategies if strategies is not None else ["No-op"],
+        paused=paused if paused is not None else [],
         started_at=started_at or now - timedelta(minutes=1),
         heartbeat_at=heartbeat_at or now,
         configuration=trading_configuration(),

@@ -38,6 +38,20 @@ def active_strategies(selected: Iterable[StrategyName]) -> list[StrategyName]:
     return [name for name in selected if name not in PAUSED_STRATEGIES]
 
 
+def published_roster(selected: Iterable[StrategyName]) -> tuple[list[str], list[str]]:
+    """The roster the bot reports, and which of its entries are paused.
+
+    Both lists carry the same labels, so the reader resolves every entry the same
+    way. Spelling "(paused)" into a label instead would make that entry name no
+    engine at all, which reads as the engine being absent rather than paused.
+    """
+    names = list(selected)
+    return (
+        [STRATEGY_LABELS[name] for name in names],
+        [STRATEGY_LABELS[name] for name in names if name in PAUSED_STRATEGIES],
+    )
+
+
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
@@ -110,6 +124,11 @@ class RuntimeSnapshot(_StrictModel):
     sequence: int = Field(ge=1)
     status: RunStatus
     strategies: list[str] = Field(min_length=1, max_length=5)
+    # The paused subset of `strategies`, named the same way the roster is. Pause
+    # is structured rather than spelled into the roster entry, because a decorated
+    # entry no longer resolves to an engine and so reads as absent, not paused.
+    # Defaulted so a snapshot from a bot that predates the field still validates.
+    paused: list[str] = Field(default_factory=list, max_length=5)
     started_at: AwareDatetime
     heartbeat_at: AwareDatetime
     configuration: TradingConfiguration

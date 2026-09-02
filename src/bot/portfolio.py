@@ -168,6 +168,7 @@ class Strategy(StrategyBase):
         self._preparation_attempts = 0
         self._preparation_attempts_on: date | None = None
         self._daily_run_on: date | None = None
+        self._orb_data_failed_on: date | None = None
         self._intraday_bucket: datetime | None = None
         self._restored = False
         api_key = settings.alpaca_api_key
@@ -719,7 +720,13 @@ class Strategy(StrategyBase):
         symbols = self._orb_unscanned(engine, now.date())
         if not symbols:
             return
-        frames = self._intraday(symbols, now, minutes)
+        if self._orb_data_failed_on == now.date():
+            return
+        try:
+            frames = self._intraday(symbols, now, minutes)
+        except Exception as error:
+            self._orb_data_unavailable(engine, now.date(), error)
+            return
         candidates: list[OrbCandidate] = []
         for symbol in symbols:
             key = (now.date(), engine, symbol)
@@ -761,12 +768,16 @@ class Strategy(StrategyBase):
         if ranks_candidates:
             candidates = self._rank_candidates(candidates, now)
         timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
-        histories = self._frames(
-            [candidate.symbol for candidate in candidates],
-            now - timedelta(days=45),
-            timeframe,
-            now,
-        )
+        try:
+            histories = self._frames(
+                [candidate.symbol for candidate in candidates],
+                now - timedelta(days=45),
+                timeframe,
+                now,
+            )
+        except Exception as error:
+            self._orb_data_unavailable(engine, now.date(), error)
+            return
         for candidate in candidates:
             if self._orb_position_count() >= ORB_POSITIONS_MAX:
                 return
@@ -807,6 +818,25 @@ class Strategy(StrategyBase):
                 direction=candidate.direction,
                 risk_fraction_max=ORB_RISK_CEILING if engine == "orb" else None,
             )
+
+    def _orb_data_unavailable(self, engine: StrategyName, day: date, error: Exception) -> None:
+        """Stand the breakout scan down for the day rather than take the run with it.
+
+        The scan is the only part of an iteration that reads bars for the session
+        in progress, and an unreadable feed is not a reason to stop managing
+        positions that are already open. The feed is named because the usual
+        cause is a data subscription that does not serve the configured one in
+        real time, which is fixed by changing ALPACA_DATA_FEED, not the code.
+        """
+        self._orb_data_failed_on = day
+        detail = f"{type(error).__name__}: {error}"
+        self._event(
+            f"orb-data-{day}",
+            "error",
+            f"Breakout scan stood down for the day: no intraday bars from the "
+            f"{settings.alpaca_data_feed} feed ({detail[:200]})",
+            engine,
+        )
 
     def _orb_position_count(self) -> int:
         """Breakout positions held or ordered, across both breakout engines.
@@ -995,9 +1025,20 @@ class Strategy(StrategyBase):
             return
         minutes = 5 if holding.engine == "orb" else 10
         timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
-        recent = self._frames([holding.signal], now - timedelta(days=5), timeframe, now).get(
-            holding.signal
-        )
+        try:
+            recent = self._frames([holding.signal], now - timedelta(days=5), timeframe, now).get(
+                holding.signal
+            )
+        except Exception as error:
+            # The stop already resting at the broker still protects the position,
+            # so a failed read costs an update, not the trade.
+            self._event(
+                f"trail-{holding.asset}-{now.date()}",
+                "warning",
+                f"{holding.asset} trailing stop not updated: {type(error).__name__}",
+                holding.engine,
+            )
+            return
         if recent is None:
             return
         frame = self._completed(recent, now, minutes)

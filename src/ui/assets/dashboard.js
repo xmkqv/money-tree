@@ -622,7 +622,8 @@ function periodCell(label, pnl, pct, spx) {
 
 const SWITCH_STATE = {
   online:  { label: "Online",  hint: "Enabled — this engine is allowed to trade" },
-  offline: { label: "Offline", hint: "Paused by us — this engine will not open a trade" },
+  paused:  { label: "Paused",  hint: "Paused by us — it manages what it holds, opens nothing new" },
+  offline: { label: "Offline", hint: "Not on the bot's roster — this engine is not running at all" },
   unknown: { label: "Unknown", hint: "The bot has not reported, so its roster is unknown" },
 };
 
@@ -631,10 +632,14 @@ const SESSION_STATE = {
   closed: { label: "Closed", hint: "Outside its entry window — no new trade will start" },
 };
 
+/* Three answers, not two. Off the roster is a different fact from paused: the
+   first engine is not running, the second is running exit-only. Collapsing them
+   left a paused engine indistinguishable from one that was never selected. */
 function switchState(id) {
   const bot = LIVE.bot || {};
   if (!bot.reported) return "unknown";
-  return (bot.strategies || []).includes(id) ? "online" : "offline";
+  if (!(bot.strategies || []).includes(id)) return "offline";
+  return (bot.paused || []).includes(id) ? "paused" : "online";
 }
 
 /* The viewer's own clock may be set to any zone, so read the exchange's. */

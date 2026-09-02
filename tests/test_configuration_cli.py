@@ -6,7 +6,14 @@ import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from bot.types import PAUSED_STRATEGIES, STRATEGY_LABELS, Settings, active_strategies
+from bot.types import (
+    PAUSED_STRATEGIES,
+    STRATEGY_LABELS,
+    RuntimeSnapshot,
+    Settings,
+    active_strategies,
+    published_roster,
+)
 from cli import __main__ as cli
 from tests.world.index import web_settings
 
@@ -79,6 +86,37 @@ def test_the_momentum_engine_is_switched_on() -> None:
     """It opens new positions again, so its register must not read paused."""
     assert "sma" not in PAUSED_STRATEGIES
     assert active_strategies(["sma"]) == ["sma"]
+
+
+def test_published_roster_names_paused_engines_without_decorating_their_labels() -> None:
+    """The label has to stay resolvable; pause travels beside it, not inside it.
+
+    Spelling the state into the label leaves an entry that names no engine, and
+    the dashboard then reads that engine as absent rather than paused.
+    """
+    held = sorted(PAUSED_STRATEGIES)[0]
+    labels, paused = published_roster(["orb", held])
+
+    assert labels == [STRATEGY_LABELS["orb"], STRATEGY_LABELS[held]]
+    assert paused == [STRATEGY_LABELS[held]]
+    assert set(paused).issubset(labels)
+
+
+def test_published_roster_reports_no_paused_engines_when_none_are_selected() -> None:
+    assert published_roster(["orb"]) == ([STRATEGY_LABELS["orb"]], [])
+
+
+def test_snapshot_without_a_paused_field_still_validates() -> None:
+    """Bot and web deploy separately, so one can be reporting before the other ships."""
+    body = (
+        '{"run_id":"8f558d63-d47d-4a5f-8f77-95b0bf55a591","sequence":1,"status":"running",'
+        '"strategies":["ORB (5-minute)"],"started_at":"2026-09-01T13:30:00Z",'
+        '"heartbeat_at":"2026-09-01T13:30:05Z","configuration":{"fractional_orders":true,'
+        '"position_fraction_max":0.1,"risk_per_day_max":0.02,"risk_per_trade_max":0.005},'
+        '"events":[]}'
+    )
+
+    assert RuntimeSnapshot.model_validate_json(body).paused == []
 
 
 def test_paused_strategies_take_no_entries_when_selection_includes_them() -> None:

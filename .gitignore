@@ -16,4 +16,9 @@ data/
 logs/
 node_modules/
 runs/
+# Backtest market data and outputs; the harness itself is tracked.
+.backtest/*.parquet
+.backtest/*.csv
+.backtest/*.log
+.backtest/intraday/
 gen.*.*

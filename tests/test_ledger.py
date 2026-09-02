@@ -8,7 +8,14 @@ from uuid import UUID
 import pytest
 
 import ui.dashboard
-from bot.types import STRATEGY_LABELS, RunStatus, RuntimeSnapshot, TradingConfiguration
+from bot.types import (
+    PAUSED_STRATEGIES,
+    STRATEGY_LABELS,
+    RunStatus,
+    RuntimeSnapshot,
+    TradingConfiguration,
+    published_roster,
+)
 from ui.dashboard import _position_rows, bot_state, build_pulse
 from ui.ledger import match_cycles, order_engine, sessions, summarise
 
@@ -175,13 +182,18 @@ def test_sessions_key_each_day_to_the_prior_close() -> None:
     ]
 
 
-def _snapshot(status: str = "running", strategies: list[str] | None = None) -> RuntimeSnapshot:
+def _snapshot(
+    status: str = "running",
+    strategies: list[str] | None = None,
+    paused: list[str] | None = None,
+) -> RuntimeSnapshot:
     now = datetime.now(UTC)
     return RuntimeSnapshot(
         run_id=UUID("8f558d63-d47d-4a5f-8f77-95b0bf55a591"),
         sequence=1,
         status=cast(RunStatus, status),
         strategies=strategies if strategies is not None else ["orb", "sma"],
+        paused=paused if paused is not None else [],
         started_at=now - timedelta(minutes=5),
         heartbeat_at=now,
         configuration=TradingConfiguration(
@@ -242,6 +254,39 @@ def test_bot_state_still_accepts_a_roster_published_as_ids() -> None:
 
 def test_bot_state_keeps_an_unrecognised_roster_entry_visible() -> None:
     assert bot_state(_snapshot(strategies=["mystery"]), stale=False)["strategies"] == ["mystery"]
+
+
+def test_bot_state_separates_the_paused_engines_from_the_running_ones() -> None:
+    """Paused is its own answer: on the roster, managing what it holds, opening nothing."""
+    held = sorted(PAUSED_STRATEGIES)
+    labels, paused = published_roster(["orb", *held])
+    state = bot_state(_snapshot(strategies=labels, paused=paused), stale=False)
+
+    assert state["strategies"] == ["orb", *held]
+    assert state["paused"] == held
+
+
+def test_bot_state_resolves_a_paused_entry_to_the_same_id_as_the_roster() -> None:
+    """The two lists must agree on ids, or the view cannot line one up against the other.
+
+    An entry that resolves to no engine reads as one that is not running, which is
+    how a paused engine would be reported as merely absent.
+    """
+    labels, paused = published_roster(sorted(PAUSED_STRATEGIES))
+    state = bot_state(_snapshot(strategies=labels, paused=paused), stale=False)
+
+    assert state["paused"] == state["strategies"] == sorted(PAUSED_STRATEGIES)
+
+
+def test_bot_state_reports_no_paused_engines_when_the_bot_published_none() -> None:
+    state = bot_state(_snapshot(strategies=["orb"], paused=[]), stale=False)
+
+    assert state["strategies"] == ["orb"]
+    assert state["paused"] == []
+
+
+def test_bot_state_reports_no_paused_engines_when_no_snapshot_arrived() -> None:
+    assert bot_state(None, stale=True)["paused"] == []
 
 
 def test_cycle_records_when_the_trade_opened_as_well_as_when_it_closed() -> None:

@@ -529,6 +529,9 @@ def bot_state(snapshot: RuntimeSnapshot | None, stale: bool) -> dict[str, Any]:
         # every engine being switched off.
         "reported": snapshot is not None,
         "strategies": [strategy_id(name) for name in snapshot.strategies] if snapshot else [],
+        # A paused engine is still on the roster and still manages what it holds,
+        # so the view needs it separated from the engines that are not running.
+        "paused": [strategy_id(name) for name in snapshot.paused] if snapshot else [],
     }
 
 
