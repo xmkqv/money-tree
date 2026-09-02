@@ -745,3 +745,59 @@ def test_a_universe_wide_scan_is_not_paged_fifty_at_a_time() -> None:
     """A page per fifty symbols was dozens of round trips inside a minutes-wide window."""
     assert SYMBOLS_PER_REQUEST >= 200
     assert "range(0, len(symbols), SYMBOLS_PER_REQUEST)" in inspect.getsource(Strategy._frames)
+
+
+# --- a feed the subscription will not serve must not take the run down -----
+
+
+# _run_orb_variant reads now.time() against the ET scan window, so these must be
+# expressed in the trading zone rather than UTC.
+SCAN_AT = datetime(2026, 8, 31, 9, 45, tzinfo=TRADING_ZONE)
+
+
+class BlindStrategy(BreakoutStrategy):
+    """Its intraday read always fails, the way a refused data feed does."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._orb_data_failed_on = None
+        self._daily_frames = {}
+        self.scans = 0
+
+    def _intraday(self, symbols: list[str], now: datetime, minutes: int) -> Any:
+        self.scans += 1
+        raise RuntimeError('{"message":"subscription does not permit querying recent SIP data"}')
+
+
+def test_an_unreadable_feed_stands_the_scan_down_instead_of_raising() -> None:
+    strategy = BlindStrategy()
+
+    strategy._run_orb_variant("orb", SCAN_AT, 5, 1.3, False, True)
+
+    assert strategy.submitted == []
+    assert strategy._orb_data_failed_on == SCAN_AT.date()
+
+
+def test_the_scan_is_not_retried_all_session_once_the_feed_has_refused() -> None:
+    """One error event, not one per five minutes for the rest of the day."""
+    strategy = BlindStrategy()
+
+    for minute in (45, 50, 55):
+        strategy._run_orb_variant("orb", SCAN_AT.replace(minute=minute), 5, 1.3, False, True)
+
+    assert strategy.scans == 1
+
+
+def test_the_stand_down_event_names_the_feed_so_the_fix_is_obvious() -> None:
+    strategy = BlindStrategy()
+    published: list[tuple[str, str, str]] = []
+    strategy._event = lambda key, level, message, engine=None: published.append(  # type: ignore[method-assign]
+        (key, level, message)
+    )
+
+    strategy._run_orb_variant("orb", SCAN_AT, 5, 1.3, False, True)
+
+    (key, level, message) = published[-1]
+    assert level == "error"
+    assert settings.alpaca_data_feed in message
+    assert "stood down" in message
