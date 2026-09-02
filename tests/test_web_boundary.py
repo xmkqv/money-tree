@@ -584,3 +584,24 @@ def test_a_pulse_retires_a_ledger_that_no_longer_names_the_same_holdings() -> No
     assert symbols(first) == ["NVDA", "AMD"]
     assert symbols(stale) == ["NVDA", "AMD"], "the ledger should be cached, or this proves nothing"
     assert symbols(reassembled) == ["NVDA"], "the pulse should have retired the stale assembly"
+
+
+def test_the_calendar_arrows_have_two_different_months_to_walk_between() -> None:
+    """Both ends of their range were read off the last session.
+
+    An arrow is disabled at the edge of the range, so a range one month wide
+    disables both of them at the only month they can reach: the calendar opened
+    on the latest session and would not move, in either direction, ever. The two
+    bounds have to be derived from different dates — the month the account was
+    funded in, and the current one — for there to be anywhere to go.
+    """
+    script = (ASSET_DIRECTORY / "dashboard.js").read_text()
+
+    def bound(name: str) -> str:
+        assigned = re.search(rf"\b{name} = (\{{.*?\}});", script, flags=re.S)
+        assert assigned, f"the calendar should still carry {name}"
+        return assigned.group(1)
+
+    assert bound("FIRST_MONTH") != bound("LAST_MONTH"), (
+        "both calendar bounds read the same month, so neither arrow can move"
+    )

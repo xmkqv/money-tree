@@ -279,10 +279,27 @@ function derive(live) {
 
   const [ly, lm, lday] = dparts(LAST_SESSION.date);
   LATEST = { y: ly, m: lm - 1, day: lday };
-  FIRST_MONTH = { y: ly, m: lm - 1 };
-  LAST_MONTH = { y: ly, m: lm - 1 };
+
+  /* How far the calendar's arrows may walk. Both ends were taken from the last
+     session, which put the whole account inside a single month and left both
+     arrows disabled at the only month they could reach — the calendar opened on
+     the current month and stayed there.
+
+     The floor is the month the account was funded in, which is where the equity
+     curve starts and the earliest date any session can fall on. The ceiling is
+     this month rather than the last session's, so the current month is reachable
+     before its first trade has closed — on a Monday morning, or after a quiet
+     week, the two are not the same month. Every month in between draws fine:
+     monthData builds a grid for any month asked of it and reads whichever
+     sessions land in it, so a month the bot sat out shows an empty grid rather
+     than nothing at all. */
+  const funded = live.equityDaily.length ? live.equityDaily[0].date : LAST_SESSION.date;
+  const [fy, fm] = dparts(funded);
+  const [ty, tm] = dparts(live.today);
+  FIRST_MONTH = { y: fy, m: fm - 1 };
+  LAST_MONTH = { y: ty, m: tm - 1 };
   FIRST_IX = monthIndex(FIRST_MONTH.y, FIRST_MONTH.m);
-  LAST_IX = monthIndex(LAST_MONTH.y, LAST_MONTH.m);
+  LAST_IX = Math.max(FIRST_IX, monthIndex(LAST_MONTH.y, LAST_MONTH.m));
 
   DAILY = live.equityDaily.map((r, i) => ({
     label: dateOf(r.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
