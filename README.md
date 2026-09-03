@@ -71,6 +71,9 @@ none = the strategy does not use this rule
 not set = no rule was provided
 enabled = the strategy opens new positions and manages them
 paused = the strategy opens no new positions; open ones run to their exit rules
+rescan = the day's candidates are re-offered on every iteration to the close;
+    a daily setup is cut from completed candles, so the list itself cannot
+    change intraday, only the room to take it
 ```
 
 ### strategies
@@ -233,11 +236,13 @@ sorting
     applies when more symbols qualify than there is room to hold
 
 entry
-    window = market open on day 3
+    window = day 3 market open to market close, rescan
     day 1 = close < SMA(20)
     day 2 = close > SMA(20) and close > day 1 close
     long signal = day 1 and day 2 rules pass
-    order = day 3 market open
+    order = day 3 market open, or the first later iteration at which a position
+        slot and the money for it are free
+    one entry per symbol per session
     earnings block = no new entry within 5 days before earnings,
         ignored when no earnings date is known
 
@@ -264,13 +269,13 @@ exit
 
 ```text:surface
 status
-    state = paused
+    state = enabled
 
 market
     asset = US stocks
     market cap >= $500 million
     share price >= $5
-    average daily turnover >= $20 million
+    average daily turnover >= $20 million over the last 20 sessions
     market state = SPX > SMA(20)
     direction = long
 
@@ -286,15 +291,18 @@ sorting
     applies when more symbols qualify than there is room to hold
 
 entry
-    window = next market open
+    window = market open to market close, rescan
     long signal = daily close > previous candle high
     short signal = none
-    order = market open after the signal candle
+    order = market open after the signal candle, or the first later iteration
+        at which a position slot and the money for it are free
     earnings block = none
+    max positions = 5
+    one entry per symbol per session
 
 risk
     position size = 10% of account
-    risk per trade = not set
+    risk per trade = 0.5% of account
     risk-to-reward ratio = none
     R = not set
     initial stop = entry price - 2 * ATR(14)
@@ -304,8 +312,8 @@ risk
 
 exit
     profit targets = none
-    signal exit = daily close < SMA(20) and RSI(14) < 50
-    earnings exit = close any open position on the day before earnings
+    signal exit = daily close < SMA(20) or RSI(14) < 50
+    earnings exit = none
     deadline = none
     shared rules = Stop Loss and Emergency Exit
 ```

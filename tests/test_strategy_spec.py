@@ -13,9 +13,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from alpaca.data.enums import DataFeed
 
 from bot.portfolio import DAILY_EXIT_NEEDS_BOTH as COMPOSER_EXIT_NEEDS_BOTH
-from bot.portfolio import ORB_CLOSE_DEADLINE, UNIVERSE_CAP_MIN, UNIVERSE_TURNOVER_MIN
+from bot.portfolio import DAILY_EXITS_BEFORE_EARNINGS as COMPOSER_EXITS_BEFORE_EARNINGS
+from bot.portfolio import (
+    DAILY_FEED,
+    ORB_CLOSE_DEADLINE,
+    UNIVERSE_CAP_MIN,
+    UNIVERSE_TURNOVER_MIN,
+)
 from bot.portfolio import ORB_ENTRY_EXTENSION_MAX as COMPOSER_ENTRY_EXTENSION_MAX
 from bot.portfolio import ORB_SIGNAL_CANDLES_MAX as COMPOSER_SIGNAL_CANDLES_MAX
 from bot.portfolio import ORB_TARGET_MULTIPLES as COMPOSER_TARGET_MULTIPLES
@@ -28,6 +35,14 @@ from bot.strategies.orb_base import (
     ORB_TURNOVER_MIN,
 )
 from bot.strategies.shared import MIN_NOTIONAL_USD, entry_quantity, fractional_allowed
+from bot.strategies.tfb_50 import (
+    TFB_CAP_MIN,
+    TFB_POSITIONS_MAX,
+    TFB_PRICE_MIN,
+    TFB_RISK_CEILING,
+    TFB_TURNOVER_MIN,
+    TFB_TURNOVER_SESSIONS,
+)
 from bot.types import TradingConfiguration
 from tests.test_ledger import _snapshot
 from ui.dashboard import (
@@ -42,6 +57,8 @@ from ui.dashboard import (
 from ui.ledger import TRADING_ZONE
 from ui.strategies import (
     DAILY_EXIT_NEEDS_BOTH,
+    DAILY_EXITS_BEFORE_EARNINGS,
+    ENTRY_WINDOWS,
     FIELDS,
     ORB_HISTORY_SESSIONS,
     ORB_TRAIL_ATR_MULTIPLE,
@@ -69,6 +86,15 @@ def configuration(per_trade: float = 0.005, per_day: float = 0.02) -> TradingCon
         risk_per_day_max=per_day,
         risk_per_trade_max=per_trade,
     )
+
+
+LABELS = {"sma": "Momentum (SMA)", "tfb_50": "TFB-50"}
+
+
+def register_block(engine: str) -> str:
+    """The engine's own block of the README register."""
+    blocks = Path("README.md").read_text().split("#### ")[1:]
+    return next(block for block in blocks if block.startswith(LABELS[engine]))
 
 
 def spec_rows(strategy_id: str) -> dict[str, str]:
@@ -383,9 +409,9 @@ def test_the_five_minute_engine_states_its_own_risk_ceiling() -> None:
 
 @pytest.mark.parametrize(("engine", "multiple"), [("sma", 1.5), ("tfb_50", 2.0)])
 def test_daily_stop_multiples_match_the_composer(engine: str, multiple: float) -> None:
-    runner = PortfolioStrategy._run_sma if engine == "sma" else PortfolioStrategy._run_tfb
+    scanner = PortfolioStrategy._scan_sma if engine == "sma" else PortfolioStrategy._scan_tfb
 
-    assert f"{multiple} * latest_atr(frame)" in inspect.getsource(runner)
+    assert f"{multiple} * latest_atr(frame)" in inspect.getsource(scanner)
     assert f"{multiple:g}x the 14-period ATR" in spec_rows(engine)["Stop Loss"]
 
     module = sma if engine == "sma" else tfb_50
@@ -393,8 +419,8 @@ def test_daily_stop_multiples_match_the_composer(engine: str, multiple: float) -
 
 
 def test_only_the_momentum_engine_blocks_entries_before_earnings() -> None:
-    assert "earnings_blocked" in inspect.getsource(PortfolioStrategy._run_sma)
-    assert "earnings_blocked" not in inspect.getsource(PortfolioStrategy._run_tfb)
+    assert "earnings_blocked" in inspect.getsource(PortfolioStrategy._scan_sma)
+    assert "earnings_blocked" not in inspect.getsource(PortfolioStrategy._scan_tfb)
 
     assert "within 5 days" in spec_rows("sma")["Entry"]
     assert "do not block" in spec_rows("tfb_50")["Entry"]
@@ -419,18 +445,23 @@ def test_intraday_engines_are_flat_before_the_close() -> None:
 
     for engine in ("orb", "orb_momentum"):
         assert "15:55" in spec_rows(engine)["Emergency Exit"]
-    for engine in ("sma", "tfb_50"):
-        assert "15:50" in spec_rows(engine)["Emergency Exit"]
+    assert "15:50" in spec_rows("sma")["Emergency Exit"]
+
+
+def spec_card(spec: dict[str, Any], strategy_id: str) -> dict[str, str]:
+    card = next(card for card in spec["strategies"] if card["id"] == strategy_id)
+    return {row["field"]: row["value"] for row in card["rows"]}
 
 
 def test_risk_wording_follows_the_reported_configuration() -> None:
     """The limits are environment settings, so the page must not quote defaults.
 
-    Read off TFB-50: Momentum (SMA) sets no per-trade risk limit, so its card
-    has no configured figure to follow.
+    Read off ORB-10m, the one engine that still follows the configured
+    per-trade limit: Momentum (SMA) sets no limit at all, and ORB-5m and TFB-50
+    both state their own figure in the register.
     """
     spec = strategy_spec(configuration(per_trade=0.0075, per_day=0.03))
-    rows = {row["field"]: row["value"] for row in spec["strategies"][3]["rows"]}
+    rows = spec_card(spec, "orb_momentum")
     rules = {row["field"]: row["value"] for row in spec["portfolio"]}
 
     assert "0.75% of account equity" in rows["Max Risk"]
@@ -440,8 +471,7 @@ def test_risk_wording_follows_the_reported_configuration() -> None:
 
 def test_spec_falls_back_to_documented_defaults_when_no_bot_is_reporting() -> None:
     spec = strategy_spec(None)
-    card = next(card for card in spec["strategies"] if card["id"] == "tfb_50")
-    rows = {row["field"]: row["value"] for row in card["rows"]}
+    rows = spec_card(spec, "orb_momentum")
 
     assert spec["configured"] is False
     assert f"{RISK_PER_TRADE_DEFAULT:.1%} of account equity" in rows["Max Risk"]
@@ -467,14 +497,40 @@ def test_the_daily_engines_give_up_on_the_twenty_day_average() -> None:
         assert "20-day average" in spec_rows(engine)["Exit Rule"]
 
 
-def test_only_the_momentum_engine_exits_on_either_condition() -> None:
-    """TFB-50 still waits for the close and RSI together."""
+def test_both_daily_engines_exit_on_either_condition() -> None:
+    """TFB-50's register calls this an emergency exit, so it waits for neither."""
     assert DAILY_EXIT_NEEDS_BOTH == COMPOSER_EXIT_NEEDS_BOTH
+    assert DAILY_EXIT_NEEDS_BOTH == {"sma": False, "tfb_50": False}
     assert sma.Strategy.exit_needs_both is False
-    assert tfb_50.Strategy.exit_needs_both is True
+    assert tfb_50.Strategy.exit_needs_both is False
 
-    assert "Either one is enough" in spec_rows("sma")["Exit Rule"]
-    assert "with RSI (14) under 50" in spec_rows("tfb_50")["Exit Rule"]
+    for engine in ("sma", "tfb_50"):
+        assert "Either one is enough" in spec_rows(engine)["Exit Rule"]
+
+
+def test_tfb_50_states_its_own_risk_ceiling() -> None:
+    """0.5% is in its register, so the configured limit does not override it."""
+    assert "risk_fraction_max=TFB_RISK_CEILING" in inspect.getsource(PortfolioStrategy._run_tfb)
+    assert TFB_RISK_CEILING == 0.005
+    assert "risk_limit = self.risk_fraction_max" in inspect.getsource(DailyStrategy._trade)
+    assert tfb_50.Strategy.risk_fraction_max == TFB_RISK_CEILING
+    assert sma.Strategy.risk_fraction_max is None
+
+    # A looser configured limit must not drag the published figure up with it.
+    rows = spec_card(strategy_spec(configuration(per_trade=0.02)), "tfb_50")
+    assert rows["Max Risk"].startswith(f"{TFB_RISK_CEILING:.1%} of account equity per trade")
+
+
+def test_tfb_50_holds_its_own_position_cap_inside_the_portfolio_one() -> None:
+    """Five for this engine, under the portfolio-wide ten."""
+    source = inspect.getsource(PortfolioStrategy._run_tfb)
+
+    assert 'self._engine_position_count("tfb_50") >= TFB_POSITIONS_MAX' in source
+    assert TFB_POSITIONS_MAX < POSITIONS_MAX
+    assert tfb_50.Strategy.positions_max == TFB_POSITIONS_MAX
+    assert sma.Strategy.positions_max is None
+
+    assert f"at most {TFB_POSITIONS_MAX} positions" in spec_rows("tfb_50")["Max Risk"]
 
 
 def test_an_unreadable_earnings_calendar_does_not_force_an_exit() -> None:
@@ -482,8 +538,43 @@ def test_an_unreadable_earnings_calendar_does_not_force_an_exit() -> None:
     assert "return False" in inspect.getsource(DailyStrategy._earnings_exit_due)
     assert "exit_for_earnings = False" in inspect.getsource(PortfolioStrategy._manage_daily)
 
-    for engine in ("sma", "tfb_50"):
-        assert "cannot be read" in spec_rows(engine)["Emergency Exit"]
+    assert "cannot be read" in spec_rows("sma")["Emergency Exit"]
+
+
+def test_earnings_do_not_close_a_tfb_50_position() -> None:
+    """Its register reads "earnings exit = none", so the calendar is not read."""
+    assert DAILY_EXITS_BEFORE_EARNINGS == COMPOSER_EXITS_BEFORE_EARNINGS
+    assert DAILY_EXITS_BEFORE_EARNINGS == {"sma": True, "tfb_50": False}
+    assert sma.Strategy.exits_before_earnings is True
+    assert tfb_50.Strategy.exits_before_earnings is False
+
+    assert "if DAILY_EXITS_BEFORE_EARNINGS[holding.engine]:" in inspect.getsource(
+        PortfolioStrategy._manage_daily
+    )
+    assert "self.exits_before_earnings and self._earnings_exit_due" in inspect.getsource(
+        DailyStrategy._manage
+    )
+
+    rows = spec_rows("tfb_50")
+    assert "Earnings do not close a position" in rows["Emergency Exit"]
+    assert "15:50" not in rows["Emergency Exit"]
+
+
+def test_tfb_50_screens_the_universe_again_on_its_own_floors() -> None:
+    """Its register states a price floor and a 20-session turnover floor."""
+    assert TFB_CAP_MIN == UNIVERSE_CAP_MIN, "the discovery screen enforces this engine's cap"
+    assert TFB_PRICE_MIN == 5.0
+    assert TFB_TURNOVER_MIN == 20_000_000.0
+    assert TFB_TURNOVER_SESSIONS == 20
+
+    assert "tfb_market_ready(frame)" in inspect.getsource(PortfolioStrategy._scan_tfb)
+    assert "tfb_market_ready(frame)" in inspect.getsource(tfb_50.Strategy._entry_ready)
+    assert "tfb_market_ready" not in inspect.getsource(PortfolioStrategy._scan_sma)
+
+    market = spec_rows("tfb_50")["Market"]
+    assert f"${TFB_PRICE_MIN:.0f} or more" in market
+    assert f"last {TFB_TURNOVER_SESSIONS} completed sessions" in market
+    assert "own floors" not in spec_rows("sma")["Market"]
 
 
 def test_the_daily_setups_describe_what_the_predicates_check() -> None:
@@ -573,15 +664,61 @@ def test_entry_windows_match_the_composer() -> None:
     assert "opening_end <= now.time() <= time(10, 30)" in variant
 
     loop = inspect.getsource(PortfolioStrategy.on_trading_iteration)
-    assert "now.time() < time(9, 40)" in loop
     assert "self._run_daily(now)" in loop
+    assert "time(9, 40)" not in loop, "the daily scan runs to the close, not to 09:40"
 
     assert entry_windows() == {
         "orb": {"from": "09:35", "to": "10:30"},
         "orb_momentum": {"from": "09:40", "to": "10:30"},
-        "sma": {"from": "09:30", "to": "09:40"},
-        "tfb_50": {"from": "09:30", "to": "09:40"},
+        "sma": {"from": "09:30", "to": "16:00"},
+        "tfb_50": {"from": "09:30", "to": "16:00"},
     }
+
+
+def test_daily_bars_are_read_on_the_consolidated_tape() -> None:
+    """The daily screens measure traded value, which a partial feed understates."""
+    assert DAILY_FEED == DataFeed.SIP
+    assert "self._daily_bars(" in inspect.getsource(PortfolioStrategy._prepare)
+
+    fetch = inspect.getsource(PortfolioStrategy._daily_bars)
+    assert "feed=DAILY_FEED" in fetch
+    # A subscription that bars SIP must degrade visibly, not silently.
+    assert "daily-feed-" in fetch
+    assert "warning" in fetch
+
+
+def test_the_daily_scan_runs_every_iteration_to_the_close() -> None:
+    """No rule bounded it to 09:40, so nothing in the loop does either."""
+    loop = inspect.getsource(PortfolioStrategy.on_trading_iteration)
+    assert "self._run_daily(now)" in loop
+    assert "_daily_run_on" not in loop, "the once-a-day gate is gone"
+
+    scan = inspect.getsource(PortfolioStrategy._run_daily)
+    assert "self._daily_scanned_on != now.date()" in scan, "the universe is scanned once a day"
+
+    for engine in ("sma", "tfb_50"):
+        assert ENTRY_WINDOWS[engine][1] == time(16, 0)
+        assert "until the close" in spec_rows(engine)["Entry"]
+        assert "rescan" in register_block(engine)
+
+
+def test_a_daily_name_is_entered_once_per_session() -> None:
+    """Entry and exit read the same completed candle, so re-entry would churn."""
+    entered = inspect.getsource(PortfolioStrategy._enter)
+    assert "self._daily_traded.add((now.date(), asset))" in entered
+    assert "self._daily_traded.add(" in inspect.getsource(PortfolioStrategy._restore)
+
+    guard = inspect.getsource(PortfolioStrategy._daily_entered)
+    assert "(day, symbol) in self._daily_traded" in guard
+    for runner in (PortfolioStrategy._run_sma, PortfolioStrategy._run_tfb):
+        assert "self._daily_entered(now.date()" in inspect.getsource(runner)
+
+    trade = inspect.getsource(DailyStrategy._trade)
+    assert "(day, symbol) in self._traded" in trade
+    assert "self._traded.add((day, symbol))" in trade
+
+    for engine in ("sma", "tfb_50"):
+        assert "one entry per symbol per session" in register_block(engine)
 
 
 def test_every_engine_on_the_page_has_an_entry_window() -> None:

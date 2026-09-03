@@ -78,7 +78,7 @@ def test_the_register_state_matches_the_pause_switch() -> None:
 
 
 def test_paused_strategies_are_registered_strategy_names() -> None:
-    assert sorted(PAUSED_STRATEGIES) == ["orb_momentum", "tfb_50"]
+    assert sorted(PAUSED_STRATEGIES) == ["orb_momentum"]
     assert PAUSED_STRATEGIES.issubset(STRATEGY_LABELS)
 
 
@@ -86,6 +86,12 @@ def test_the_momentum_engine_is_switched_on() -> None:
     """It opens new positions again, so its register must not read paused."""
     assert "sma" not in PAUSED_STRATEGIES
     assert active_strategies(["sma"]) == ["sma"]
+
+
+def test_the_tfb_engine_is_switched_on() -> None:
+    """Its register reads enabled, so it must take new entries."""
+    assert "tfb_50" not in PAUSED_STRATEGIES
+    assert active_strategies(["tfb_50"]) == ["tfb_50"]
 
 
 def test_published_roster_names_paused_engines_without_decorating_their_labels() -> None:
@@ -123,7 +129,7 @@ def test_paused_strategies_take_no_entries_when_selection_includes_them() -> Non
     settings = Settings(_env_file=None, strategies="orb,sma,tfb_50,orb_momentum")
 
     assert settings.strategy_names == ["orb", "sma", "tfb_50", "orb_momentum"]
-    assert active_strategies(settings.strategy_names) == ["orb", "sma"]
+    assert active_strategies(settings.strategy_names) == ["orb", "sma", "tfb_50"]
 
 
 def test_configuration_is_rejected_when_export_settings_are_incomplete() -> None:
