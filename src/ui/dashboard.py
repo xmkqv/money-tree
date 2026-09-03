@@ -42,6 +42,10 @@ ASSET_MEDIA_TYPES = {
 }
 LEDGER_TTL_SECONDS = 60
 PULSE_TTL_SECONDS = 2
+# How long a browser may hold the run snapshot. The bot posts one every five
+# seconds, so a shorter window would hand a reader the same answer twice and a
+# longer one would show a heartbeat as stale before it is.
+RUN_TTL_SECONDS = 5
 BENCHMARK_SYMBOL = "SPY"
 POSITION_CAP_FALLBACK = 0.10
 DAILY_LOSS_FALLBACK = 0.02
@@ -792,13 +796,13 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
     @router.get("/api/run")
     async def runtime() -> JSONResponse:
         snapshot, stale = runtime_state()
-        return read_response(snapshot, 5, stale=stale)
+        return read_response(snapshot, RUN_TTL_SECONDS, stale=stale)
 
     @router.get("/api/events")
     async def events(limit: Annotated[int, Query(ge=1, le=50)] = 50) -> JSONResponse:
         snapshot, stale = runtime_state()
         data = list(reversed(snapshot.events[-limit:])) if snapshot else []
-        return read_response(data, 5, stale=stale)
+        return read_response(data, RUN_TTL_SECONDS, stale=stale)
 
     @router.post("/internal/state", status_code=204)
     async def publish_runtime(request: Request) -> Response:

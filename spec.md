@@ -66,5 +66,6 @@ mt report --strategy {name} --symbols {symbols} --start {date} --end {date}
 # claims
 
 - the bot runs multiple strategies
-- the ui renders a modern dashboard that includes an overview, strategy details, analysis, and logs
+- the ui renders a modern dashboard that includes an overview, strategy details, analysis,
+  a trade log, and the bot's own run state, limits and events (The Insides)
 - the deployed app bot mode (paper/live) can be toggled by updating app vendor secrets

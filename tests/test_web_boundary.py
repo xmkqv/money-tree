@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 import pytest
 
+from bot.types import RuntimeSnapshot
 from tests.world.index import (
     authenticate,
     runtime_snapshot,
@@ -20,6 +21,7 @@ from ui.dashboard import (
     ASSET_DIRECTORY,
     ASSET_REWRITES,
     PULSE_TTL_SECONDS,
+    RUN_TTL_SECONDS,
     RUNTIME_BODY_BYTES_MAX,
 )
 
@@ -471,6 +473,65 @@ def test_the_script_asks_for_a_pulse_no_faster_than_the_server_makes_one() -> No
 
     assert interval, "the script should carry a pulse interval"
     assert int(interval.group(1)) == PULSE_TTL_SECONDS * 1000
+
+
+def test_every_tab_leads_to_a_view_the_script_can_switch_to() -> None:
+    """A tab whose view the switcher never shows is a dead link on the nav bar.
+
+    The tab, the panel and the switcher's own list live in two files, and a page
+    added to two of the three looks finished until it is clicked.
+    """
+    page = (ASSET_DIRECTORY / "dashboard.html").read_text()
+    script = (ASSET_DIRECTORY / "dashboard.js").read_text()
+
+    tabs = set(re.findall(r'<button type="button" data-view="([a-z_]+)"', page))
+    panels = set(re.findall(r'<div class="view(?: hidden)?" id="view-([a-z_]+)"', page))
+    switched = set(
+        re.findall(r'"([a-z_]+)"', re.search(r"for \(const id of \[([^\]]+)\]", script).group(1))
+    )
+
+    assert "insides" in tabs, "The Insides should be reachable from the nav bar"
+    assert tabs <= panels, f"{tabs - panels} have a tab but no panel"
+    assert tabs <= switched, f"{tabs - switched} have a tab the switcher never shows"
+
+
+def test_the_insides_page_reads_the_run_and_not_the_broker() -> None:
+    """It has to render when the broker read is failing — that is when it is wanted.
+
+    The page once resolved engine names through the ledger's roster, so a failed
+    Alpaca call left LIVE undefined and the whole page threw before painting a
+    single event. The run snapshot needs no broker, so nothing here may depend
+    on one.
+    """
+    script = (ASSET_DIRECTORY / "dashboard.js").read_text()
+    block = script[script.index("function readInsides(") - 400 : script.index("/* ══ live feed")]
+
+    assert '"/api/run"' in script, "the page should read the run snapshot"
+    assert "LIVE && LIVE.strategies" in script, "the roster must be optional"
+    for guarded in ("LEDGER", "ACCOUNT", "OPEN_POSITIONS"):
+        assert guarded not in block, f"the insides page should not need {guarded}"
+
+
+def test_the_insides_page_asks_no_faster_than_the_run_snapshot_is_cached() -> None:
+    script = (ASSET_DIRECTORY / "dashboard.js").read_text()
+    interval = re.search(r"const INSIDES_MS = (\d+);", script)
+
+    assert interval, "the script should carry an insides interval"
+    assert int(interval.group(1)) == RUN_TTL_SECONDS * 1000
+
+
+def test_the_insides_page_quotes_the_event_count_the_bot_actually_keeps() -> None:
+    """The page tells the reader how much history it is looking at.
+
+    That number is the exporter's trim, in another file. If the bot starts
+    keeping a different count the page would keep promising the old one, which
+    is the sort of quiet lie this page exists to avoid.
+    """
+    script = (ASSET_DIRECTORY / "dashboard.js").read_text()
+    kept = re.search(r"const EVENTS_KEPT = (\d+);", script)
+
+    assert kept, "the script should say how many events the bot keeps"
+    assert int(kept.group(1)) == RuntimeSnapshot.model_fields["events"].metadata[0].max_length
 
 
 def test_the_pulse_sends_only_fields_the_page_patches_onto_its_own_state() -> None:
