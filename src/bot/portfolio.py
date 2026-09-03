@@ -16,22 +16,39 @@ from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.requests import GetOrdersRequest
 from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
-from .attribution import STRATEGY_CODES, find_order_strategy
 from .config import settings
+from .order_tag import find_order_tag, order_tag
 from .strategies.base import StrategyBase
+from .strategies.daily_base import (
+    DAILY_EARNINGS_EXIT_LEAD_MINUTES,
+    DAILY_EXITS_BEFORE_EARNINGS,
+    DAILY_HISTORY_SESSIONS,
+    DAILY_RISK_MAX,
+    DAILY_STOP_ATR_MULTIPLES,
+    DAILY_STRATEGIES,
+)
 from .strategies.orb_base import (
+    ORB_CLOSE_LEAD_MINUTES,
+    ORB_ENTRY_EXTENSION_MAX,
+    ORB_OPENING_MINUTES,
     ORB_POSITIONS_MAX,
     ORB_PRICE_USD_MIN,
     ORB_RISK_MAX,
+    ORB_SCAN_MINUTES,
+    ORB_SIGNAL_CANDLES_MAX,
+    ORB_STRATEGIES,
+    ORB_TARGET_MULTIPLES,
+    ORB_TRAIL_ATR_MULTIPLE,
+    ORB_TRAIL_BARS_MIN,
     ORB_TURNOVER_USD_MIN,
+    ORB_VOLUME_MULTIPLES,
+    is_orb_setup_ready,
     is_relative_volume_ready,
-    orb_setup,
     round_stop,
 )
 from .strategies.shared import (
     TRADING_ZONE,
     Direction,
-    does_macd_confirm,
     does_momentum_enter,
     does_signal_exit,
     does_tfb_enter,
@@ -45,48 +62,27 @@ from .strategies.shared import (
     next_stop,
     normalize_ohlcv,
     quantity_value,
+    regular_session,
+    session_bounds,
 )
-from .strategies.tfb_50 import TFB_POSITIONS_MAX, TFB_RISK_MAX, is_tfb_market_ready
-from .types import STRATEGY_LABELS, EventLevel, StrategyName, active_strategies
+from .strategies.tfb_50 import TFB_POSITIONS_MAX, is_tfb_market_ready
+from .types import (
+    POSITION_FRACTION_CAP_MAX,
+    POSITIONS_MAX,
+    STRATEGY_LABELS,
+    EventLevel,
+    StrategyName,
+    active_strategies,
+)
 
 
 yfinance = cast(Any, import_module("yfinance"))
 
 
-FIVE_MINUTES = TimeFrame(5, cast(TimeFrameUnit, TimeFrameUnit.Minute))
-TEN_MINUTES = TimeFrame(10, cast(TimeFrameUnit, TimeFrameUnit.Minute))
-DATA_FEEDS: dict[str, DataFeed] = {
-    "sip": DataFeed.SIP,
-    "delayed_sip": DataFeed.DELAYED_SIP,
-    "iex": DataFeed.IEX,
-}
-DAILY_FEED = DataFeed.SIP
-SYMBOLS_PER_REQUEST = 200
-UNIVERSE_CAP_USD_MIN = 500_000_000.0
-UNIVERSE_TURNOVER_USD_MIN = ORB_TURNOVER_USD_MIN
-UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
-PREPARATION_ATTEMPTS_MAX = 2
-STOP_COVERAGE_DRIFT_MAX = 1e-6
-ORB_CLOSE_DEADLINE = time(15, 54)
-DAILY_ENGINES: frozenset[StrategyName] = frozenset({"sma", "tfb_50"})
-DAILY_EXIT_NEEDS_BOTH: dict[StrategyName, bool] = {"sma": False, "tfb_50": False}
-DAILY_EXITS_BEFORE_EARNINGS: dict[StrategyName, bool] = {"sma": True, "tfb_50": False}
-ORB_TARGET_MULTIPLES: dict[StrategyName, tuple[float, float, float]] = {
-    "orb": (1.5, 2.5, 4.0),
-    "orb_momentum": (2.0, 3.0, 5.0),
-}
-ORB_ENTRY_EXTENSION_MAX: dict[StrategyName, float | None] = {
-    "orb": None,
-    "orb_momentum": 0.25,
-}
-ORB_SIGNAL_CANDLES_MAX: dict[StrategyName, int] = {"orb": 2, "orb_momentum": 2}
-
-
 @dataclass(slots=True)
 class Holding:
-    engine: StrategyName
-    signal: str
-    asset: str
+    strategy: StrategyName
+    symbol: str
     entry: float
     stop: float
     risk: float
@@ -127,6 +123,26 @@ class LoadUniverseError(Exception):
     pass
 
 
+FIVE_MINUTES = TimeFrame(5, cast(TimeFrameUnit, TimeFrameUnit.Minute))
+TEN_MINUTES = TimeFrame(10, cast(TimeFrameUnit, TimeFrameUnit.Minute))
+DATA_FEEDS: dict[str, DataFeed] = {
+    "sip": DataFeed.SIP,
+    "delayed_sip": DataFeed.DELAYED_SIP,
+    "iex": DataFeed.IEX,
+}
+DAILY_FEED = DataFeed.SIP
+SYMBOLS_PER_REQUEST = 200
+ORDERS_PER_REQUEST = 500
+UNIVERSE_CAP_USD_MIN = 500_000_000.0
+UNIVERSE_TURNOVER_USD_MIN = ORB_TURNOVER_USD_MIN
+UNIVERSE_HISTORY_DAYS = 390
+UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
+PREPARATION_ATTEMPTS_MAX = 2
+STOP_COVERAGE_DRIFT_MAX = 1e-6
+PENDING_TTL_MINUTES = 5
+STRATEGY_RISK_MAX: dict[StrategyName, float | None] = {"orb": ORB_RISK_MAX, **DAILY_RISK_MAX}
+
+
 class Strategy(StrategyBase):
     def initialize(self) -> None:
         self.sleeptime = "1M"
@@ -157,12 +173,9 @@ class Strategy(StrategyBase):
         self._orb_data_failed_on: date | None = None
         self._intraday_bucket: datetime | None = None
         self._restored = False
-        api_key = settings.alpaca_api_key
-        api_secret = settings.alpaca_api_secret
-        if api_key is None or api_secret is None:
-            raise RuntimeError("Alpaca credentials must be set")
         self._data = StockHistoricalDataClient(
-            api_key.get_secret_value(), api_secret.get_secret_value()
+            settings.alpaca_api_key.get_secret_value(),
+            settings.alpaca_api_secret.get_secret_value(),
         )
 
     def before_market_opens(self) -> None:
@@ -171,19 +184,23 @@ class Strategy(StrategyBase):
 
     def on_trading_iteration(self) -> None:
         now = self.get_datetime().astimezone(TRADING_ZONE)
+        bounds = session_bounds(now.date())
+        if bounds is None:
+            return
+        opens, closes = bounds
         self._restore()
         self._begin_day(now.date())
         self._reconcile(now)
         if self._is_daily_loss_reached(now.date()):
             return
         self._prepare(now.date())
-        self._manage(now)
+        self._manage(now, closes)
         self._run_daily(now)
         bucket = now.replace(second=0, microsecond=0)
         if now.minute % 5 == 0 and bucket != self._intraday_bucket:
             self._intraday_bucket = bucket
-            self._run_orb(now)
-            self._run_orb_momentum(now)
+            for strategy in ORB_OPENING_MINUTES:
+                self._run_orb(strategy, now, opens)
 
     def on_filled_order(
         self,
@@ -193,51 +210,49 @@ class Strategy(StrategyBase):
         quantity: float | int,
         multiplier: float,
     ) -> None:
-        asset = str(order.asset.symbol)
+        symbol = str(order.asset.symbol)
         side = str(order.side).lower()
-        pending = self._pending.get(asset)
+        pending = self._pending.get(symbol)
         entry_side = "buy" if pending is None or pending.holding.direction == 1 else "sell"
         if pending is not None and entry_side in side:
-            self._pending.pop(asset)
+            self._pending.pop(symbol)
             holding = pending.holding
             holding.entry = self._entry_price(order, price)
             holding.risk = abs(holding.entry - holding.stop)
             holding.highest = holding.entry
             holding.lowest = holding.entry
-            holding.original_quantity = self._entry_quantity_filled(asset, quantity)
-            multiples = ORB_TARGET_MULTIPLES.get(holding.engine)
-            if multiples is not None:
-                holding.targets = cast(
-                    tuple[float, float, float],
-                    tuple(
-                        holding.entry + holding.direction * holding.risk * multiple
-                        for multiple in multiples
-                    ),
-                )
-            self._holdings[asset] = holding
-            if holding.engine in {"orb", "orb_momentum"}:
+            holding.original_quantity = max(self._quantity(symbol), abs(float(quantity)))
+            holding.targets = self._targets(holding)
+            self._holdings[symbol] = holding
+            if holding.strategy in ORB_STRATEGIES:
                 self._protect(holding)
             return
-        self._closing.discard(asset)
+        self._closing.discard(symbol)
         remaining = abs(float(getattr(position, "quantity", 0.0)))
         if remaining <= 0:
-            self._release(asset)
-        elif asset in self._holdings:
-            holding = self._holdings[asset]
+            self._release(symbol)
+        elif symbol in self._holdings:
+            holding = self._holdings[symbol]
             if holding.stage == 0:
                 holding.original_quantity = max(holding.original_quantity, remaining)
             self._protect(holding, remaining)
 
     def _entry_price(self, order: Any, price: float) -> float:
         average = getattr(order, "avg_fill_price", None)
-        try:
-            value = float(average) if average is not None else 0.0
-        except (TypeError, ValueError):
-            value = 0.0
+        value = 0.0 if average is None else float(average)
         return value if isfinite(value) and value > 0 else float(price)
 
-    def _entry_quantity_filled(self, asset: str, reported: float | int) -> float:
-        return max(self._quantity(asset), abs(float(reported)))
+    def _targets(self, holding: Holding) -> tuple[float, float, float] | None:
+        multiples = ORB_TARGET_MULTIPLES.get(holding.strategy)
+        if multiples is None:
+            return None
+        return cast(
+            tuple[float, float, float],
+            tuple(
+                holding.entry + holding.direction * holding.risk * multiple
+                for multiple in multiples
+            ),
+        )
 
     def _record_event(
         self,
@@ -275,71 +290,65 @@ class Strategy(StrategyBase):
         for holding in list(self._holdings.values()):
             self._exit(holding)
         self._locked_on = day
-        self._record_event("daily-loss", "warning", "Daily loss limit reached")
+        self._record_event("day.loss_reached", "warning", "Daily loss limit reached")
         return True
 
     def _restore(self) -> None:
         if self._restored:
             return
-        for engine in sorted(self._exit_only):
+        for strategy in sorted(self._exit_only):
             self._record_event(
-                f"paused-{engine}",
+                f"strategy.paused.{strategy}",
                 "warning",
-                f"{engine} is paused: existing positions only, no new entries",
-                engine,
+                f"{strategy} is paused: existing positions only, no new entries",
+                strategy,
             )
-        request = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=500, direction=Sort.DESC)
-        orders = cast(list[Any], self.broker.api.get_orders(filter=request))
+        self._record_event(
+            "feed.announced",
+            "info",
+            f"Intraday strategies use Alpaca {settings.alpaca_data_feed} market data",
+        )
         positions = cast(list[Any], self.broker.api.get_all_positions())
-        self._record_event("market-data", "info", "Intraday strategies use Alpaca IEX market data")
+        self._restored = True
+        symbols = sorted({str(position.symbol) for position in positions})
+        if not symbols:
+            return
+        request = GetOrdersRequest(
+            status=QueryOrderStatus.ALL,
+            symbols=symbols,
+            limit=ORDERS_PER_REQUEST,
+            direction=Sort.DESC,
+        )
+        orders = cast(list[Any], self.broker.api.get_orders(filter=request))
+        tagged = [
+            (order, tag)
+            for order in orders
+            if (tag := find_order_tag(str(order.client_order_id))) is not None
+        ]
         for position in positions:
-            asset = str(position.symbol)
-            match = next(
-                (
-                    order
-                    for order in orders
-                    if str(order.symbol) == asset
-                    and self._order_engine(str(order.client_order_id)) is not None
-                ),
-                None,
-            )
+            symbol = str(position.symbol)
             quantity = float(position.qty)
-            if match is None or quantity == 0:
-                self._claims[asset] = None
+            held = [(order, tag) for order, tag in tagged if str(order.symbol) == symbol]
+            if not held or quantity == 0:
+                self._claims[symbol] = None
                 continue
-            engine = self._order_engine(str(match.client_order_id))
-            if engine is None:
-                continue
-            entry_order = next(
+            strategy = held[0][1].strategy
+            entry_order, entry_tag = next(
                 (
-                    order
-                    for order in orders
-                    if str(order.symbol) == asset
-                    and str(order.client_order_id).split("-")[2:3] == ["e"]
-                    and self._order_engine(str(order.client_order_id)) == engine
+                    (order, tag)
+                    for order, tag in held
+                    if tag.kind == "e" and tag.strategy == strategy
                 ),
-                match,
+                held[0],
             )
-            client_order_id = str(entry_order.client_order_id)
-            signal = self._order_signal(client_order_id) or asset
             entry = float(position.avg_entry_price)
-            risk = entry * (self._order_risk(client_order_id) or 0.01)
+            risk = entry * entry_tag.risk_fraction
             entered_at = entry_order.filled_at or datetime.now(UTC)
             direction: Direction = 1 if quantity > 0 else -1
             original = abs(float(entry_order.filled_qty or entry_order.qty or position.qty))
-            multiples = ORB_TARGET_MULTIPLES.get(engine)
-            targets: tuple[float, float, float] | None = (
-                None
-                if multiples is None
-                else cast(
-                    tuple[float, float, float],
-                    tuple(entry + direction * risk * value for value in multiples),
-                )
-            )
             holding = Holding(
-                engine,
-                signal,
-                asset,
+                strategy,
+                symbol,
                 entry,
                 entry - direction * risk,
                 risk,
@@ -347,53 +356,52 @@ class Strategy(StrategyBase):
                 entered_at,
                 direction=direction,
                 original_quantity=original,
-                targets=targets,
                 lowest=entry,
             )
+            holding.targets = self._targets(holding)
             remaining_fraction = abs(quantity) / original
-            if engine in {"orb", "orb_momentum"} and remaining_fraction <= 0.5:
+            if strategy in ORB_STRATEGIES and remaining_fraction <= 0.5:
                 holding.stage = 1 if remaining_fraction > 0.25 else 2
-            self._holdings[asset] = holding
-            self._claims[asset] = engine
-            self._claims[signal] = engine
-            if engine in {"orb", "orb_momentum"}:
-                self._orb_traded.add((entered_at.astimezone(TRADING_ZONE).date(), asset))
-            if engine in DAILY_ENGINES:
-                self._daily_traded.add((entered_at.astimezone(TRADING_ZONE).date(), asset))
-            if engine not in self._enabled:
-                self._exit_only.add(engine)
+            self._holdings[symbol] = holding
+            self._claims[symbol] = strategy
+            traded_on = entered_at.astimezone(TRADING_ZONE).date()
+            if strategy in ORB_STRATEGIES:
+                self._orb_traded.add((traded_on, symbol))
+            if strategy in DAILY_STRATEGIES:
+                self._daily_traded.add((traded_on, symbol))
+            if strategy not in self._enabled:
+                self._exit_only.add(strategy)
                 self._record_event(
-                    f"exit-only-{engine}",
+                    f"strategy.exits_only.{strategy}",
                     "warning",
-                    f"{engine} is managing existing positions only",
-                    engine,
+                    f"{strategy} is managing existing positions only",
+                    strategy,
                 )
-        self._restored = True
 
     def _reconcile(self, now: datetime) -> None:
         positions = {str(value.symbol): value for value in self.broker.api.get_all_positions()}
-        for asset in list(self._holdings):
-            if asset not in positions:
-                self._release(asset)
+        for symbol in list(self._holdings):
+            if symbol not in positions:
+                self._release(symbol)
         active = {
             str(order.asset.symbol)
             for order in cast(list[Any], self.get_orders())
             if order.is_active()
         }
-        for asset, pending in list(self._pending.items()):
-            expired = now - pending.submitted_at > timedelta(minutes=5)
-            if asset not in positions and asset not in active and expired:
-                self._release(asset)
-        for asset in set(self._stops).difference(active):
-            self._stops.pop(asset, None)
+        for symbol, pending in list(self._pending.items()):
+            expired = now - pending.submitted_at > timedelta(minutes=PENDING_TTL_MINUTES)
+            if symbol not in positions and symbol not in active and expired:
+                self._release(symbol)
+        for symbol in set(self._stops).difference(active):
+            self._stops.pop(symbol, None)
         self._closing.intersection_update(active)
         self._resync_stops(positions)
 
     def _resync_stops(self, positions: dict[str, Any]) -> None:
-        for asset, holding in self._holdings.items():
-            if holding.engine not in {"orb", "orb_momentum"} or asset in self._closing:
+        for symbol, holding in self._holdings.items():
+            if holding.strategy not in ORB_STRATEGIES or symbol in self._closing:
                 continue
-            position = positions.get(asset)
+            position = positions.get(symbol)
             if position is None:
                 continue
             quantity = abs(float(position.qty))
@@ -401,7 +409,7 @@ class Strategy(StrategyBase):
                 continue
             if holding.stage == 0:
                 holding.original_quantity = max(holding.original_quantity, quantity)
-            resting = self._stops.get(asset)
+            resting = self._stops.get(symbol)
             if resting is None or resting[1] < quantity - STOP_COVERAGE_DRIFT_MAX:
                 self._protect(holding, quantity)
 
@@ -416,12 +424,13 @@ class Strategy(StrategyBase):
         self._preparation_attempts += 1
         try:
             eligible = self._universe()
-            held = {holding.signal for holding in self._holdings.values()}
+            held = set(self._holdings)
             symbols = sorted(set(eligible).union({"SPY", "QQQ"}, held))
-            daily_frames = self._daily_bars(
+            daily_frames = self._frames(
                 symbols,
-                datetime.combine(day - timedelta(days=390), time(), TRADING_ZONE),
-                day,
+                datetime.combine(day - timedelta(days=UNIVERSE_HISTORY_DAYS), time(), TRADING_ZONE),
+                cast(TimeFrame, TimeFrame.Day),
+                feed=DAILY_FEED,
             )
             spx = self._spx(day)
             if spx is not None:
@@ -429,36 +438,18 @@ class Strategy(StrategyBase):
         except Exception as error:
             self._daily_frames = {}
             self._eligible_symbols = []
-            self._record_event("universe", "error", f"Stock universe unavailable: {error}")
+            self._record_event(
+                "universe.unavailable", "error", f"Stock universe unavailable: {error}"
+            )
             return
         self._daily_frames = daily_frames
         self._eligible_symbols = eligible
         self._prepared_on = day
 
-    def _daily_bars(self, symbols: list[str], start: datetime, day: date) -> dict[str, DataFrame]:
-        try:
-            return self._frames(
-                symbols,
-                start,
-                cast(TimeFrame, TimeFrame.Day),
-                feed=DAILY_FEED,
-            )
-        except Exception as error:
-            if DATA_FEEDS[settings.alpaca_data_feed] == DAILY_FEED:
-                raise
-            self._record_event(
-                f"daily-feed-{day}",
-                "warning",
-                f"Daily bars fell back to the {settings.alpaca_data_feed} feed: SIP "
-                f"refused them ({type(error).__name__}). Turnover floors read low on a "
-                "partial feed, so fewer names screen in",
-            )
-            return self._frames(symbols, start, cast(TimeFrame, TimeFrame.Day))
-
     def _spx(self, day: date) -> DataFrame | None:
         try:
             frame = yfinance.Ticker("^GSPC").history(
-                start=day - timedelta(days=390),
+                start=day - timedelta(days=UNIVERSE_HISTORY_DAYS),
                 end=day + timedelta(days=1),
                 auto_adjust=True,
             )
@@ -470,7 +461,9 @@ class Strategy(StrategyBase):
             return normalize_ohlcv(frame, {"close"})
         except Exception as error:
             self._record_event(
-                "spx", "error", f"SPX market state unavailable: {type(error).__name__}"
+                "market.unavailable",
+                "error",
+                f"SPX market state unavailable: {type(error).__name__}",
             )
             return None
 
@@ -614,21 +607,21 @@ class Strategy(StrategyBase):
             return
         market = self._completed(market_frame, now)
         if not market_is_rising(market):
-            self._record_event("market-state", "warning", "SPX is not above its 20-day average")
+            self._record_event("market.stalled", "warning", "SPX is not above its 20-day average")
             self._daily_candidates = {}
             self._daily_scanned_on = now.date()
             return
         if self._daily_scanned_on != now.date():
             self._daily_scanned_on = now.date()
             self._daily_candidates = {
-                engine: self._scan_sma(now) if engine == "sma" else self._scan_tfb(now)
-                for engine in self._selected
-                if engine in self._enabled and engine in DAILY_ENGINES
+                strategy: self._scan_sma(now) if strategy == "sma" else self._scan_tfb(now)
+                for strategy in self._selected
+                if strategy in self._enabled and strategy in DAILY_STRATEGIES
             }
-        for engine in self._selected:
-            if engine == "sma":
+        for strategy in self._selected:
+            if strategy == "sma":
                 self._run_sma(now)
-            if engine == "tfb_50":
+            if strategy == "tfb_50":
                 self._run_tfb(now)
 
     def _ranked(self, now: datetime) -> list[tuple[str, DataFrame]]:
@@ -651,7 +644,7 @@ class Strategy(StrategyBase):
                 blocked = is_earnings_blocked(symbol, now.date())
             except Exception as error:
                 self._record_event(
-                    f"earnings-{symbol}",
+                    f"earnings.unavailable.{symbol}",
                     "error",
                     f"Earnings calendar unavailable for {symbol}: {type(error).__name__}",
                     "sma",
@@ -660,22 +653,15 @@ class Strategy(StrategyBase):
             if blocked:
                 continue
             last = float(cast(Any, frame["close"]).iloc[-1])
-            candidates.append(DailyCandidate(symbol, last, last - 1.5 * latest_atr(frame)))
+            stop = last - DAILY_STOP_ATR_MULTIPLES["sma"] * latest_atr(frame)
+            candidates.append(DailyCandidate(symbol, last, stop))
         return candidates
 
     def _run_sma(self, now: datetime) -> None:
         for candidate in self._daily_candidates.get("sma", []):
             if self._is_daily_entered(now.date(), candidate.symbol):
                 continue
-            self._enter(
-                "sma",
-                candidate.symbol,
-                candidate.symbol,
-                candidate.price,
-                candidate.stop,
-                now,
-                caps_risk_per_trade=False,
-            )
+            self._enter("sma", candidate.symbol, candidate.price, candidate.stop, now)
 
     def _scan_tfb(self, now: datetime) -> list[DailyCandidate]:
         candidates: list[DailyCandidate] = []
@@ -683,10 +669,11 @@ class Strategy(StrategyBase):
             if not is_tfb_market_ready(frame) or not does_tfb_enter(frame):
                 continue
             last = float(cast(Any, frame["close"]).iloc[-1])
-            candidates.append(DailyCandidate(symbol, last, last - 2.0 * latest_atr(frame)))
+            stop = last - DAILY_STOP_ATR_MULTIPLES["tfb_50"] * latest_atr(frame)
+            candidates.append(DailyCandidate(symbol, last, stop))
         if not candidates:
             self._record_event(
-                f"tfb-empty-{now.date()}",
+                f"tfb.emptied.{now.date()}",
                 "info",
                 "TFB-50 found no candidate: no eligible name passed its screen and setup",
                 "tfb_50",
@@ -695,9 +682,9 @@ class Strategy(StrategyBase):
 
     def _run_tfb(self, now: datetime) -> None:
         for candidate in self._daily_candidates.get("tfb_50", []):
-            if self._engine_position_count("tfb_50") >= TFB_POSITIONS_MAX:
+            if self._strategy_position_count("tfb_50") >= TFB_POSITIONS_MAX:
                 self._record_event(
-                    f"tfb-capacity-{now.date()}",
+                    f"tfb.capped.{now.date()}",
                     "info",
                     f"TFB-50 entries paused: {TFB_POSITIONS_MAX} positions already open",
                     "tfb_50",
@@ -705,21 +692,7 @@ class Strategy(StrategyBase):
                 return
             if self._is_daily_entered(now.date(), candidate.symbol):
                 continue
-            self._enter(
-                "tfb_50",
-                candidate.symbol,
-                candidate.symbol,
-                candidate.price,
-                candidate.stop,
-                now,
-                risk_fraction_max=TFB_RISK_MAX,
-            )
-
-    def _run_orb(self, now: datetime) -> None:
-        self._run_orb_variant("orb", now, 5, 1.3, False, True)
-
-    def _run_orb_momentum(self, now: datetime) -> None:
-        self._run_orb_variant("orb_momentum", now, 10, 1.5, False, True)
+            self._enter("tfb_50", candidate.symbol, candidate.price, candidate.stop, now)
 
     def _rank_candidates(self, candidates: list[OrbCandidate], now: datetime) -> list[OrbCandidate]:
         ranked: list[tuple[float, str, OrbCandidate]] = []
@@ -734,79 +707,37 @@ class Strategy(StrategyBase):
         ranked.sort(key=lambda row: (-row[0], row[1]))
         return [candidate for _, _, candidate in ranked]
 
-    def _run_orb_variant(
-        self,
-        engine: StrategyName,
-        now: datetime,
-        minutes: int,
-        volume_multiple: float,
-        uses_macd: bool,
-        ranks_candidates: bool,
-    ) -> None:
-        opening_end = time(9, 35) if minutes == 5 else time(9, 40)
+    def _run_orb(self, strategy: StrategyName, now: datetime, opens: datetime) -> None:
+        minutes = ORB_OPENING_MINUTES[strategy]
+        opening_end = opens + timedelta(minutes=minutes)
+        scan_end = opens + timedelta(minutes=ORB_SCAN_MINUTES)
         if (
-            engine not in self._enabled
+            strategy not in self._enabled
             or now.minute % minutes
-            or not opening_end <= now.time() <= time(10, 30)
+            or not opening_end <= now <= scan_end
             or not self._eligible_symbols
         ):
             return
         if self._orb_position_count() >= ORB_POSITIONS_MAX:
             self._record_event(
-                f"orb-capacity-{now.date()}",
+                f"orb.capped.{now.date()}",
                 "info",
                 f"Breakout entries paused: {ORB_POSITIONS_MAX} positions already open",
-                engine,
+                strategy,
             )
             return
-        symbols = self._orb_unscanned(engine, now.date())
-        if not symbols:
-            return
-        if self._orb_data_failed_on == now.date():
+        symbols = self._orb_unscanned(strategy, now.date())
+        if not symbols or self._orb_data_failed_on == now.date():
             return
         try:
-            frames = self._intraday(symbols, now, minutes)
+            frames = self._intraday(symbols, now, opens, minutes)
         except Exception as error:
-            self._orb_data_unavailable(engine, now.date(), error)
+            self._orb_data_unavailable(strategy, now.date(), error)
             return
-        candidates: list[OrbCandidate] = []
-        for symbol in symbols:
-            key = (now.date(), engine, symbol)
-            frame = frames.get(symbol)
-            if frame is None or frame.empty:
-                continue
-            opening = cast(
-                DataFrame,
-                cast(Any, frame).between_time("09:30", "09:34" if minutes == 5 else "09:39"),
-            )
-            after = cast(
-                DataFrame,
-                frame[cast(Any, cast(DatetimeIndex, frame.index)).time >= opening_end],
-            )
-            if opening.empty or after.empty:
-                continue
-            high = float(cast(Any, opening["high"]).max())
-            low = float(cast(Any, opening["low"]).min())
-            if not all(isfinite(value) for value in (high, low)):
-                continue
-            signal = self._orb_signal(after, high, low)
-            if signal is None:
-                continue
-            position, direction, close = signal
-            self._orb_scanned.add(key)
-            if orb_setup(high, low, close) is None:
-                continue
-            if len(after) - position > ORB_SIGNAL_CANDLES_MAX[engine]:
-                continue
-            candidates.append(
-                OrbCandidate(
-                    symbol, direction, high, low, close, cast(Timestamp, after.index[position])
-                )
-            )
+        candidates = self._orb_candidates(strategy, frames, now, opens, opening_end)
         if not candidates:
             return
-        if ranks_candidates:
-            candidates = self._rank_candidates(candidates, now)
+        candidates = self._rank_candidates(candidates, now)
         timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
         try:
             histories = self._frames(
@@ -816,7 +747,7 @@ class Strategy(StrategyBase):
                 now,
             )
         except Exception as error:
-            self._orb_data_unavailable(engine, now.date(), error)
+            self._orb_data_unavailable(strategy, now.date(), error)
             return
         for candidate in candidates:
             if self._orb_position_count() >= ORB_POSITIONS_MAX:
@@ -827,76 +758,94 @@ class Strategy(StrategyBase):
             completed = self._completed(frame, now, minutes)
             if candidate.at is not None:
                 completed = cast(DataFrame, completed[cast(Any, completed.index) <= candidate.at])
-            if not self._orb_confirm(
-                completed,
-                now,
-                volume_multiple,
-                candidate.direction,
-                uses_macd,
-            ):
+            if not self._orb_confirm(completed, now, ORB_VOLUME_MULTIPLES[strategy]):
                 continue
             span = candidate.high - candidate.low
             stop = candidate.low + span * (0.75 if candidate.direction == 1 else 0.25)
             price = self._orb_price(candidate)
-            limit = ORB_ENTRY_EXTENSION_MAX.get(engine)
+            limit = ORB_ENTRY_EXTENSION_MAX[strategy]
             if limit is not None and self._is_too_extended(candidate, price, span, limit):
                 self._record_event(
-                    f"extended-{candidate.symbol}-{now.date()}",
+                    f"entry.overextended.{candidate.symbol}.{now.date()}",
                     "warning",
                     f"{candidate.symbol} entry skipped: price is more than "
                     f"{limit:g} of the opening range beyond the breakout level",
-                    engine,
+                    strategy,
                 )
                 continue
-            self._enter(
-                engine,
-                candidate.symbol,
-                candidate.symbol,
-                price,
-                stop,
-                now,
-                direction=candidate.direction,
-                risk_fraction_max=ORB_RISK_MAX if engine == "orb" else None,
-            )
+            self._enter(strategy, candidate.symbol, price, stop, now, direction=candidate.direction)
 
-    def _orb_data_unavailable(self, engine: StrategyName, day: date, error: Exception) -> None:
+    def _orb_candidates(
+        self,
+        strategy: StrategyName,
+        frames: dict[str, DataFrame],
+        now: datetime,
+        opens: datetime,
+        opening_end: datetime,
+    ) -> list[OrbCandidate]:
+        candidates: list[OrbCandidate] = []
+        for symbol, frame in frames.items():
+            if frame.empty:
+                continue
+            index = cast(Any, cast(DatetimeIndex, frame.index))
+            opening = cast(DataFrame, frame[(index >= opens) & (index < opening_end)])
+            after = cast(DataFrame, frame[index >= opening_end])
+            if opening.empty or after.empty:
+                continue
+            high = float(cast(Any, opening["high"]).max())
+            low = float(cast(Any, opening["low"]).min())
+            if not all(isfinite(value) for value in (high, low)):
+                continue
+            signal = self._orb_signal(after, high, low)
+            if signal is None:
+                continue
+            position, direction, close = signal
+            self._orb_scanned.add((now.date(), strategy, symbol))
+            if not is_orb_setup_ready(high, low, close):
+                continue
+            if len(after) - position > ORB_SIGNAL_CANDLES_MAX:
+                continue
+            candidates.append(
+                OrbCandidate(
+                    symbol, direction, high, low, close, cast(Timestamp, after.index[position])
+                )
+            )
+        return candidates
+
+    def _orb_data_unavailable(self, strategy: StrategyName, day: date, error: Exception) -> None:
         self._orb_data_failed_on = day
         detail = f"{type(error).__name__}: {error}"
         self._record_event(
-            f"orb-data-{day}",
+            f"orb.unavailable.{day}",
             "error",
             f"Breakout scan stood down for the day: no intraday bars from the "
             f"{settings.alpaca_data_feed} feed ({detail[:200]})",
-            engine,
+            strategy,
         )
 
     def _is_daily_entered(self, day: date, symbol: str) -> bool:
         return self._is_claimed(symbol) or (day, symbol) in self._daily_traded
 
-    def _engine_position_count(self, engine: StrategyName) -> int:
-        held = sum(1 for holding in self._holdings.values() if holding.engine == engine)
-        ordered = sum(
-            1
-            for asset, pending in self._pending.items()
-            if pending.holding.engine == engine and asset not in self._holdings
-        )
-        return held + ordered
+    def _strategy_position_count(self, strategy: StrategyName) -> int:
+        return self._position_count(frozenset({strategy}))
 
     def _orb_position_count(self) -> int:
-        engines = {"orb", "orb_momentum"}
-        held = sum(1 for holding in self._holdings.values() if holding.engine in engines)
+        return self._position_count(ORB_STRATEGIES)
+
+    def _position_count(self, strategies: frozenset[StrategyName]) -> int:
+        held = sum(1 for holding in self._holdings.values() if holding.strategy in strategies)
         ordered = sum(
             1
-            for asset, pending in self._pending.items()
-            if pending.holding.engine in engines and asset not in self._holdings
+            for symbol, pending in self._pending.items()
+            if pending.holding.strategy in strategies and symbol not in self._holdings
         )
         return held + ordered
 
-    def _orb_unscanned(self, engine: StrategyName, day: date) -> list[str]:
+    def _orb_unscanned(self, strategy: StrategyName, day: date) -> list[str]:
         return [
             symbol
             for symbol in self._eligible_symbols
-            if (day, engine, symbol) not in self._orb_scanned
+            if (day, strategy, symbol) not in self._orb_scanned
             and (day, symbol) not in self._orb_traded
             and not self._is_claimed(symbol)
         ]
@@ -923,73 +872,61 @@ class Strategy(StrategyBase):
         return None
 
     def _orb_price(self, candidate: OrbCandidate) -> float:
-        try:
-            price = float(self.get_last_price(candidate.symbol))
-        except Exception:
-            return candidate.close
+        price = float(self.get_last_price(candidate.symbol))
         return price if isfinite(price) and price > 0 else candidate.close
 
-    def _intraday(self, symbols: list[str], now: datetime, minutes: int) -> dict[str, DataFrame]:
-        start = datetime.combine(now.date(), time(9, 30), TRADING_ZONE)
+    def _intraday(
+        self, symbols: list[str], now: datetime, opens: datetime, minutes: int
+    ) -> dict[str, DataFrame]:
         timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
         return {
             symbol: self._completed(frame, now, minutes)
-            for symbol, frame in self._frames(symbols, start, timeframe, now).items()
+            for symbol, frame in self._frames(symbols, opens, timeframe, now).items()
         }
 
-    def _orb_confirm(
-        self,
-        frame: DataFrame,
-        now: datetime,
-        volume_multiple: float,
-        direction: Direction,
-        uses_macd: bool,
-    ) -> bool:
+    def _orb_confirm(self, frame: DataFrame, now: datetime, volume_multiple: float) -> bool:
         if frame.empty:
             return False
-        if not is_relative_volume_ready(
+        return is_relative_volume_ready(
             frame,
             now.date(),
             cast(Timestamp, frame.index[-1]).time(),
             volume_multiple,
-        ):
-            return False
-        if not uses_macd:
-            return True
-        regular = cast(DataFrame, cast(Any, frame).between_time("09:30", "15:59"))
-        return does_macd_confirm(cast(Series, regular["close"]), direction)
+        )
 
-    def _manage(self, now: datetime) -> None:
+    def _manage(self, now: datetime, closes: datetime) -> None:
+        orb_deadline = closes - timedelta(minutes=ORB_CLOSE_LEAD_MINUTES)
         for holding in list(self._holdings.values()):
-            if now.time() >= ORB_CLOSE_DEADLINE and holding.engine in {"orb", "orb_momentum"}:
+            if now >= orb_deadline and holding.strategy in ORB_STRATEGIES:
                 self._exit(holding)
                 continue
-            if holding.engine in {"sma", "tfb_50"}:
-                self._manage_daily(holding, now)
+            if holding.strategy in DAILY_STRATEGIES:
+                self._manage_daily(holding, now, closes)
             else:
                 self._manage_orb(holding, now)
 
-    def _manage_daily(self, holding: Holding, now: datetime) -> None:
+    def _manage_daily(self, holding: Holding, now: datetime, closes: datetime) -> None:
         exit_for_earnings = False
-        if DAILY_EXITS_BEFORE_EARNINGS[holding.engine]:
+        if DAILY_EXITS_BEFORE_EARNINGS[holding.strategy]:
             try:
-                exit_for_earnings = is_earnings_exit_due(holding.signal, now.date())
+                exit_for_earnings = is_earnings_exit_due(holding.symbol, now.date())
             except Exception as error:
                 self._record_event(
-                    f"earnings-{holding.signal}",
+                    f"earnings.unavailable.{holding.symbol}",
                     "error",
-                    f"Earnings calendar unavailable for {holding.signal}: {type(error).__name__}",
-                    holding.engine,
+                    f"Earnings calendar unavailable for {holding.symbol}: {type(error).__name__}",
+                    holding.strategy,
                 )
                 exit_for_earnings = False
-        if exit_for_earnings and now.time() >= time(15, 50):
+        earnings_deadline = closes - timedelta(minutes=DAILY_EARNINGS_EXIT_LEAD_MINUTES)
+        if exit_for_earnings and now >= earnings_deadline:
             self._exit(holding)
             return
-        daily_frame = self._daily_frames.get(holding.signal)
+        daily_frame = self._daily_frames.get(holding.symbol)
         if daily_frame is None:
             return
         frame = self._completed(daily_frame, now)
-        if len(frame) < 20:
+        if len(frame) < DAILY_HISTORY_SESSIONS:
             return
         since = cast(
             DataFrame,
@@ -998,13 +935,13 @@ class Strategy(StrategyBase):
         last = float(cast(Any, frame["close"]).iloc[-1])
         if len(since):
             holding.highest = max(holding.highest, float(cast(Any, since["close"]).max()))
-        multiple = 1.5 if holding.engine == "sma" else 2.0
+        multiple = DAILY_STOP_ATR_MULTIPLES[holding.strategy]
         holding.stop = max(holding.stop, holding.highest - multiple * latest_atr(frame))
-        if last < holding.stop or does_signal_exit(frame, DAILY_EXIT_NEEDS_BOTH[holding.engine]):
+        if last < holding.stop or does_signal_exit(frame):
             self._exit(holding)
 
     def _manage_orb(self, holding: Holding, now: datetime) -> None:
-        price = float(self.get_last_price(holding.asset))
+        price = float(self.get_last_price(holding.symbol))
         holding.highest = max(holding.highest, price)
         holding.lowest = min(holding.lowest, price)
         targets = holding.targets
@@ -1028,27 +965,26 @@ class Strategy(StrategyBase):
             return
         if holding.stage == 0:
             return
-        minutes = 5 if holding.engine == "orb" else 10
+        minutes = ORB_OPENING_MINUTES[holding.strategy]
         timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
         try:
-            recent = self._frames([holding.signal], now - timedelta(days=5), timeframe, now).get(
-                holding.signal
+            recent = self._frames([holding.symbol], now - timedelta(days=5), timeframe, now).get(
+                holding.symbol
             )
         except Exception as error:
             self._record_event(
-                f"trail-{holding.asset}-{now.date()}",
+                f"trail.stalled.{holding.symbol}.{now.date()}",
                 "warning",
-                f"{holding.asset} trailing stop not updated: {type(error).__name__}",
-                holding.engine,
+                f"{holding.symbol} trailing stop not updated: {type(error).__name__}",
+                holding.strategy,
             )
             return
         if recent is None:
             return
-        frame = self._completed(recent, now, minutes)
-        frame = cast(DataFrame, cast(Any, frame).between_time("09:30", "15:59"))
-        if len(frame) < 15:
+        frame = regular_session(self._completed(recent, now, minutes))
+        if len(frame) < ORB_TRAIL_BARS_MIN:
             return
-        trail = 1.5 * latest_atr(frame)
+        trail = ORB_TRAIL_ATR_MULTIPLE * latest_atr(frame)
         candidate = (
             max(holding.entry, holding.highest - trail)
             if holding.direction == 1
@@ -1059,75 +995,67 @@ class Strategy(StrategyBase):
 
     def _enter(
         self,
-        engine: StrategyName,
-        signal: str,
-        asset: str,
+        strategy: StrategyName,
+        symbol: str,
         price: float,
         stop: float,
         now: datetime,
         *,
         direction: Direction = 1,
-        risk_fraction_max: float | None = None,
-        caps_risk_per_trade: bool = True,
     ) -> bool:
         if (
-            engine not in self._enabled
-            or self._is_claimed(signal)
+            strategy not in self._enabled
+            or self._is_claimed(symbol)
             or direction * (price - stop) <= 0
         ):
             return False
-        if direction == -1:
-            security = self.broker.api.get_asset(asset)
-            if not bool(security.shortable):
-                self._record_event(
-                    f"short-{asset}-{now.date()}",
-                    "warning",
-                    f"Short entry skipped for {asset}: security is not shortable",
-                    engine,
-                )
-                return False
+        if direction == -1 and not bool(self.broker.api.get_asset(symbol).shortable):
+            self._record_event(
+                f"short.refused.{symbol}.{now.date()}",
+                "warning",
+                f"Short entry skipped for {symbol}: security is not shortable",
+                strategy,
+            )
+            return False
         account = self.broker.api.get_account()
         equity = float(account.portfolio_value)
         positions = cast(list[Any], self.broker.api.get_all_positions())
         gross = sum(abs(float(position.market_value)) for position in positions) + sum(
             pending.notional for pending in self._pending.values()
         )
-        if len(positions) + len(self._pending) >= 10 or gross >= equity:
+        if len(positions) + len(self._pending) >= POSITIONS_MAX or gross >= equity:
             self._record_event(
-                f"capacity-{asset}-{now.date()}",
+                f"portfolio.capped.{symbol}.{now.date()}",
                 "warning",
-                f"{asset} entry skipped: portfolio position capacity reached",
-                engine,
+                f"{symbol} entry skipped: portfolio position capacity reached",
+                strategy,
             )
             return False
-        risk_fraction: float | None = float(self.parameters["risk_per_trade_max"])
         if equity <= 0:
             return False
-        if risk_fraction_max is not None:
-            risk_fraction = risk_fraction_max
-        if not caps_risk_per_trade:
-            risk_fraction = None
+        risk_fraction = STRATEGY_RISK_MAX.get(
+            strategy, float(self.parameters["risk_per_trade_max"])
+        )
         quantity = entry_quantity(
             equity,
             price,
             abs(price - stop),
-            min(0.10, float(self.parameters["position_fraction_max"])),
+            min(POSITION_FRACTION_CAP_MAX, float(self.parameters["position_fraction_max"])),
             risk_fraction,
             is_fractional_allowed(direction, bool(self.parameters["fractional_orders"])),
         )
         notional = float(quantity) * price
         if quantity <= 0 or gross + notional > equity:
             self._record_event(
-                f"sizing-{asset}-{now.date()}",
+                f"size.rejected.{symbol}.{now.date()}",
                 "warning",
-                f"{asset} entry skipped: no affordable position size",
-                engine,
+                f"{symbol} entry skipped: no affordable position size",
+                strategy,
             )
             return False
         holding = Holding(
-            engine,
-            signal,
-            asset,
+            strategy,
+            symbol,
             price,
             stop,
             abs(price - stop),
@@ -1136,47 +1064,46 @@ class Strategy(StrategyBase):
             direction=direction,
             lowest=price,
         )
-        self._pending[asset] = Pending(holding, now, notional)
-        self._claims[signal] = engine
-        self._claims[asset] = engine
+        self._pending[symbol] = Pending(holding, now, notional)
+        self._claims[symbol] = strategy
         order = self.create_order(
-            asset,
+            symbol,
             quantity,
             "buy" if direction == 1 else "sell",
             time_in_force="day",
             custom_params={
-                "client_order_id": self._order_id(engine, "e", signal, holding.risk / price)
+                "client_order_id": order_tag(strategy, "e", symbol, holding.risk / price)
             },
         )
         self.submit_order(order)
-        if engine in {"orb", "orb_momentum"}:
-            self._orb_traded.add((now.date(), asset))
-        if engine in DAILY_ENGINES:
-            self._daily_traded.add((now.date(), asset))
+        if strategy in ORB_STRATEGIES:
+            self._orb_traded.add((now.date(), symbol))
+        if strategy in DAILY_STRATEGIES:
+            self._daily_traded.add((now.date(), symbol))
         return True
 
     def _protect(self, holding: Holding, quantity: float | None = None) -> None:
-        if holding.asset in self._closing:
+        if holding.symbol in self._closing:
             return
-        amount = self._quantity(holding.asset) if quantity is None else quantity
-        price = float(self.get_last_price(holding.asset))
+        amount = self._quantity(holding.symbol) if quantity is None else quantity
+        price = float(self.get_last_price(holding.symbol))
         stop = round_stop(holding.direction, holding.stop)
         if amount <= 0 or stop <= 0:
             self._record_event(
-                f"unprotected-{holding.asset}-{holding.entered_at.date()}",
+                f"stop.unplaced.{holding.symbol}.{holding.entered_at.date()}",
                 "warning",
-                f"{holding.asset} has no resting stop yet: position not readable",
-                holding.engine,
+                f"{holding.symbol} has no resting stop yet: position not readable",
+                holding.strategy,
             )
             return
         if (holding.direction == 1 and stop >= price) or (
             holding.direction == -1 and stop <= price
         ):
             self._record_event(
-                f"through-stop-{holding.asset}-{holding.entered_at.date()}",
+                f"stop.passed.{holding.symbol}.{holding.entered_at.date()}",
                 "warning",
-                f"{holding.asset} is already through its stop at {price:.2f}: closing at market",
-                holding.engine,
+                f"{holding.symbol} is already through its stop at {price:.2f}: closing at market",
+                holding.strategy,
             )
             self._exit(holding)
             return
@@ -1184,33 +1111,31 @@ class Strategy(StrategyBase):
             amount,
             is_fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"])),
         )
-        if size <= 0:
+        if size <= 0 or self._stops.get(holding.symbol) == (stop, float(size)):
             return
-        if self._stops.get(holding.asset) == (stop, float(size)):
-            return
-        self._cancel(holding.asset, "s")
+        self._cancel(holding.symbol, "s")
         order = self.create_order(
-            holding.asset,
+            holding.symbol,
             size,
             "sell" if holding.direction == 1 else "buy",
             stop_price=stop,
             time_in_force="day",
             custom_params={
-                "client_order_id": self._order_id(
-                    holding.engine, "s", holding.signal, holding.risk / holding.entry
+                "client_order_id": order_tag(
+                    holding.strategy, "s", holding.symbol, holding.risk / holding.entry
                 )
             },
         )
         self.submit_order(order)
-        self._stops[holding.asset] = (stop, float(size))
+        self._stops[holding.symbol] = (stop, float(size))
 
     def _exit(self, holding: Holding, quantity: float | None = None) -> None:
-        if holding.asset in self._closing:
+        if holding.symbol in self._closing:
             return
-        current = self._quantity(holding.asset)
+        current = self._quantity(holding.symbol)
         amount = current if quantity is None else min(quantity, current)
         if amount <= 0:
-            self._release(holding.asset)
+            self._release(holding.symbol)
             return
         size = quantity_value(
             amount,
@@ -1218,67 +1143,44 @@ class Strategy(StrategyBase):
         )
         if size <= 0:
             return
-        self._cancel(holding.asset)
+        self._cancel(holding.symbol)
         order = self.create_order(
-            holding.asset,
+            holding.symbol,
             size,
             "sell" if holding.direction == 1 else "buy",
             time_in_force="day",
             custom_params={
-                "client_order_id": self._order_id(
-                    holding.engine, "x", holding.signal, holding.risk / holding.entry
+                "client_order_id": order_tag(
+                    holding.strategy, "x", holding.symbol, holding.risk / holding.entry
                 )
             },
         )
         self.submit_order(order)
-        self._closing.add(holding.asset)
+        self._closing.add(holding.symbol)
 
-    def _cancel(self, asset: str, kind: str | None = None) -> None:
+    def _cancel(self, symbol: str, kind: str | None = None) -> None:
         def matches(order: Any) -> bool:
-            if not order.is_active() or str(order.asset.symbol) != asset:
+            if not order.is_active() or str(order.asset.symbol) != symbol:
                 return False
-            identifier = str(getattr(order, "client_order_id", "") or "")
-            return kind is None or self._order_kind(identifier) == kind
+            tag = find_order_tag(str(getattr(order, "client_order_id", "") or ""))
+            return kind is None or (tag is not None and tag.kind == kind)
 
         orders = [order for order in cast(list[Any], self.get_orders()) if matches(order)]
         self.cancel_open_orders(orders)
         if orders:
             self.sleep(1)
-        self._stops.pop(asset, None)
+        self._stops.pop(symbol, None)
 
-    def _quantity(self, asset: str) -> float:
-        position = self.get_position(asset)
+    def _quantity(self, symbol: str) -> float:
+        position = self.get_position(symbol)
         return 0.0 if position is None else abs(float(position.quantity))
 
     def _is_claimed(self, symbol: str) -> bool:
         return symbol in self._claims or symbol in self._pending or symbol in self._holdings
 
-    def _release(self, asset: str) -> None:
-        pending = self._pending.pop(asset, None)
-        holding = self._holdings.pop(asset, None)
-        signal = holding.signal if holding is not None else asset
-        if pending is not None:
-            signal = pending.holding.signal
-        self._claims.pop(asset, None)
-        self._claims.pop(signal, None)
-        self._stops.pop(asset, None)
-        self._closing.discard(asset)
-
-    def _order_id(self, engine: StrategyName, kind: str, signal: str, risk: float) -> str:
-        scaled = round(risk * 1_000_000)
-        return f"mt-{STRATEGY_CODES[engine]}-{kind}-{signal}-{scaled}-{uuid4().hex[:8]}"
-
-    def _order_engine(self, value: str) -> StrategyName | None:
-        return find_order_strategy(value)
-
-    def _order_kind(self, value: str) -> str | None:
-        parts = value.split("-")
-        return parts[2] if len(parts) == 6 and parts[0] == "mt" else None
-
-    def _order_signal(self, value: str) -> str | None:
-        parts = value.split("-")
-        return parts[3] if len(parts) == 6 and parts[0] == "mt" else None
-
-    def _order_risk(self, value: str) -> float | None:
-        parts = value.split("-")
-        return int(parts[4]) / 1_000_000 if self._order_engine(value) is not None else None
+    def _release(self, symbol: str) -> None:
+        self._pending.pop(symbol, None)
+        self._holdings.pop(symbol, None)
+        self._claims.pop(symbol, None)
+        self._stops.pop(symbol, None)
+        self._closing.discard(symbol)

@@ -1,5 +1,5 @@
-from collections.abc import Collection
-from datetime import UTC, date
+from collections.abc import Collection, Sequence
+from datetime import UTC, date, datetime
 from decimal import ROUND_DOWN, Decimal
 from functools import lru_cache
 from importlib import import_module
@@ -11,7 +11,6 @@ import exchange_calendars
 import pandas.api.types as pandas_types
 from lumibot.constants import LUMIBOT_DEFAULT_TIMEZONE
 from pandas import DataFrame, DatetimeIndex, Series
-from pandas_ta_classic.momentum.macd import macd as ta_macd
 from pandas_ta_classic.momentum.rsi import rsi as ta_rsi
 from pandas_ta_classic.overlap.sma import sma as ta_sma
 from pandas_ta_classic.trend.adx import adx as ta_adx
@@ -26,8 +25,38 @@ type Direction = Literal[-1, 1]
 
 PERIOD = 14
 NOTIONAL_USD_MIN = 1.0
+MARKET_SESSIONS = 20
+MOMENTUM_SESSIONS = 200
+MOMENTUM_RSI_MIN = 50.0
+MOMENTUM_ADX_MIN = 25.0
+TFB_ADX_MIN = 20.0
+TFB_AVERAGE_LAG_SESSIONS = 4
+EXIT_RSI_MAX = 50.0
+EARNINGS_BLOCK_DAYS = 5
 XNYS = exchange_calendars.get_calendar("XNYS")
 TRADING_ZONE = ZoneInfo(LUMIBOT_DEFAULT_TIMEZONE)
+
+
+def session_bounds(day: date) -> tuple[datetime, datetime] | None:
+    return _bounds(day) if XNYS.is_session(day) else None
+
+
+def upcoming_session_bounds(day: date) -> tuple[datetime, datetime]:
+    return _bounds(XNYS.date_to_session(day, direction="next"))
+
+
+def session_starts(index: DatetimeIndex) -> DatetimeIndex:
+    return _session_stamps(index, cast(Any, XNYS).opens)
+
+
+def session_ends(index: DatetimeIndex) -> DatetimeIndex:
+    return _session_stamps(index, cast(Any, XNYS).closes)
+
+
+def regular_session(frame: DataFrame) -> DataFrame:
+    index = cast(DatetimeIndex, frame.index)
+    inside = (cast(Any, index) >= session_starts(index)) & (cast(Any, index) < session_ends(index))
+    return cast(DataFrame, frame[inside])
 
 
 def normalize_ohlcv(frame: DataFrame, required: Collection[str]) -> DataFrame:
@@ -52,34 +81,6 @@ def normalize_ohlcv(frame: DataFrame, required: Collection[str]) -> DataFrame:
     return values.sort_index()
 
 
-def _finite_value(values: Series, offset: int = -1) -> float | None:
-    if len(values) < abs(offset):
-        return None
-    value = float(cast(float, values.iloc[offset]))
-    return value if isfinite(value) else None
-
-
-def _indicator_series(
-    values: object,
-    name: str,
-    non_null_min: int,
-) -> Series | None:
-    if not isinstance(values, Series) or values.name != name or values.count() < non_null_min:
-        return None
-    return values
-
-
-def _indicator_column(
-    values: object,
-    name: str,
-    non_null_min: int,
-) -> Series | None:
-    if not isinstance(values, DataFrame) or name not in values.columns:
-        return None
-    column = cast(Series, values[name])
-    return column if column.count() >= non_null_min else None
-
-
 def latest_atr(frame: DataFrame, period: int = PERIOD) -> float:
     values = ta_atr(
         cast(Series, frame["high"]),
@@ -89,9 +90,7 @@ def latest_atr(frame: DataFrame, period: int = PERIOD) -> float:
         talib=False,
     )
     indicator = _indicator_series(values, f"ATRr_{period}", 1)
-    if indicator is None:
-        raise ValueError(f"ATR requires at least {period} price bars")
-    latest = _finite_value(indicator)
+    latest = None if indicator is None else _finite_value(indicator)
     if latest is None:
         raise ValueError(f"ATR requires at least {period} price bars")
     return latest
@@ -152,153 +151,102 @@ def average_dollar_volume(frame: DataFrame, sessions: int) -> float:
 
 def market_is_rising(frame: DataFrame) -> bool:
     close = cast(Series, frame["close"])
-    if close.count() < 20:
+    if close.count() < MARKET_SESSIONS:
         return False
-    average = ta_sma(close, length=20, talib=False)
+    average = ta_sma(close, length=MARKET_SESSIONS, talib=False)
     if not isinstance(average, Series):
         return False
-    latest = _finite_value(close)
-    latest_average = _finite_value(average)
-    return latest is not None and latest_average is not None and latest > latest_average
+    row = _finite_row([_finite_value(close), _finite_value(average)])
+    if row is None:
+        return False
+    latest, latest_average = row
+    return latest > latest_average
 
 
 def does_momentum_enter(frame: DataFrame) -> bool:
     close = cast(Series, frame["close"])
-    if close.count() < 200:
+    if close.count() < MOMENTUM_SESSIONS:
         return False
-    average_20 = ta_sma(close, length=20, talib=False)
+    average_20 = ta_sma(close, length=MARKET_SESSIONS, talib=False)
     average_50 = ta_sma(close, length=50, talib=False)
-    average_200 = ta_sma(close, length=200, talib=False)
-    strength = ta_rsi(close, length=PERIOD, talib=False)
-    directional = ta_adx(
-        cast(Series, frame["high"]),
-        cast(Series, frame["low"]),
-        close,
-        length=PERIOD,
-        talib=False,
-    )
-    strength_values = _indicator_series(strength, f"RSI_{PERIOD}", 1)
-    directional_values = _indicator_column(directional, f"ADX_{PERIOD}", 1)
+    average_200 = ta_sma(close, length=MOMENTUM_SESSIONS, talib=False)
+    strength = _indicator_series(ta_rsi(close, length=PERIOD, talib=False), f"RSI_{PERIOD}", 1)
+    directional = _indicator_column(_adx(frame), f"ADX_{PERIOD}", 1)
     if not all(isinstance(value, Series) for value in (average_20, average_50, average_200)):
         return False
-    if strength_values is None or directional_values is None:
+    if strength is None or directional is None:
         return False
-    average_20 = cast(Series, average_20)
-    average_50 = cast(Series, average_50)
-    average_200 = cast(Series, average_200)
-    crossed = ta_cross(close, average_20, above=True, asint=False)
+    crossed = ta_cross(close, cast(Series, average_20), above=True, asint=False)
     if not isinstance(crossed, Series):
         return False
-    latest = _finite_value(close)
-    previous = _finite_value(close, -2)
-    latest_20 = _finite_value(average_20)
-    latest_50 = _finite_value(average_50)
-    latest_200 = _finite_value(average_200)
-    latest_cross = _finite_value(crossed)
-    latest_strength = _finite_value(strength_values)
-    latest_directional = _finite_value(directional_values)
-    if None in {
-        latest,
-        previous,
-        latest_20,
-        latest_50,
-        latest_200,
-        latest_cross,
-        latest_strength,
-        latest_directional,
-    }:
+    row = _finite_row(
+        [
+            _finite_value(close),
+            _finite_value(close, -2),
+            _finite_value(cast(Series, average_50)),
+            _finite_value(cast(Series, average_200)),
+            _finite_value(crossed),
+            _finite_value(strength),
+            _finite_value(directional),
+        ]
+    )
+    if row is None:
         return False
-    assert latest is not None
-    assert previous is not None
-    assert latest_20 is not None
-    assert latest_50 is not None
-    assert latest_200 is not None
-    assert latest_cross is not None
-    assert latest_strength is not None
-    assert latest_directional is not None
-    trend = latest > latest_50 > latest_200
+    latest, previous, latest_50, latest_200, crossing, strength_now, directional_now = row
     return (
-        bool(latest_cross)
+        bool(crossing)
         and latest > previous
-        and trend
-        and latest_strength >= 50.0
-        and latest_directional >= 25.0
+        and latest > latest_50 > latest_200
+        and strength_now >= MOMENTUM_RSI_MIN
+        and directional_now >= MOMENTUM_ADX_MIN
     )
 
 
 def does_tfb_enter(frame: DataFrame) -> bool:
     close = cast(Series, frame["close"])
     average_50 = ta_sma(close, length=50, talib=False)
-    directional = ta_adx(
-        cast(Series, frame["high"]),
-        cast(Series, frame["low"]),
-        close,
-        length=PERIOD,
-        talib=False,
+    directional = _indicator_column(_adx(frame), f"ADX_{PERIOD}", 1)
+    if not isinstance(average_50, Series) or directional is None:
+        return False
+    if average_50.tail(TFB_AVERAGE_LAG_SESSIONS).count() < TFB_AVERAGE_LAG_SESSIONS:
+        return False
+    row = _finite_row(
+        [
+            _finite_value(close),
+            _finite_value(average_50),
+            _finite_value(average_50, -TFB_AVERAGE_LAG_SESSIONS),
+            _finite_value(directional),
+            _finite_value(cast(Series, frame["high"]), -2),
+        ]
     )
-    directional_values = _indicator_column(directional, f"ADX_{PERIOD}", 1)
-    if not isinstance(average_50, Series) or directional_values is None:
+    if row is None:
         return False
-    recent_average = cast(Series, average_50.iloc[-4:])
-    if len(recent_average) < 4 or recent_average.count() < 4:
-        return False
-    latest = _finite_value(close)
-    latest_average = _finite_value(average_50)
-    lagged_average = _finite_value(average_50, -4)
-    latest_directional = _finite_value(directional_values)
-    previous_high = _finite_value(cast(Series, frame["high"]), -2)
-    if None in {latest, latest_average, lagged_average, latest_directional, previous_high}:
-        return False
-    assert latest is not None
-    assert latest_average is not None
-    assert lagged_average is not None
-    assert latest_directional is not None
-    assert previous_high is not None
+    latest, latest_average, lagged_average, directional_now, previous_high = row
     return (
         latest > latest_average
         and latest_average > lagged_average
-        and latest_directional >= 20.0
+        and directional_now >= TFB_ADX_MIN
         and latest > previous_high
     )
 
 
-def does_signal_exit(frame: DataFrame, needs_both: bool = True) -> bool:
+def does_signal_exit(frame: DataFrame) -> bool:
     close = cast(Series, frame["close"])
-    if close.count() < 20:
+    if close.count() < MARKET_SESSIONS:
         return False
-    average = ta_sma(close, length=20, talib=False)
-    strength = ta_rsi(close, length=PERIOD, talib=False)
-    strength_values = _indicator_series(strength, f"RSI_{PERIOD}", 1)
-    if not isinstance(average, Series) or strength_values is None:
+    average = ta_sma(close, length=MARKET_SESSIONS, talib=False)
+    strength = _indicator_series(ta_rsi(close, length=PERIOD, talib=False), f"RSI_{PERIOD}", 1)
+    if not isinstance(average, Series) or strength is None:
         return False
-    latest = _finite_value(close)
-    latest_average = _finite_value(average)
-    latest_strength = _finite_value(strength_values)
-    if latest is None or latest_average is None or latest_strength is None:
+    row = _finite_row([_finite_value(close), _finite_value(average), _finite_value(strength)])
+    if row is None:
         return False
-    below_average = latest < latest_average
-    weak_strength = latest_strength < 50.0
-    return (below_average and weak_strength) if needs_both else (below_average or weak_strength)
-
-
-def does_macd_confirm(close: Series, direction: Direction) -> bool:
-    values = ta_macd(close, fast=12, slow=26, signal=9, talib=False)
-    line = _indicator_column(values, "MACD_12_26_9", 2)
-    if line is None:
-        return False
-    latest = _finite_value(line)
-    previous = _finite_value(line, -2)
-    return latest is not None and previous is not None and (latest > previous) == (direction == 1)
+    latest, latest_average, strength_now = row
+    return latest < latest_average or strength_now < EXIT_RSI_MAX
 
 
 def next_stop(direction: Direction, active: float, candidate: float) -> float:
     return max(active, candidate) if direction == 1 else min(active, candidate)
-
-
-@lru_cache(maxsize=2048)
-def is_security_eligible(symbol: str) -> bool:
-    market_cap = yfinance.Ticker(symbol).fast_info.market_cap
-    return market_cap is not None and float(market_cap) >= 500_000_000
 
 
 @lru_cache(maxsize=512)
@@ -315,7 +263,7 @@ def next_earnings(symbol: str, day: date) -> date | None:
 
 def is_earnings_blocked(symbol: str, day: date) -> bool:
     upcoming = next_earnings(symbol, day)
-    return upcoming is not None and 0 <= (upcoming - day).days <= 5
+    return upcoming is not None and 0 <= (upcoming - day).days <= EARNINGS_BLOCK_DAYS
 
 
 def is_earnings_exit_due(symbol: str, day: date) -> bool:
@@ -324,3 +272,49 @@ def is_earnings_exit_due(symbol: str, day: date) -> bool:
         return False
     session = XNYS.date_to_session(upcoming, direction="next")
     return day == XNYS.previous_session(session).date()
+
+
+def _bounds(session: Any) -> tuple[datetime, datetime]:
+    opens = cast(Any, XNYS.session_first_minute(session)).astimezone(TRADING_ZONE)
+    closes = cast(Any, XNYS.session_close(session)).astimezone(TRADING_ZONE)
+    return cast(datetime, opens.to_pydatetime()), cast(datetime, closes.to_pydatetime())
+
+
+def _session_stamps(index: DatetimeIndex, table: Any) -> DatetimeIndex:
+    sessions = cast(Any, index).tz_convert(TRADING_ZONE).normalize().tz_localize(None)
+    stamps = DatetimeIndex(table.reindex(sessions).to_numpy(), tz=UTC)
+    return cast(DatetimeIndex, cast(Any, stamps).tz_convert(TRADING_ZONE))
+
+
+def _adx(frame: DataFrame) -> object:
+    return ta_adx(
+        cast(Series, frame["high"]),
+        cast(Series, frame["low"]),
+        cast(Series, frame["close"]),
+        length=PERIOD,
+        talib=False,
+    )
+
+
+def _finite_value(values: Series, offset: int = -1) -> float | None:
+    if len(values) < abs(offset):
+        return None
+    value = float(cast(float, values.iloc[offset]))
+    return value if isfinite(value) else None
+
+
+def _finite_row(values: Sequence[float | None]) -> list[float] | None:
+    return None if any(value is None for value in values) else cast(list[float], list(values))
+
+
+def _indicator_series(values: object, name: str, non_null_min: int) -> Series | None:
+    if not isinstance(values, Series) or values.name != name or values.count() < non_null_min:
+        return None
+    return values
+
+
+def _indicator_column(values: object, name: str, non_null_min: int) -> Series | None:
+    if not isinstance(values, DataFrame) or name not in values.columns:
+        return None
+    column = cast(Series, values[name])
+    return column if column.count() >= non_null_min else None

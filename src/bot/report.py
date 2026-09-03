@@ -10,7 +10,7 @@ def run(
     start: datetime,
     end: datetime,
 ) -> Path:
-    from bot.backtest import run as run_backtest
+    from .backtest import run as run_backtest
 
     output_dir = Path("runs") / f"{strategy_name}-{start:%Y%m%d}-{end:%Y%m%d}"
     run_backtest(strategy_name, start, end, symbols=symbols, output_dir=output_dir)

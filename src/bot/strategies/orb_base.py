@@ -5,41 +5,38 @@ from typing import Any, cast
 
 from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
-from .shared import (
-    TRADING_ZONE,
-    Direction,
-)
+from bot.types import StrategyName
 
-
-ORB_TURNOVER_USD_MIN = 20_000_000.0
-
-ORB_PRICE_USD_MIN = 5.0
-
-ORB_RANGE_FRACTION_MIN = 0.004
-ORB_STOP_FRACTION_MIN = 0.01
-ORB_STOP_FRACTION_MAX = 0.05
-
-ORB_RISK_MAX = 0.0015
-ORB_POSITIONS_MAX = 3
-
-
-@dataclass(frozen=True, slots=True)
-class OrbSetup:
-    direction: Direction
-    high: float
-    low: float
-    close: float
-    stop: float
-
-    @property
-    def risk(self) -> float:
-        return abs(self.close - self.stop)
+from .shared import TRADING_ZONE, Direction, regular_session
 
 
 @dataclass(frozen=True, slots=True)
 class SessionVolume:
     ratio: float
     turnover: float
+
+
+ORB_TURNOVER_USD_MIN = 20_000_000.0
+ORB_PRICE_USD_MIN = 5.0
+ORB_RANGE_FRACTION_MIN = 0.004
+ORB_STOP_FRACTION_MIN = 0.01
+ORB_STOP_FRACTION_MAX = 0.05
+ORB_RISK_MAX = 0.0015
+ORB_POSITIONS_MAX = 3
+ORB_HISTORY_SESSIONS = 20
+ORB_SIGNAL_CANDLES_MAX = 2
+ORB_TRAIL_ATR_MULTIPLE = 1.5
+ORB_TRAIL_BARS_MIN = 15
+ORB_SCAN_MINUTES = 60
+ORB_CLOSE_LEAD_MINUTES = 6
+ORB_STRATEGIES: frozenset[StrategyName] = frozenset({"orb", "orb_momentum"})
+ORB_OPENING_MINUTES: dict[StrategyName, int] = {"orb": 5, "orb_momentum": 10}
+ORB_VOLUME_MULTIPLES: dict[StrategyName, float] = {"orb": 1.3, "orb_momentum": 1.5}
+ORB_TARGET_MULTIPLES: dict[StrategyName, tuple[float, float, float]] = {
+    "orb": (1.5, 2.5, 4.0),
+    "orb_momentum": (2.0, 3.0, 5.0),
+}
+ORB_ENTRY_EXTENSION_MAX: dict[StrategyName, float | None] = {"orb": None, "orb_momentum": 0.25}
 
 
 def range_stop(direction: Direction, high: float, low: float) -> float:
@@ -52,17 +49,14 @@ def range_break(high: float, low: float, close: float) -> Direction | None:
     return 1 if close > high else -1 if close < low else None
 
 
-def orb_setup(high: float, low: float, close: float) -> OrbSetup | None:
+def is_orb_setup_ready(high: float, low: float, close: float) -> bool:
     direction = range_break(high, low, close)
     if direction is None or close < ORB_PRICE_USD_MIN:
-        return None
+        return False
     if high - low < ORB_RANGE_FRACTION_MIN * close:
-        return None
-    stop = range_stop(direction, high, low)
-    fraction = abs(close - stop) / close
-    if not ORB_STOP_FRACTION_MIN <= fraction <= ORB_STOP_FRACTION_MAX:
-        return None
-    return OrbSetup(direction, high, low, close, stop)
+        return False
+    fraction = abs(close - range_stop(direction, high, low)) / close
+    return ORB_STOP_FRACTION_MIN <= fraction <= ORB_STOP_FRACTION_MAX
 
 
 def round_stop(direction: Direction, stop: float) -> float:
@@ -71,14 +65,11 @@ def round_stop(direction: Direction, stop: float) -> float:
 
 
 def session_volume(frame: DataFrame, day: date, clock: time) -> SessionVolume | None:
-    regular = cast(DataFrame, cast(Any, frame).between_time("09:30", "15:59"))
+    regular = regular_session(frame)
     index = cast(DatetimeIndex, regular.index)
     pandas_index = cast(Any, index)
     session_dates = cast(DatetimeIndex, pandas_index.normalize())
     current_session = Timestamp(day, tz=TRADING_ZONE)
-    is_relevant = (cast(Any, session_dates) == current_session) | (
-        cast(Any, session_dates) < current_session
-    )
     volume = cast(Series, regular["volume"])
     aggregates = DataFrame(
         {
@@ -92,15 +83,19 @@ def session_volume(frame: DataFrame, day: date, clock: time) -> SessionVolume | 
         index=index,
     )
     columns = ["daily_turnover", "cumulative_volume"]
+    relevant = cast(Any, session_dates) <= current_session
     grouped = cast(
         DataFrame,
-        cast(Any, aggregates).loc[is_relevant].groupby("session_date", sort=True)[columns].sum(),
+        cast(Any, aggregates).loc[relevant].groupby("session_date", sort=True)[columns].sum(),
     )
     if current_session not in grouped.index:
         return None
     grouped_index = cast(Any, cast(DatetimeIndex, grouped.index))
-    history = cast(DataFrame, cast(Any, grouped).loc[grouped_index < current_session].tail(20))
-    if len(history) != 20:
+    history = cast(
+        DataFrame,
+        cast(Any, grouped).loc[grouped_index < current_session].tail(ORB_HISTORY_SESSIONS),
+    )
+    if len(history) != ORB_HISTORY_SESSIONS:
         return None
     clock_average = float(cast(Any, history["cumulative_volume"]).mean())
     turnover = float(cast(Any, history["daily_turnover"]).mean())
