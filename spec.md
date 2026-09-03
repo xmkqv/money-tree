@@ -1,7 +1,6 @@
 ---
 refs:
     - [Lumibot](https://github.com/Lumiwealth/lumibot#quick-start)
-    - [environment](./mise.{MISE_ENV}.toml)
 ---
 
 # code
@@ -42,52 +41,9 @@ src/
         strategies.py
 ```
 
-# env
-
-```yaml:bot
-env:
-  - STRATEGIES
-  - ALPACA_API_KEY
-  - ALPACA_API_SECRET
-  - ALPACA_IS_PAPER
-  - ALPACA_DATA_FEED
-  - FRACTIONAL_ORDERS
-  - RISK_PER_DAY_MAX
-  - RISK_PER_TRADE_MAX
-  - POSITION_FRACTION_MAX
-  - STATE_EXPORT_URL
-  - STATE_EXPORT_SECRET
-```
-
-```yaml:ui
-env:
-  - PORT
-  - APP_BASE_URL
-  - ALLOWED_RAILWAY_EMAILS
-  - RAILWAY_OAUTH_CLIENT_ID
-  - RAILWAY_OAUTH_CLIENT_SECRET
-  - RAILWAY_OAUTH_REDIRECT_URI
-  - SESSION_SECRET
-  - SESSION_TTL_SECONDS
-  - ALPACA_API_KEY
-  - ALPACA_API_SECRET
-  - ALPACA_IS_PAPER
-  - FRACTIONAL_ORDERS
-  - POSITION_FRACTION_MAX
-  - RISK_PER_DAY_MAX
-  - RISK_PER_TRADE_MAX
-  - STATE_EXPORT_SECRET
-```
-
 # deploy
 
 [bot → web](./.railway/railway.ts)
-
-```yaml:deploy
-env:
-  - MODE
-  - RAILWAY_TOKEN
-```
 
 ```sh
 mt trade --strategies "$STRATEGIES"
