@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from bot.types import StrategyName
+from .types import StrategyName
 
 
 def run(

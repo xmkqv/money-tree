@@ -1,9 +1,9 @@
 import signal
 
-from bot.broker import build_alpaca_broker
-from bot.config import settings
-from bot.export import StateExporter
-from bot.types import StrategyName, published_roster
+from .broker import build_alpaca_broker
+from .config import settings
+from .export import StateExporter
+from .types import StrategyName, published_roster
 
 
 def run(strategy_names: list[StrategyName]) -> None:

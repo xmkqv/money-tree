@@ -1,4 +1,4 @@
-from bot.types import STRATEGY_LABELS, StrategyName
+from .types import STRATEGY_LABELS, StrategyName
 
 
 STRATEGY_CODES: dict[StrategyName, str] = {

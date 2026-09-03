@@ -16,106 +16,69 @@ from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.requests import GetOrdersRequest
 from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
-from bot.attribution import STRATEGY_CODES, find_order_strategy
-from bot.config import settings
-from bot.strategies.base import StrategyBase
-from bot.strategies.orb_base import (
+from .attribution import STRATEGY_CODES, find_order_strategy
+from .config import settings
+from .strategies.base import StrategyBase
+from .strategies.orb_base import (
     ORB_POSITIONS_MAX,
-    ORB_PRICE_MIN,
-    ORB_RISK_CEILING,
-    ORB_TURNOVER_MIN,
+    ORB_PRICE_USD_MIN,
+    ORB_RISK_MAX,
+    ORB_TURNOVER_USD_MIN,
+    is_relative_volume_ready,
     orb_setup,
-    relative_volume_ready,
     round_stop,
 )
-from bot.strategies.shared import (
+from .strategies.shared import (
     TRADING_ZONE,
     Direction,
     does_macd_confirm,
-    earnings_blocked,
-    earnings_exit_due,
+    does_momentum_enter,
+    does_signal_exit,
+    does_tfb_enter,
     entry_quantity,
-    fractional_allowed,
+    is_earnings_blocked,
+    is_earnings_exit_due,
+    is_fractional_allowed,
     latest_atr,
     latest_dollar_volume,
     market_is_rising,
-    momentum_entry,
     next_stop,
     normalize_ohlcv,
     quantity_value,
-    signal_exit,
-    tfb_entry,
 )
-from bot.strategies.tfb_50 import TFB_POSITIONS_MAX, TFB_RISK_CEILING, tfb_market_ready
-from bot.types import STRATEGY_LABELS, EventLevel, StrategyName, active_strategies
+from .strategies.tfb_50 import TFB_POSITIONS_MAX, TFB_RISK_MAX, is_tfb_market_ready
+from .types import STRATEGY_LABELS, EventLevel, StrategyName, active_strategies
+
+
+yfinance = cast(Any, import_module("yfinance"))
 
 
 FIVE_MINUTES = TimeFrame(5, cast(TimeFrameUnit, TimeFrameUnit.Minute))
 TEN_MINUTES = TimeFrame(10, cast(TimeFrameUnit, TimeFrameUnit.Minute))
-# IEX carries a small slice of the tape, so bars built from it understate both
-# volume and the width of an opening range. SIP is the consolidated tape.
-DATA_FEEDS: dict[str, DataFeed] = {"sip": DataFeed.SIP, "iex": DataFeed.IEX}
-# Daily bars are completed history, not the session in progress, so SIP serves
-# them without the real-time consolidated subscription the breakout scan needs.
-# They are read on SIP whatever ALPACA_DATA_FEED says, because the screens and
-# the ranking measure traded value off these bars: IEX carries a small slice of
-# the tape, so a $20M turnover floor applied to IEX bars is a far higher bar
-# than the same figure applied to the consolidated tape. The configured feed
-# still governs every intraday read.
+DATA_FEEDS: dict[str, DataFeed] = {
+    "sip": DataFeed.SIP,
+    "delayed_sip": DataFeed.DELAYED_SIP,
+    "iex": DataFeed.IEX,
+}
 DAILY_FEED = DataFeed.SIP
-# One request per fifty symbols turns a universe-wide scan into dozens of round
-# trips, and the breakout window is minutes long. Alpaca accepts far more.
 SYMBOLS_PER_REQUEST = 200
-# The screen reads market cap and turnover, so its volume floor is expressed in
-# dollars for the same reason the breakout rules are: a share count means
-# different things at $3 and at $300.
-UNIVERSE_CAP_MIN = 500_000_000.0
-UNIVERSE_TURNOVER_MIN = ORB_TURNOVER_MIN
+UNIVERSE_CAP_USD_MIN = 500_000_000.0
+UNIVERSE_TURNOVER_USD_MIN = ORB_TURNOVER_USD_MIN
 UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
 PREPARATION_ATTEMPTS_MAX = 2
-STOP_COVERAGE_TOLERANCE = 1e-6
-# The register closes intraday positions *before* 15:55 ET. The exit is a market
-# order, so it is submitted a minute early to leave room for the fill.
+STOP_COVERAGE_DRIFT_MAX = 1e-6
 ORB_CLOSE_DEADLINE = time(15, 54)
-# The engines that read daily candles, as opposed to the breakout pair.
 DAILY_ENGINES: frozenset[StrategyName] = frozenset({"sma", "tfb_50"})
-# Whether a daily engine's signal exit waits for both of its conditions or acts
-# on either. Both daily engines exit on either: TFB-50's register calls the
-# close under its average and weak RSI an emergency exit, and an emergency exit
-# that waited for the second condition would hold through the first.
 DAILY_EXIT_NEEDS_BOTH: dict[StrategyName, bool] = {"sma": False, "tfb_50": False}
-# Whether a daily engine closes a position on the session before the company
-# reports. Momentum (SMA) does; TFB-50's register no longer carries the rule, so
-# it holds through earnings and leaves on its own threshold and exit instead.
 DAILY_EXITS_BEFORE_EARNINGS: dict[StrategyName, bool] = {"sma": True, "tfb_50": False}
-# Where each breakout engine's three scale-out targets sit, counted in multiples
-# of the risk the fill actually took. ORB-10m's register writes them as fractions
-# of the opening range measured from the breakout level — half a range, one range,
-# two ranges beyond a stop three quarters of the way back into it — which is the
-# same 2R, 4R and 8R, but only while the fill lands *on* the level. A breakout
-# candle that closes well past it used to fill above targets already counted as
-# reached, and the trade scaled itself out of existence within a minute of opening
-# without the price ever going near the stop. Counting from the fill puts every
-# target ahead of the entry wherever it lands.
 ORB_TARGET_MULTIPLES: dict[StrategyName, tuple[float, float, float]] = {
     "orb": (1.5, 2.5, 4.0),
     "orb_momentum": (2.0, 3.0, 5.0),
 }
-# How far beyond the breakout level, as a fraction of the opening range, the price
-# an order would pay may sit before the breakout is left alone. The stop is a
-# fixed distance *inside* the range, so every tick past the level risks more for
-# the same setup while leaving less of the move to collect. None is no ceiling.
 ORB_ENTRY_EXTENSION_MAX: dict[StrategyName, float | None] = {
     "orb": None,
     "orb_momentum": 0.25,
 }
-# How far back a breakout close may sit and still be worth taking, counted in
-# candles ending at the newest completed one. 1 is the candle that has just
-# closed; 2 allows the scan one pass to recover a candle whose bars had not been
-# published yet. Beyond that the level is gone and the entry would be a chase.
-# Stated per engine because the unit is that engine's own candle: two candles is
-# ten minutes of a move for ORB-5m and twenty for ORB-10m, so a bound that suits
-# one need not suit the other.
 ORB_SIGNAL_CANDLES_MAX: dict[StrategyName, int] = {"orb": 2, "orb_momentum": 2}
 
 
@@ -145,15 +108,6 @@ class Pending:
 
 @dataclass(frozen=True, slots=True)
 class DailyCandidate:
-    """A daily setup that has passed, priced off the last completed session.
-
-    The daily engines read completed candles only, so a name that qualifies at
-    the open still qualifies at the close and its levels do not move. Scanning
-    is therefore done once and the list re-offered every iteration: what
-    changes through the day is whether there is a free slot and the money to
-    take it, not whether the setup holds.
-    """
-
     symbol: str
     price: float
     stop: float
@@ -166,9 +120,6 @@ class OrbCandidate:
     high: float
     low: float
     close: float
-    # When the candle that carried the signal closed. The confirmation gates read
-    # the market as it stood then, which on a signal recovered a candle late is
-    # not where it stands now.
     at: Timestamp | None = None
 
 
@@ -191,10 +142,6 @@ class Strategy(StrategyBase):
         self._closing: set[str] = set()
         self._events: set[str] = set()
         self._orb_traded: set[tuple[date, str]] = set()
-        # One daily entry per symbol per session. The daily engines read
-        # completed candles, so the candle that fires an exit can still satisfy
-        # an entry; without this a name that stopped out in the morning would be
-        # bought straight back on the next iteration, and churn all day.
         self._daily_traded: set[tuple[date, str]] = set()
         self._orb_scanned: set[tuple[date, StrategyName, str]] = set()
         self._day: date | None = None
@@ -227,7 +174,7 @@ class Strategy(StrategyBase):
         self._restore()
         self._begin_day(now.date())
         self._reconcile(now)
-        if self._daily_loss_reached(now.date()):
+        if self._is_daily_loss_reached(now.date()):
             return
         self._prepare(now.date())
         self._manage(now)
@@ -292,7 +239,7 @@ class Strategy(StrategyBase):
     def _entry_quantity_filled(self, asset: str, reported: float | int) -> float:
         return max(self._quantity(asset), abs(float(reported)))
 
-    def _event(
+    def _record_event(
         self,
         key: str,
         level: EventLevel,
@@ -317,7 +264,7 @@ class Strategy(StrategyBase):
         self._events.clear()
         self._intraday_bucket = None
 
-    def _daily_loss_reached(self, day: date) -> bool:
+    def _is_daily_loss_reached(self, day: date) -> bool:
         if self._locked_on == day:
             return True
         equity = float(self.broker.api.get_account().portfolio_value)
@@ -328,14 +275,14 @@ class Strategy(StrategyBase):
         for holding in list(self._holdings.values()):
             self._exit(holding)
         self._locked_on = day
-        self._event("daily-loss", "warning", "Daily loss limit reached")
+        self._record_event("daily-loss", "warning", "Daily loss limit reached")
         return True
 
     def _restore(self) -> None:
         if self._restored:
             return
         for engine in sorted(self._exit_only):
-            self._event(
+            self._record_event(
                 f"paused-{engine}",
                 "warning",
                 f"{engine} is paused: existing positions only, no new entries",
@@ -344,7 +291,7 @@ class Strategy(StrategyBase):
         request = GetOrdersRequest(status=QueryOrderStatus.ALL, limit=500, direction=Sort.DESC)
         orders = cast(list[Any], self.broker.api.get_orders(filter=request))
         positions = cast(list[Any], self.broker.api.get_all_positions())
-        self._event("market-data", "info", "Intraday strategies use Alpaca IEX market data")
+        self._record_event("market-data", "info", "Intraday strategies use Alpaca IEX market data")
         for position in positions:
             asset = str(position.symbol)
             match = next(
@@ -415,7 +362,7 @@ class Strategy(StrategyBase):
                 self._daily_traded.add((entered_at.astimezone(TRADING_ZONE).date(), asset))
             if engine not in self._enabled:
                 self._exit_only.add(engine)
-                self._event(
+                self._record_event(
                     f"exit-only-{engine}",
                     "warning",
                     f"{engine} is managing existing positions only",
@@ -455,7 +402,7 @@ class Strategy(StrategyBase):
             if holding.stage == 0:
                 holding.original_quantity = max(holding.original_quantity, quantity)
             resting = self._stops.get(asset)
-            if resting is None or resting[1] < quantity - STOP_COVERAGE_TOLERANCE:
+            if resting is None or resting[1] < quantity - STOP_COVERAGE_DRIFT_MAX:
                 self._protect(holding, quantity)
 
     def _prepare(self, day: date) -> None:
@@ -482,21 +429,13 @@ class Strategy(StrategyBase):
         except Exception as error:
             self._daily_frames = {}
             self._eligible_symbols = []
-            self._event("universe", "error", f"Stock universe unavailable: {error}")
+            self._record_event("universe", "error", f"Stock universe unavailable: {error}")
             return
         self._daily_frames = daily_frames
         self._eligible_symbols = eligible
         self._prepared_on = day
 
     def _daily_bars(self, symbols: list[str], start: datetime, day: date) -> dict[str, DataFrame]:
-        """Daily bars on SIP, falling back to the configured feed if SIP is barred.
-
-        Every daily screen, ranking and setup is read off these, so losing them
-        stops both daily engines and the breakout ranking for the day. An
-        account whose subscription does not serve SIP is better off scanning on
-        understated IEX volume — with the substitution on the record — than
-        not scanning at all.
-        """
         try:
             return self._frames(
                 symbols,
@@ -507,7 +446,7 @@ class Strategy(StrategyBase):
         except Exception as error:
             if DATA_FEEDS[settings.alpaca_data_feed] == DAILY_FEED:
                 raise
-            self._event(
+            self._record_event(
                 f"daily-feed-{day}",
                 "warning",
                 f"Daily bars fell back to the {settings.alpaca_data_feed} feed: SIP "
@@ -518,8 +457,7 @@ class Strategy(StrategyBase):
 
     def _spx(self, day: date) -> DataFrame | None:
         try:
-            finance = cast(Any, import_module("yfinance"))
-            frame = finance.Ticker("^GSPC").history(
+            frame = yfinance.Ticker("^GSPC").history(
                 start=day - timedelta(days=390),
                 end=day + timedelta(days=1),
                 auto_adjust=True,
@@ -531,7 +469,9 @@ class Strategy(StrategyBase):
             )
             return normalize_ohlcv(frame, {"close"})
         except Exception as error:
-            self._event("spx", "error", f"SPX market state unavailable: {type(error).__name__}")
+            self._record_event(
+                "spx", "error", f"SPX market state unavailable: {type(error).__name__}"
+            )
             return None
 
     def _universe(self) -> list[str]:
@@ -553,19 +493,18 @@ class Strategy(StrategyBase):
                 )
 
     def _discover_eligible_symbols(self) -> list[str]:
-        finance = cast(Any, import_module("yfinance"))
-        Query = finance.EquityQuery
+        Query = yfinance.EquityQuery
         query = Query(
             "and",
             [
                 Query("eq", ["region", "us"]),
-                Query("gte", ["intradaymarketcap", UNIVERSE_CAP_MIN]),
+                Query("gte", ["intradaymarketcap", UNIVERSE_CAP_USD_MIN]),
             ],
         )
         quotes: list[dict[str, Any]] = []
         offset = 0
         while True:
-            page = finance.screen(
+            page = yfinance.screen(
                 query,
                 offset=offset,
                 size=250,
@@ -597,9 +536,9 @@ class Strategy(StrategyBase):
                 symbol
                 for symbol, cap, volume, price in rows
                 if symbol in assets
-                and cap >= UNIVERSE_CAP_MIN
-                and price >= ORB_PRICE_MIN
-                and volume * price >= UNIVERSE_TURNOVER_MIN
+                and cap >= UNIVERSE_CAP_USD_MIN
+                and price >= ORB_PRICE_USD_MIN
+                and volume * price >= UNIVERSE_TURNOVER_USD_MIN
             }
         )
 
@@ -670,20 +609,12 @@ class Strategy(StrategyBase):
         return cast(DataFrame, frame[cast(Any, index).date < now.date()])
 
     def _run_daily(self, now: datetime) -> None:
-        """Offer the day's daily-engine candidates, every iteration until close.
-
-        Nothing here reads the session in progress: the market state and both
-        setups are cut from completed candles, so they are scanned once and the
-        result re-offered. A name that could not be funded at the open — no
-        slot, no affordable size, another engine holding it — is offered again
-        as the day frees one up, rather than being lost with a single pass.
-        """
         market_frame = self._daily_frames.get("^GSPC")
         if market_frame is None:
             return
         market = self._completed(market_frame, now)
         if not market_is_rising(market):
-            self._event("market-state", "warning", "SPX is not above its 20-day average")
+            self._record_event("market-state", "warning", "SPX is not above its 20-day average")
             self._daily_candidates = {}
             self._daily_scanned_on = now.date()
             return
@@ -701,13 +632,6 @@ class Strategy(StrategyBase):
                 self._run_tfb(now)
 
     def _ranked(self, now: datetime) -> list[tuple[str, DataFrame]]:
-        """Eligible symbols and their completed frames, busiest session first.
-
-        More symbols pass a daily setup on a good morning than there is room to
-        hold, and the position cap decides the rest. Walking them in symbol
-        order hands the slots to whatever sorts first; walking them by the value
-        traded in the last completed session spends them where the money is.
-        """
         ranked: list[tuple[float, str, DataFrame]] = []
         for symbol in self._eligible_symbols:
             daily_frame = self._daily_frames.get(symbol)
@@ -721,12 +645,12 @@ class Strategy(StrategyBase):
     def _scan_sma(self, now: datetime) -> list[DailyCandidate]:
         candidates: list[DailyCandidate] = []
         for symbol, frame in self._ranked(now):
-            if not momentum_entry(frame):
+            if not does_momentum_enter(frame):
                 continue
             try:
-                blocked = earnings_blocked(symbol, now.date())
+                blocked = is_earnings_blocked(symbol, now.date())
             except Exception as error:
-                self._event(
+                self._record_event(
                     f"earnings-{symbol}",
                     "error",
                     f"Earnings calendar unavailable for {symbol}: {type(error).__name__}",
@@ -741,7 +665,7 @@ class Strategy(StrategyBase):
 
     def _run_sma(self, now: datetime) -> None:
         for candidate in self._daily_candidates.get("sma", []):
-            if self._daily_entered(now.date(), candidate.symbol):
+            if self._is_daily_entered(now.date(), candidate.symbol):
                 continue
             self._enter(
                 "sma",
@@ -754,21 +678,14 @@ class Strategy(StrategyBase):
             )
 
     def _scan_tfb(self, now: datetime) -> list[DailyCandidate]:
-        """This engine screens the universe again on its own price and turnover.
-
-        The shared discovery admits a name on a three-month average share count
-        against the current price. TFB-50's register asks for a 20-session
-        average of the value actually traded, which is read here from the same
-        daily bars the setup is read from.
-        """
         candidates: list[DailyCandidate] = []
         for symbol, frame in self._ranked(now):
-            if not tfb_market_ready(frame) or not tfb_entry(frame):
+            if not is_tfb_market_ready(frame) or not does_tfb_enter(frame):
                 continue
             last = float(cast(Any, frame["close"]).iloc[-1])
             candidates.append(DailyCandidate(symbol, last, last - 2.0 * latest_atr(frame)))
         if not candidates:
-            self._event(
+            self._record_event(
                 f"tfb-empty-{now.date()}",
                 "info",
                 "TFB-50 found no candidate: no eligible name passed its screen and setup",
@@ -779,14 +696,14 @@ class Strategy(StrategyBase):
     def _run_tfb(self, now: datetime) -> None:
         for candidate in self._daily_candidates.get("tfb_50", []):
             if self._engine_position_count("tfb_50") >= TFB_POSITIONS_MAX:
-                self._event(
+                self._record_event(
                     f"tfb-capacity-{now.date()}",
                     "info",
                     f"TFB-50 entries paused: {TFB_POSITIONS_MAX} positions already open",
                     "tfb_50",
                 )
                 return
-            if self._daily_entered(now.date(), candidate.symbol):
+            if self._is_daily_entered(now.date(), candidate.symbol):
                 continue
             self._enter(
                 "tfb_50",
@@ -795,7 +712,7 @@ class Strategy(StrategyBase):
                 candidate.price,
                 candidate.stop,
                 now,
-                risk_fraction_max=TFB_RISK_CEILING,
+                risk_fraction_max=TFB_RISK_MAX,
             )
 
     def _run_orb(self, now: datetime) -> None:
@@ -805,13 +722,6 @@ class Strategy(StrategyBase):
         self._run_orb_variant("orb_momentum", now, 10, 1.5, False, True)
 
     def _rank_candidates(self, candidates: list[OrbCandidate], now: datetime) -> list[OrbCandidate]:
-        """Breakouts by the value traded in their last completed daily session.
-
-        The relative-volume gate has already asked whether each stock is busy
-        against its own history. This asks a different question — which of the
-        survivors trades the most money — because the cap they are competing
-        for is a money cap.
-        """
         ranked: list[tuple[float, str, OrbCandidate]] = []
         for candidate in candidates:
             daily_frame = self._daily_frames.get(candidate.symbol)
@@ -842,7 +752,7 @@ class Strategy(StrategyBase):
         ):
             return
         if self._orb_position_count() >= ORB_POSITIONS_MAX:
-            self._event(
+            self._record_event(
                 f"orb-capacity-{now.date()}",
                 "info",
                 f"Breakout entries paused: {ORB_POSITIONS_MAX} positions already open",
@@ -883,8 +793,6 @@ class Strategy(StrategyBase):
             if signal is None:
                 continue
             position, direction, close = signal
-            # The range is fixed for the day, so a break that fails the setup
-            # rules can never pass later: the signal is recorded either way.
             self._orb_scanned.add(key)
             if orb_setup(high, low, close) is None:
                 continue
@@ -931,8 +839,8 @@ class Strategy(StrategyBase):
             stop = candidate.low + span * (0.75 if candidate.direction == 1 else 0.25)
             price = self._orb_price(candidate)
             limit = ORB_ENTRY_EXTENSION_MAX.get(engine)
-            if limit is not None and self._too_extended(candidate, price, span, limit):
-                self._event(
+            if limit is not None and self._is_too_extended(candidate, price, span, limit):
+                self._record_event(
                     f"extended-{candidate.symbol}-{now.date()}",
                     "warning",
                     f"{candidate.symbol} entry skipped: price is more than "
@@ -948,21 +856,13 @@ class Strategy(StrategyBase):
                 stop,
                 now,
                 direction=candidate.direction,
-                risk_fraction_max=ORB_RISK_CEILING if engine == "orb" else None,
+                risk_fraction_max=ORB_RISK_MAX if engine == "orb" else None,
             )
 
     def _orb_data_unavailable(self, engine: StrategyName, day: date, error: Exception) -> None:
-        """Stand the breakout scan down for the day rather than take the run with it.
-
-        The scan is the only part of an iteration that reads bars for the session
-        in progress, and an unreadable feed is not a reason to stop managing
-        positions that are already open. The feed is named because the usual
-        cause is a data subscription that does not serve the configured one in
-        real time, which is fixed by changing ALPACA_DATA_FEED, not the code.
-        """
         self._orb_data_failed_on = day
         detail = f"{type(error).__name__}: {error}"
-        self._event(
+        self._record_event(
             f"orb-data-{day}",
             "error",
             f"Breakout scan stood down for the day: no intraday bars from the "
@@ -970,12 +870,10 @@ class Strategy(StrategyBase):
             engine,
         )
 
-    def _daily_entered(self, day: date, symbol: str) -> bool:
-        """Whether a daily candidate is off the table for the rest of the session."""
-        return self._claimed(symbol) or (day, symbol) in self._daily_traded
+    def _is_daily_entered(self, day: date, symbol: str) -> bool:
+        return self._is_claimed(symbol) or (day, symbol) in self._daily_traded
 
     def _engine_position_count(self, engine: StrategyName) -> int:
-        """Positions one engine holds or has ordered, for a cap of its own."""
         held = sum(1 for holding in self._holdings.values() if holding.engine == engine)
         ordered = sum(
             1
@@ -985,11 +883,6 @@ class Strategy(StrategyBase):
         return held + ordered
 
     def _orb_position_count(self) -> int:
-        """Breakout positions held or ordered, across both breakout engines.
-
-        Every breakout is the same bet on the same half hour, so the two engines
-        share one allowance rather than each taking their own.
-        """
         engines = {"orb", "orb_momentum"}
         held = sum(1 for holding in self._holdings.values() if holding.engine in engines)
         ordered = sum(
@@ -1000,31 +893,17 @@ class Strategy(StrategyBase):
         return held + ordered
 
     def _orb_unscanned(self, engine: StrategyName, day: date) -> list[str]:
-        """Symbols still worth pulling bars for, filtered before the fetch.
-
-        The scan runs inside a window minutes wide, so pulling bars for names
-        already scanned, traded or held is latency spent on an answer that
-        cannot change.
-        """
         return [
             symbol
             for symbol in self._eligible_symbols
             if (day, engine, symbol) not in self._orb_scanned
             and (day, symbol) not in self._orb_traded
-            and not self._claimed(symbol)
+            and not self._is_claimed(symbol)
         ]
 
-    def _too_extended(
+    def _is_too_extended(
         self, candidate: OrbCandidate, price: float, span: float, limit: float
     ) -> bool:
-        """Whether the price an order would pay sits too far beyond the level.
-
-        The stop sits a fixed distance *inside* the opening range, so a fill
-        further past the level is a worse trade twice over: it risks more for the
-        same setup, and it has already given away that much of the move. Past the
-        ceiling the trade is no longer the breakout the rule named, and no entry
-        is better than a stretched one.
-        """
         if candidate.direction == 1:
             return price > candidate.high + limit * span
         return price < candidate.low - limit * span
@@ -1032,17 +911,6 @@ class Strategy(StrategyBase):
     def _orb_signal(
         self, candles: DataFrame, high: float, low: float
     ) -> tuple[int, Direction, float] | None:
-        """The *first* candle since the opening range that closed outside it.
-
-        Reading only the newest candle made the signal depend on which snapshot of
-        Alpaca's aggregates happened to have landed. A bar published a few seconds
-        after its boundary — routine, since the scan walks the whole universe in
-        fifty-symbol pages before the clock is read again — was simply missed, and
-        the breakout was then read off the *following* candle. The entry that came
-        out of that was a candle's worth of momentum above the level it was meant
-        to buy, which is what the charts of 28 August show. Walking the session
-        outwards from the range finds the same candle whenever the bars arrive.
-        """
         closes = cast(Series, candles["close"])
         for position, value in enumerate(cast(list[Any], closes.tolist())):
             close = float(value)
@@ -1055,13 +923,6 @@ class Strategy(StrategyBase):
         return None
 
     def _orb_price(self, candidate: OrbCandidate) -> float:
-        """What to size the order on: the live quote, or the breakout close.
-
-        The breakout candle's close is where the signal was read, not what the
-        order will pay, and on a signal recovered a candle late it is a whole
-        candle stale. Sizing on the live quote also lets _enter turn away a
-        breakout the market has already dragged back through its own stop.
-        """
         try:
             price = float(self.get_last_price(candidate.symbol))
         except Exception:
@@ -1086,7 +947,7 @@ class Strategy(StrategyBase):
     ) -> bool:
         if frame.empty:
             return False
-        if not relative_volume_ready(
+        if not is_relative_volume_ready(
             frame,
             now.date(),
             cast(Timestamp, frame.index[-1]).time(),
@@ -1112,9 +973,9 @@ class Strategy(StrategyBase):
         exit_for_earnings = False
         if DAILY_EXITS_BEFORE_EARNINGS[holding.engine]:
             try:
-                exit_for_earnings = earnings_exit_due(holding.signal, now.date())
+                exit_for_earnings = is_earnings_exit_due(holding.signal, now.date())
             except Exception as error:
-                self._event(
+                self._record_event(
                     f"earnings-{holding.signal}",
                     "error",
                     f"Earnings calendar unavailable for {holding.signal}: {type(error).__name__}",
@@ -1135,15 +996,11 @@ class Strategy(StrategyBase):
             frame[cast(Any, frame.index) >= holding.entered_at.astimezone(TRADING_ZONE)],
         )
         last = float(cast(Any, frame["close"]).iloc[-1])
-        # The stop trails the highest close *since entry*. On the entry day there
-        # is no such close yet, and `highest` stays at the fill price: falling
-        # back to the whole frame here would anchor the stop to a high set months
-        # before the trade and stop it out on its first session.
         if len(since):
             holding.highest = max(holding.highest, float(cast(Any, since["close"]).max()))
         multiple = 1.5 if holding.engine == "sma" else 2.0
         holding.stop = max(holding.stop, holding.highest - multiple * latest_atr(frame))
-        if last < holding.stop or signal_exit(frame, DAILY_EXIT_NEEDS_BOTH[holding.engine]):
+        if last < holding.stop or does_signal_exit(frame, DAILY_EXIT_NEEDS_BOTH[holding.engine]):
             self._exit(holding)
 
     def _manage_orb(self, holding: Holding, now: datetime) -> None:
@@ -1178,9 +1035,7 @@ class Strategy(StrategyBase):
                 holding.signal
             )
         except Exception as error:
-            # The stop already resting at the broker still protects the position,
-            # so a failed read costs an update, not the trade.
-            self._event(
+            self._record_event(
                 f"trail-{holding.asset}-{now.date()}",
                 "warning",
                 f"{holding.asset} trailing stop not updated: {type(error).__name__}",
@@ -1215,12 +1070,16 @@ class Strategy(StrategyBase):
         risk_fraction_max: float | None = None,
         caps_risk_per_trade: bool = True,
     ) -> bool:
-        if engine not in self._enabled or self._claimed(signal) or direction * (price - stop) <= 0:
+        if (
+            engine not in self._enabled
+            or self._is_claimed(signal)
+            or direction * (price - stop) <= 0
+        ):
             return False
         if direction == -1:
             security = self.broker.api.get_asset(asset)
             if not bool(security.shortable):
-                self._event(
+                self._record_event(
                     f"short-{asset}-{now.date()}",
                     "warning",
                     f"Short entry skipped for {asset}: security is not shortable",
@@ -1234,7 +1093,7 @@ class Strategy(StrategyBase):
             pending.notional for pending in self._pending.values()
         )
         if len(positions) + len(self._pending) >= 10 or gross >= equity:
-            self._event(
+            self._record_event(
                 f"capacity-{asset}-{now.date()}",
                 "warning",
                 f"{asset} entry skipped: portfolio position capacity reached",
@@ -1254,11 +1113,11 @@ class Strategy(StrategyBase):
             abs(price - stop),
             min(0.10, float(self.parameters["position_fraction_max"])),
             risk_fraction,
-            fractional_allowed(direction, bool(self.parameters["fractional_orders"])),
+            is_fractional_allowed(direction, bool(self.parameters["fractional_orders"])),
         )
         notional = float(quantity) * price
         if quantity <= 0 or gross + notional > equity:
-            self._event(
+            self._record_event(
                 f"sizing-{asset}-{now.date()}",
                 "warning",
                 f"{asset} entry skipped: no affordable position size",
@@ -1303,10 +1162,7 @@ class Strategy(StrategyBase):
         price = float(self.get_last_price(holding.asset))
         stop = round_stop(holding.direction, holding.stop)
         if amount <= 0 or stop <= 0:
-            # A fill can arrive before the position is readable. _resync_stops
-            # retries every iteration, but a position with no resting stop is
-            # worth saying out loud rather than leaving to the next pass.
-            self._event(
+            self._record_event(
                 f"unprotected-{holding.asset}-{holding.entered_at.date()}",
                 "warning",
                 f"{holding.asset} has no resting stop yet: position not readable",
@@ -1316,7 +1172,7 @@ class Strategy(StrategyBase):
         if (holding.direction == 1 and stop >= price) or (
             holding.direction == -1 and stop <= price
         ):
-            self._event(
+            self._record_event(
                 f"through-stop-{holding.asset}-{holding.entered_at.date()}",
                 "warning",
                 f"{holding.asset} is already through its stop at {price:.2f}: closing at market",
@@ -1326,7 +1182,7 @@ class Strategy(StrategyBase):
             return
         size = quantity_value(
             amount,
-            fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"])),
+            is_fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"])),
         )
         if size <= 0:
             return
@@ -1358,13 +1214,9 @@ class Strategy(StrategyBase):
             return
         size = quantity_value(
             amount,
-            fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"])),
+            is_fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"])),
         )
         if size <= 0:
-            # A scale-out worth less than a whole share of a short rounds away.
-            # Skipping it leaves the position covered by its resting stop; the
-            # next target or the closing deadline takes what is left. Cancelling
-            # first and then not replacing the stop would strip that protection.
             return
         self._cancel(holding.asset)
         order = self.create_order(
@@ -1398,7 +1250,7 @@ class Strategy(StrategyBase):
         position = self.get_position(asset)
         return 0.0 if position is None else abs(float(position.quantity))
 
-    def _claimed(self, symbol: str) -> bool:
+    def _is_claimed(self, symbol: str) -> bool:
         return symbol in self._claims or symbol in self._pending or symbol in self._holdings
 
     def _release(self, asset: str) -> None:

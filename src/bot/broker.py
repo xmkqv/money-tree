@@ -1,4 +1,4 @@
-from bot.config import settings
+from .config import settings
 
 
 def build_alpaca_broker() -> object:

@@ -1,4 +1,4 @@
-from bot.types import Settings
+from .types import Settings
 
 
 settings = Settings()

@@ -10,7 +10,7 @@ from uuid import uuid4
 import httpx
 from itsdangerous import TimestampSigner
 
-from bot.types import (
+from .types import (
     STATE_SIGNATURE_SALT,
     EventLevel,
     RunStatus,
