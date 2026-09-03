@@ -1,6 +1,5 @@
 "use strict";
 
-/* ══ formatting ══════════════════════════════════════════ */
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -16,8 +15,6 @@ function token(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-/* the chart paints into SVG, so it re-reads its colours from the tokens on
-   every draw — that's what makes it follow a theme change */
 let GAIN = "#21AD71", LOSS = "#CB3B45", C = {};
 
 function readTheme() {
@@ -39,36 +36,11 @@ const MONTHS = ["January","February","March","April","May","June",
 const MON3 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 const DAY3 = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
-/* ══ live state ══════════════════════════════════════════
-   Everything below is derived from /api/ledger, which the server
-   assembles from Alpaca on each poll. Nothing is generated here. */
 
 const REFRESH_MS = 30000;
 
-/* Two clocks, because the page is two different reads.
-
-   The ledger is the whole account assembled out of paged fill history, and it
-   only changes when a trade closes, so it is polled slowly and cached on the
-   server for a minute. The pulse is the handful of figures that move with the
-   price — equity, cash, and the mark on every open position — and it is two
-   upstream calls, so it can be asked for often enough that those figures move
-   in front of you rather than jumping a minute at a time. It patches what it
-   knows onto the ledger's picture and leaves the rest alone. */
 const PULSE_MS = 2000;
 
-/* ══ phone ═══════════════════════════════════════════════
-
-   The one breakpoint the script shares with the stylesheet. Below it the
-   layout is a single scrolling column and the equity plot is not drawn:
-   it is a background reading of a figure the panel already states, and
-   repainting it on every poll costs more than it says. That figure is
-   painted regardless, so nothing is lost with the drawing.
-
-   The trade chart is the opposite case and is drawn on a phone in full.
-   It is not decoration on a number — it is the whole answer to why the
-   bot took the trade, and there is no figure that stands in for it. What
-   it loses on a phone is a wheel to zoom with and a pointer to hover
-   with, so pinch and tap take their place. */
 
 const PHONE = window.matchMedia("(max-width: 720px)");
 const onPhone = () => PHONE.matches;
@@ -84,8 +56,6 @@ const STRATEGY_COLOURS = {
 const clockLabel = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
 const dparts = d => d.split("-").map(Number);
 const dateOf = d => { const [y, m, day] = dparts(d); return new Date(y, m - 1, day); };
-/* The Monday a date belongs to, so the log can rule off between trading weeks.
-   Sunday is 0 in JS, so shift the index before taking the offset back. */
 const mondayOf = d => {
   const at = dateOf(d);
   at.setDate(at.getDate() - ((at.getDay() + 6) % 7));
@@ -173,7 +143,6 @@ function monthData(y, m) {
   return result;
 }
 
-/* Monday-led weekday rows — markets don't trade weekends */
 function weekRows(md) {
   const groups = new Map();
   for (const d of md.days) {
@@ -230,10 +199,6 @@ function derive(live) {
     return { ...t, y, m: m - 1, day, weekday: dateOf(t.date).getDay() };
   }).reverse();
 
-  /* Index the same objects ALL_TRADES holds, not fresh copies of the payload:
-     the chart identifies a trade by identity when walking the others in its
-     stock, and a copy is never found among them. Walked oldest first so each
-     day still reads in the order it happened. */
   tradesByDate = new Map();
   for (const t of [...ALL_TRADES].reverse()) {
     if (!tradesByDate.has(t.date)) tradesByDate.set(t.date, []);
@@ -280,19 +245,6 @@ function derive(live) {
   const [ly, lm, lday] = dparts(LAST_SESSION.date);
   LATEST = { y: ly, m: lm - 1, day: lday };
 
-  /* How far the calendar's arrows may walk. Both ends were taken from the last
-     session, which put the whole account inside a single month and left both
-     arrows disabled at the only month they could reach — the calendar opened on
-     the current month and stayed there.
-
-     The floor is the month the account was funded in, which is where the equity
-     curve starts and the earliest date any session can fall on. The ceiling is
-     this month rather than the last session's, so the current month is reachable
-     before its first trade has closed — on a Monday morning, or after a quiet
-     week, the two are not the same month. Every month in between draws fine:
-     monthData builds a grid for any month asked of it and reads whichever
-     sessions land in it, so a month the bot sat out shows an empty grid rather
-     than nothing at all. */
   const funded = live.equityDaily.length ? live.equityDaily[0].date : LAST_SESSION.date;
   const [fy, fm] = dparts(funded);
   const [ty, tm] = dparts(live.today);
@@ -320,8 +272,6 @@ function derive(live) {
   }));
   INTRADAY.equityBase = live.invested;
   INTRADAY.liveTip = live.intraday.length > 0 && live.intradayDate === live.today;
-  /* set before the fallback, so an empty intraday series does not label the
-     daily one live under a second name */
   if (!INTRADAY.length) INTRADAY = DAILY;
 
   ACCOUNT.dayOpening = live.intraday.length ? opening : 0;
@@ -331,13 +281,6 @@ function derive(live) {
   ACCOUNT.dayDrawdownPct = drawdownPct();
 }
 
-/* The session's worst equity, and the one figure kept across a ledger poll.
-
-   Everything else is rebuilt from the payload, but the intraday series that
-   payload carries only samples every five minutes, so a low the pulse saw
-   between two samples is not in it. Rebuilding from the series alone would
-   hand back room the drawdown had already spent, and a limit that recovers
-   on its own is not a limit. Only a new session resets it. */
 let SESSION_LOW = { date: "", equity: 0 };
 
 function ratchetLow(date, equity) {
@@ -346,15 +289,12 @@ function ratchetLow(date, equity) {
   return SESSION_LOW.equity;
 }
 
-/* How much of the day's loss limit has been spent, measured against that worst
-   point rather than against wherever equity happens to stand. */
 function drawdownPct() {
   if (!ACCOUNT.dayOpening) return 0;
   const fallen = Math.min(0, ACCOUNT.dayLowEquity - ACCOUNT.dayOpening);
   return Math.abs(fallen) / ACCOUNT.dayOpening * 100;
 }
 
-/* ══ today panel ═════════════════════════════════════════ */
 
 let todayTab = "closed";
 
@@ -493,8 +433,6 @@ function buildTable(table, headers, rows, rightFrom, rowClass) {
       const td = document.createElement("td");
       if (c.node) td.append(c.node);
       else td.textContent = c.t;
-      /* On a phone the header row is gone and each row is read as a card, so
-         every cell has to name itself. On a desktop the attribute is inert. */
       td.dataset.label = headers[i];
       if (c.r) td.classList.add("r");
       if (c.cls) td.classList.add(c.cls);
@@ -502,19 +440,12 @@ function buildTable(table, headers, rows, rightFrom, rowClass) {
       cells.push(td);
       tr.append(td);
     }
-    /* A card needs a subject and a result. The subject is the symbol wherever a
-       row has one — every trade table — and the first column otherwise. The
-       result is the money the row made, which is the last column in all but
-       the session table, where a percentage trails it. The rest fall in under
-       the two of them, paired to a line. */
     const key = cells.find(td => td.querySelector(".sym")) || cells[0];
     if (key) key.classList.add("key");
     const lead = cells.find(td => /^(p&l|unreal)/i.test(td.dataset.label)) || cells[cells.length - 1];
     if (lead && lead !== key) lead.classList.add("lead");
     tbody.append(tr);
   });
-  /* Rebuilt in place on every poll, so clear first: appending would stack a
-     fresh header and body under the previous ones on each refresh. */
   table.replaceChildren(thead, tbody);
 }
 
@@ -524,7 +455,6 @@ function selectDay(y, m, day) {
   renderCalendar();
 }
 
-/* ══ left rail ═══════════════════════════════════════════ */
 
 function renderAccount() {
   document.getElementById("chart-funded").textContent =
@@ -612,13 +542,6 @@ function periodCell(label, pnl, pct, spx) {
 
 
 
-/* Two separate questions, deliberately kept apart.
-
-   Switch  — have we left this engine enabled, or paused it? That is the
-             roster the bot publishes, and it does not change with the clock.
-   Session — can it start a trade right now? The market must be open and the
-             clock inside this engine's own entry window. Positions already
-             open are still managed outside it; this is about new trades. */
 
 const SWITCH_STATE = {
   online:  { label: "Online",  hint: "Enabled — this engine is allowed to trade" },
@@ -632,9 +555,6 @@ const SESSION_STATE = {
   closed: { label: "Closed", hint: "Outside its entry window — no new trade will start" },
 };
 
-/* Three answers, not two. Off the roster is a different fact from paused: the
-   first engine is not running, the second is running exit-only. Collapsing them
-   left a paused engine indistinguishable from one that was never selected. */
 function switchState(id) {
   const bot = LIVE.bot || {};
   if (!bot.reported) return "unknown";
@@ -642,7 +562,6 @@ function switchState(id) {
   return (bot.paused || []).includes(id) ? "paused" : "online";
 }
 
-/* The viewer's own clock may be set to any zone, so read the exchange's. */
 function tradingMinutes() {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false,
@@ -693,7 +612,6 @@ function renderStrategies(period) {
 
   for (const s of STRATEGIES) {
     const [trades, pnl] = p.rows[s.id];
-    /* the catch-all bucket only earns a row when something landed in it */
     if (s.id === "unattributed" && trades === 0) continue;
     const tr = document.createElement("tr");
 
@@ -708,7 +626,6 @@ function renderStrategies(period) {
     nm.className = "name";
     nm.textContent = s.label;
     strat.append(chip, nm);
-    /* the catch-all bucket is a place trades land, not an engine that runs */
     if (s.id !== "unattributed") strat.append(stateBadges(s.id));
     nameCell.append(strat);
 
@@ -732,19 +649,18 @@ function renderStrategies(period) {
   }
 }
 
-/* ══ balance chart — pannable, zoomable viewport ═════════ */
 
 const PAD = { t: 12, r: 58, b: 22, l: 16 };
 
 const chart = {
   series: null,
-  i0: 0, i1: 1,          /* fractional index window */
-  yManual: null,         /* {min,max} once the price axis is dragged */
+  i0: 0, i1: 1,          
+  yManual: null,         
   preset: "ALL",
   custom: false,
 };
 
-let geo = null;          /* geometry of the last draw, for hit-testing */
+let geo = null;          
 
 function presetWindow(range) {
   if (range === "D") return { series: INTRADAY, i0: 0, i1: INTRADAY.length - 1 };
@@ -783,11 +699,9 @@ function niceStep(raw) {
   return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
 }
 
-/* The visible window, rebased on the point before it, independent of any
-   geometry — the hero reads it whether or not a plot is drawn. */
 function chartWindow() {
   const s = chart.series;
-  if (!s || !s.length) return null;                    /* nothing fetched yet */
+  if (!s || !s.length) return null;                    
   const N = s.length;
   const lo = clamp(Math.floor(chart.i0), 0, N - 1);
   const hi = clamp(Math.ceil(chart.i1), 0, N - 1);
@@ -797,7 +711,6 @@ function chartWindow() {
   return { s, N, lo, hi, baseline, visible, last: visible[visible.length - 1] };
 }
 
-/* hero reads the visible window, because that's what the chart is showing */
 function paintChartHero(w) {
   const delta = w.last.y;
   const equityAtStart = w.s.equityBase + w.baseline;
@@ -811,7 +724,7 @@ function paintChartHero(w) {
   d.className = "delta " + tone(delta);
 
   document.getElementById("chart-note").textContent =
-    w.visible[0].p.label + " – " + w.last.p.label + (chart.series === INTRADAY ? " · Fri 30 Jan" : "");
+    w.visible[0].p.label + " – " + w.last.p.label + (chart.series === INTRADAY && LIVE.intradayDate ? " · " + dayOf(LIVE.intradayDate) : "");
 
   document.getElementById("chart-table").innerHTML =
     "<table><caption>Cumulative profit and loss across the visible window</caption><tbody>" +
@@ -823,7 +736,7 @@ function drawChart() {
   const w = chartWindow();
   if (!w) return;
   paintChartHero(w);
-  if (onPhone()) return;            /* the figures stand alone; the plot does not */
+  if (onPhone()) return;            
 
   const host = document.getElementById("chart-host");
   const width = host.clientWidth;
@@ -857,7 +770,6 @@ function drawChart() {
     " L" + px(visible[visible.length - 1].i).toFixed(2) + " " + zeroY.toFixed(2) +
     " L" + px(visible[0].i).toFixed(2) + " " + zeroY.toFixed(2) + " Z";
 
-  /* y grid in rebased units */
   const ticks = [];
   const step = niceStep((yMax - yMin) / 3.2);
   for (let t = Math.ceil(yMin / step) * step; t <= yMax; t += step) ticks.push(t);
@@ -870,7 +782,6 @@ function drawChart() {
     'font-family="Roboto Mono, monospace">' + (t >= 0 ? "" : "−") + usd0.format(Math.abs(t)) + "</text>"
   ).join("");
 
-  /* x labels: about six, evenly spaced across the visible window */
   const count = visible.length;
   const every = Math.max(1, Math.ceil(count / 6));
   const xSvg = visible.map((v, k) =>
@@ -917,7 +828,6 @@ function drawChart() {
     "</svg>"
   );
 
-  /* hit areas track the plot geometry exactly (SVG units are CSS px here) */
   Object.assign(document.getElementById("plot-hit").style, {
     left: PAD.l + "px", top: PAD.t + "px", width: plotW + "px", height: plotH + "px",
   });
@@ -926,7 +836,6 @@ function drawChart() {
   });
 }
 
-/* ── chart interaction ─────────────────────────────────── */
 
 function indexAt(clientX) {
   const host = document.getElementById("chart-host").getBoundingClientRect();
@@ -951,7 +860,6 @@ function initChartInteraction() {
 
   let drag = null;
 
-  /* zoom the time axis around the cursor */
   plot.addEventListener("wheel", ev => {
     ev.preventDefault();
     if (!geo) return;
@@ -965,7 +873,6 @@ function initChartInteraction() {
     drawChart();
   }, { passive: false });
 
-  /* click-hold to drag the chart through time */
   plot.addEventListener("pointerdown", ev => {
     plot.setPointerCapture(ev.pointerId);
     plot.classList.add("dragging");
@@ -1004,7 +911,7 @@ function initChartInteraction() {
       chart.i0 += di; chart.i1 += di;
       clampWindow();
 
-      if (chart.yManual) {                        /* only pan price when locked */
+      if (chart.yManual) {                        
         const dv = dy * ((geo.yMax - geo.yMin) / geo.plotH);
         chart.yManual.min += dv; chart.yManual.max += dv;
       }
@@ -1014,7 +921,6 @@ function initChartInteraction() {
       return;
     }
 
-    /* crosshair */
     const i = clamp(Math.round(indexAt(ev.clientX)), geo.lo, geo.hi);
     const p = chart.series[i];
     const y = p.value - geo.baseline;
@@ -1059,13 +965,11 @@ function initChartInteraction() {
     svg.querySelector("#crossDot").setAttribute("opacity", "0");
   });
 
-  /* double-click anywhere on the chart returns to the selected preset */
   for (const el of [plot, axis]) {
     el.addEventListener("dblclick", () => setRange(chart.preset));
   }
 }
 
-/* ══ calendar ════════════════════════════════════════════ */
 
 
 
@@ -1164,7 +1068,6 @@ function dayCell(cell, peak, tip) {
     if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selectDay(calY, calM, cell.day); }
   });
 
-  /* sequential tint within each polarity; the surface is the neutral midpoint */
   const depth = C.tintMin + (Math.abs(cell.pnl) / peak) * (C.tintMax - C.tintMin);
   el.style.background = "color-mix(in oklab, " +
     (positive ? "var(--gain-mark)" : "var(--loss-mark)") + " " +
@@ -1212,7 +1115,6 @@ function dayCell(cell, peak, tip) {
   return el;
 }
 
-/* ══ portfolio ═══════════════════════════════════════════ */
 
 function renderPortfolio() {
   document.getElementById("pf-value").textContent = money(ACCOUNT.deployed);
@@ -1234,7 +1136,6 @@ function renderPortfolio() {
   cm.style.width = clamp(ACCOUNT.largestPositionPct / ACCOUNT.positionCapPct, 0, 1) * 100 + "%";
   cm.style.background = "var(--ink-3)";
 
-  /* allocation by strategy */
   const alloc = document.getElementById("pf-alloc");
   alloc.replaceChildren();
   for (const st of STRATEGIES) {
@@ -1272,7 +1173,6 @@ function renderPortfolio() {
     alloc.append(row);
   }
 
-  /* every holding against the 10% position cap the bot sizes to */
   const stops = document.getElementById("pf-stops");
   stops.replaceChildren();
   for (const pos of OPEN_POSITIONS) {
@@ -1315,11 +1215,6 @@ function renderPortfolio() {
       { t: signedMoney(pos.unreal) + "  " + signedPct(pos.unrealPct), r: true, cls: tone(pos.unreal) },
     ]), 3);
 
-  /* The most recent session that is not today's. Taking the second-to-last
-     entry assumed the last one was always today, which only holds while the bot
-     has already traded today: on a weekend, a holiday, or before the first fill
-     of the session, it left this panel a session behind the trades it was
-     meant to be showing. */
   const prev = [...SESSIONS].reverse().find(session => session.date !== LIVE.today);
   const trades = prev ? tradesByDate.get(prev.date) || [] : [];
   const realised = trades.reduce((a, t) => a + t.pnl, 0);
@@ -1344,7 +1239,6 @@ function renderPortfolio() {
     ]), 3);
 }
 
-/* ══ history ═════════════════════════════════════════════ */
 
 function tile(k, v, cls, sub) {
   const el = document.createElement("div");
@@ -1384,7 +1278,6 @@ function renderHistory() {
     tile("Worst trade", signedMoney(L.worst), "neg"),
   );
 
-  /* monthly bars */
   const peak = Math.max(...SESSIONS.map(m => Math.abs(m.pnl)));
   const strip = document.getElementById("hs-strip");
   strip.replaceChildren();
@@ -1433,7 +1326,6 @@ function renderHistory() {
       ];
     }), 1);
 
-  /* filter options */
   const fs = document.getElementById("f-strategy");
   if (fs.options.length === 1) {
     for (const st of STRATEGIES) fs.append(new Option(st.label, st.id));
@@ -1444,8 +1336,6 @@ function renderHistory() {
   renderLog();
 }
 
-/* A daily engine can hold for days, so an entry time alone would read as if the
-   trade opened and closed in the same session. Name the day when it did not. */
 function openedCell(trade) {
   const wrap = document.createElement("span");
   wrap.className = "in-time";
@@ -1492,15 +1382,9 @@ function renderLog() {
     return;
   }
 
-  /* Shade every other session so the eye can find where one day ends. Parity is
-     counted from the earliest day on show, so the banding reads the same way
-     chronologically however the list is filtered, and a day with no trades
-     never leaves two shaded sessions touching. */
   const days = [...new Set(rows.map(t => t.date))].sort();
   const shade = rows.map(t => days.indexOf(t.date) % 2 === 1);
 
-  /* A heavier rule wherever the list crosses from one trading week into the
-     next, so a Friday and the Monday after it are never read as one stretch. */
   const weeks = rows.map(t => mondayOf(t.date));
 
   buildTable(table,
@@ -1521,25 +1405,13 @@ function renderLog() {
 }
 
 
-/* ══ trade chart ═════════════════════════════════════════
-
-   Opened from a symbol in the trade log, so it always answers one question:
-   what did this stock do around the trade the bot took? The trade is the
-   subject — the candles are context, the entry and exit are the marks that
-   matter, and the line between them carries the result. */
 
 const TC_BARS = { "5Min": "5 min", "1Hour": "1 hour", "1Day": "Day" };
 let TRADE = null, TC_STATE = { bar: "5Min", bars: null, hover: null };
-let TC_LEVELS = null, TC_SIBLINGS = [];
-/* i0/i1 index the drawn bars and may be fractional; yManual locks the price
-   scale once it has been stretched by hand. custom means the reader has moved
-   the view, after which the level lines no longer drag the scale open. */
+let TC_LEVELS = null, TC_COTRADES = [];
 let TC_VIEW = { i0: 0, i1: 0, yManual: null, custom: false };
 let TC_ORIGIN = "history";
 
-/* Three lengths of the same measure, so they read as one family; validated for
-   colour-vision separation against both surfaces, and each line is labelled at
-   its right end so the colour is never the only way to tell them apart. */
 const SMA_SET = [
   { length: 20, token: "--s-orb5" },
   { length: 50, token: "--s-orb10" },
@@ -1574,8 +1446,6 @@ function dayOf(iso) {
   return parts.filter(p => p.type !== "literal").map(p => p.value).join(" ");
 }
 
-/* Exchange-time minutes since the epoch, so a bar and a fill can be compared
-   on one axis without either being read in the viewer's own timezone. */
 function stampOf(dateISO, minute) {
   return Date.parse(dateISO + "T00:00:00Z") / 60000 + minute;
 }
@@ -1591,11 +1461,6 @@ function barStamp(iso) {
     Number(get("hour")) * 60 + Number(get("minute")));
 }
 
-/* A held position charted like a closed one, with the current price standing in
-   for an exit that has not happened. Marked open so the page says "Now" rather
-   than "Exit" and reports the gain as unrealised. Positions the fill history
-   does not reach back far enough to match have no entry to place, and stay
-   unlinked rather than being charted from a guess. */
 function positionTrade(position) {
   if (!position.inDate) return null;
   return {
@@ -1620,16 +1485,11 @@ function positionTrade(position) {
 
 async function openTradeChart(trade, from) {
   TRADE = trade;
-  /* charts open from three tables now, so remember which one to go back to
-     rather than always landing on History */
   if (from) TC_ORIGIN = from;
   TC_LEVELS = null;
   TC_STATE = { bar: "5Min", bars: null, hover: null };
-  /* the bot's other trades in this stock, oldest first, for the stepper */
-  TC_SIBLINGS = ALL_TRADES.filter(t => t.symbol === trade.symbol).slice().reverse();
-  /* the held position is not in the closed-trade list, but it is the latest
-     thing that happened in this stock, so it belongs at the end of the walk */
-  if (trade.open) TC_SIBLINGS.push(trade);
+  TC_COTRADES = ALL_TRADES.filter(t => t.symbol === trade.symbol).slice().reverse();
+  if (trade.open) TC_COTRADES.push(trade);
   for (const b of document.querySelectorAll("#tc-range button"))
     b.setAttribute("aria-pressed", String(b.dataset.bar === "5Min"));
   document.getElementById("chart-back").textContent =
@@ -1642,8 +1502,6 @@ async function openTradeChart(trade, from) {
   await loadTradeBars();
 }
 
-/* Fetched once per trade rather than once per bar size, so switching between
-   five minutes and a day costs nothing and the levels stay put. */
 async function loadTradeLevels() {
   const t = TRADE;
   if (t.strategy === "unattributed") { TC_LEVELS = {}; paintRail(); return; }
@@ -1662,24 +1520,19 @@ async function loadTradeLevels() {
 }
 
 function paintStepper() {
-  const index = TC_SIBLINGS.findIndex(t => t === TRADE);
-  /* only worth showing when the bot traded this stock more than once */
-  document.getElementById("tc-step").hidden = TC_SIBLINGS.length < 2;
-  document.getElementById("tc-count").textContent = (index + 1) + " of " + TC_SIBLINGS.length;
+  const index = TC_COTRADES.findIndex(t => t === TRADE);
+  document.getElementById("tc-step").hidden = TC_COTRADES.length < 2;
+  document.getElementById("tc-count").textContent = (index + 1) + " of " + TC_COTRADES.length;
   document.getElementById("tc-prev").disabled = index <= 0;
-  document.getElementById("tc-next").disabled = index < 0 || index >= TC_SIBLINGS.length - 1;
+  document.getElementById("tc-next").disabled = index < 0 || index >= TC_COTRADES.length - 1;
 }
 
 function stepTrade(by) {
-  const index = TC_SIBLINGS.findIndex(t => t === TRADE) + by;
-  if (index < 0 || index >= TC_SIBLINGS.length) return;
-  openTradeChart(TC_SIBLINGS[index]);
+  const index = TC_COTRADES.findIndex(t => t === TRADE) + by;
+  if (index < 0 || index >= TC_COTRADES.length) return;
+  openTradeChart(TC_COTRADES[index]);
 }
 
-/* Averages are computed on the bars on screen, so a 200-period line needs 200
-   bars behind the first one drawn — that is what the run-up in the window is
-   for. Where the data still falls short the toggle says so rather than
-   silently drawing nothing. */
 function movingAverage(bars, length) {
   const out = new Array(bars.length).fill(null);
   let total = 0;
@@ -1745,7 +1598,6 @@ function paintTradeFacts() {
     (strategy ? strategy.label : t.strategy) + " · " + (t.side === "short" ? "Short" : "Long") +
     (t.open ? " · Open" : "");
 
-  /* said as its own line, so the standing caveats below are not overwritten */
   const openNote = document.getElementById("tc-open-note");
   openNote.textContent = t.open
     ? "This position is still open. The second mark is the current price, not an exit, and "
@@ -1812,7 +1664,6 @@ async function loadTradeBars() {
     if (!response.ok) throw new Error("HTTP " + response.status);
     const payload = await response.json();
     TC_STATE.bars = payload.data.bars.map(b => ({ ...b, x: barStamp(b.t) }));
-    /* bars before this are run-up for the averages, not part of the picture */
     const from = barStamp(payload.data.displayFrom);
     TC_STATE.first = Math.max(0, TC_STATE.bars.findIndex(b => b.x >= from));
   } catch (error) {
@@ -1830,9 +1681,6 @@ async function loadTradeBars() {
   drawTradeChart();
 }
 
-/* The right gutter carries the price axis. A desktop spends 62px on it without
-   noticing; on a phone that is a fifth of the plot, so the phone reads the same
-   prices in less room and hands the difference back to the candles. */
 const TC_PADS = {
   wide:  { l: 10, r: 62, t: 16, b: 40 },
   phone: { l: 6,  r: 50, t: 12, b: 38 },
@@ -1850,7 +1698,6 @@ function drawTradeChart() {
   const t = TRADE;
   const plotW = width - TC_PAD.l - TC_PAD.r, plotH = height - TC_PAD.t - TC_PAD.b;
 
-  /* Averages need the run-up bars; everything else works on the drawn window. */
   const averages = {};
   for (const { length } of SMA_SET) {
     if (TC_SHOW["sma" + length] && bars.length >= length) {
@@ -1862,8 +1709,6 @@ function drawTradeChart() {
   if (!all.length) return;
   if (TC_VIEW.i1 <= TC_VIEW.i0) TC_VIEW = { i0: 0, i1: all.length, yManual: null, custom: false };
 
-  /* Bars are drawn on their index, not their clock, so overnight gaps and the
-     lunch lull do not open dead space across the plot. */
   const nearest = x => {
     let best = 0, gap = Infinity;
     all.forEach((b, i) => { const d = Math.abs(b.x - x); if (d < gap) { gap = d; best = i; } });
@@ -1878,8 +1723,6 @@ function drawTradeChart() {
   const shown = all.slice(lo, hi + 1);
 
   const levels = TC_LEVELS || {};
-  /* The levels open the scale far enough to see them, but only until the reader
-     takes hold of it — after that the view is theirs and nothing widens it. */
   const extra = [];
   if (!TC_VIEW.custom) {
     extra.push(t.entry, t.exit);
@@ -1925,12 +1768,6 @@ function drawTradeChart() {
     '<text x="' + (width - TC_PAD.r + 8) + '" y="' + (py(v) + 3.5).toFixed(2) + '" fill="' + C.axis +
     '" font-size="10" font-family="Roboto Mono, monospace">' + money(v) + "</text>").join("");
 
-  /* The axis carries as much date as it has room for and no more. On a daily
-     chart zoomed out to a year, a label per session is thousands of characters
-     in the space of a few hundred, so the grain steps back to the month; on an
-     intraday chart the day is named where the date turns over and the rest
-     carry the time. Either way the number of labels is decided by the width
-     available, not by the number of bars, which is what let them pile up. */
   const LABEL_WIDTH = 78;
   const roomFor = Math.max(2, Math.floor(plotW / LABEL_WIDTH));
 
@@ -1942,11 +1779,9 @@ function drawTradeChart() {
   const daily = TC_STATE.bar === "1Day";
   const byDay = firstOf(dayOf);
   const byMonth = firstOf(monthOf);
-  /* on a daily chart every bar is its own day, so the month is the next grain up */
   const byMonths = daily && byDay.size > roomFor;
   const anchors = byMonths ? byMonth : byDay;
 
-  /* still too many? keep every nth, so the ones that remain stay evenly spread */
   const keep = Math.max(1, Math.ceil(anchors.size / roomFor));
   const labelled = new Map();
   [...anchors.entries()].forEach(([text, index], n) => {
@@ -1954,11 +1789,6 @@ function drawTradeChart() {
   });
   const boundary = new Set(anchors.values());
 
-  /* Times are placed inside each day, never by one stride across the whole
-     window: with seven bars to a session, a global stride walks backwards
-     through the time of day and the axis reads 15:30, 14:30, 13:30, each from
-     a different session and none of them saying so. Where there is not room
-     for a few times within a day, the day markers carry the axis alone. */
   const dayIndexes = [...byDay.values()].sort((a, b) => a - b);
   const perDay = dayIndexes.length ? roomFor / dayIndexes.length : roomFor;
   const timesPerDay = daily ? 0 : Math.max(0, Math.floor(perDay) - 1);
@@ -1990,7 +1820,7 @@ function drawTradeChart() {
   });
   candidates.sort((a, b) => a.i - b.i);
 
-  const CHAR = 6.1, GAP = 10;          /* Roboto Mono advance at 10px, and air */
+  const CHAR = 6.1, GAP = 10;          
   const kept = [];
   for (const candidate of candidates) {
     const half = Math.max(...candidate.lines.map(line => line.length)) * CHAR / 2;
@@ -2001,8 +1831,6 @@ function drawTradeChart() {
     candidate.clamped = Math.abs(candidate.x - natural) > 0.5;
     const previous = kept[kept.length - 1];
     if (!previous || candidate.left >= previous.right + GAP) { kept.push(candidate); continue; }
-    /* they collide: the one shoved onto the plot by the clamp is the one whose
-       real position is off it, so it gives way to the one that belongs here */
     if (previous.clamped && !candidate.clamped) kept[kept.length - 1] = candidate;
     else if (previous.clamped && candidate.clamped) kept[kept.length - 1] = candidate;
   }
@@ -2022,7 +1850,6 @@ function drawTradeChart() {
       (candidate.named ? ' font-weight="600"' : "") + ">" + line + "</text>").join("")
   ).join("");
 
-  /* One line per length, each labelled at its right end. */
   const smaEnds = [];
   const smaLines = SMA_SET.map(({ length, token }) => {
     const values = averages[length];
@@ -2042,7 +1869,6 @@ function drawTradeChart() {
       '" stroke-width="1.5" stroke-linejoin="round" opacity="0.95"/>';
   }).join("");
 
-  /* three averages can converge; nudge their end labels apart so all read */
   smaEnds.sort((a, b) => a.y - b.y);
   smaEnds.forEach((end, i) => {
     if (i && end.y - smaEnds[i - 1].y < 12) end.y = smaEnds[i - 1].y + 12;
@@ -2053,12 +1879,9 @@ function drawTradeChart() {
     '" stroke-width="3" stroke-linejoin="round" font-family="Roboto Mono, monospace">' +
     end.length + "</text>").join("");
 
-  /* The levels the strategy's rules put on this trade. */
   const band = (top, bottom, colour) =>
     '<rect x="' + TC_PAD.l + '" y="' + Math.min(top, bottom).toFixed(2) + '" width="' + plotW +
     '" height="' + Math.abs(bottom - top).toFixed(2) + '" fill="' + colour + '" opacity="0.07"/>';
-  /* Lines go under the price action so the candles stay legible; their labels
-     go over everything, with a plate behind, or a wick crosses out the text. */
   let overlays = "", overlayText = "";
   const named = (y, colour, text, dash) => {
     overlays +=
@@ -2085,8 +1908,6 @@ function drawTradeChart() {
     });
   }
 
-  /* Candles carry direction by shape as well as hue: a body drawn from open to
-     close is up or down whichever way the colour reads. */
   const bodyW = Math.max(1.5, Math.min(9, step * 0.62));
   const candles = shown.map((b, k) => {
     const i = k + lo;
@@ -2098,11 +1919,9 @@ function drawTradeChart() {
     return '<line x1="' + x.toFixed(2) + '" y1="' + py(b.h).toFixed(2) + '" x2="' + x.toFixed(2) +
       '" y2="' + py(b.l).toFixed(2) + '" stroke="' + colour + '" stroke-width="1"/>' +
       '<rect x="' + (x - bodyW / 2).toFixed(2) + '" y="' + top.toFixed(2) + '" width="' + bodyW.toFixed(2) +
-      '" height="' + h.toFixed(2) + '" fill="' + (up ? colour : colour) + '" opacity="' + (up ? 0.9 : 1) + '"/>';
+      '" height="' + h.toFixed(2) + '" fill="' + colour + '" opacity="' + (up ? 0.9 : 1) + '"/>';
   }).join("");
 
-  /* The trend line is the trade's own result: entry to exit, coloured by which
-     way it went, so the direction is readable before any number is. */
   const tone2 = t.pnl >= 0 ? GAIN : LOSS;
   const x1 = px(inIndex), y1 = py(t.entry), x2 = px(outIndex), y2 = py(t.exit);
   const trend =
@@ -2113,9 +1932,6 @@ function drawTradeChart() {
     '<line x1="' + TC_PAD.l + '" y1="' + y.toFixed(2) + '" x2="' + (width - TC_PAD.r) + '" y2="' + y.toFixed(2) +
     '" stroke="' + colour + '" stroke-width="1" stroke-dasharray="2 5" opacity="0.5"/>';
 
-  /* Shape separates the two ends, colour reports the result: a hollow ring
-     starts the trade, a filled dot closes it in the tone the line carries. So
-     neither end depends on telling one colour from another to be identified. */
   const entryMark =
     '<circle cx="' + x1.toFixed(2) + '" cy="' + y1.toFixed(2) + '" r="5.5" fill="' + C.ring +
     '" stroke="' + C.axis + '" stroke-width="2.5"/>';
@@ -2123,9 +1939,6 @@ function drawTradeChart() {
     '<circle cx="' + x2.toFixed(2) + '" cy="' + y2.toFixed(2) + '" r="6" fill="' + tone2 +
     '" stroke="' + C.ring + '" stroke-width="2"/>';
 
-  /* Every execution, not just the two averages. A scaled-out ORB position left
-     three exits at three prices; one averaged dot hides that entirely. The
-     averages stay as the larger marks, these are the smaller ticks behind. */
   const fillMarks = (t.fills || []).map(f => {
     const i = nearest(stampOf(f.d, f.m));
     const x = px(i), y = py(f.p);
@@ -2135,8 +1948,6 @@ function drawTradeChart() {
       '" stroke-width="1.5" opacity="0.9"/>';
   }).join("");
 
-  /* Everything that moves with the view is clipped to the plot, or panning
-     would run candles out over the price axis and the dates below. */
   const plotted =
     overlays + candles + smaLines +
     level(y1, C.axis) + level(y2, C.axis) + trend + fillMarks + entryMark + exitMark;
@@ -2153,7 +1964,6 @@ function drawTradeChart() {
     smaLabels + overlayText +
     "</svg>");
 
-  /* size the hover target from the same padding, so it cannot drift from it */
   const hit = document.getElementById("tc-hit");
   hit.style.left = TC_PAD.l + "px";
   hit.style.top = TC_PAD.t + "px";
@@ -2170,8 +1980,6 @@ function drawTradeChart() {
   paintTradeTable();
 }
 
-/* The two marks are labelled on the plot rather than in a legend: there are only
-   two, and each carries a price and the strategy that placed it. */
 function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
   const result = TRADE.pnl >= 0 ? GAIN : LOSS;
   const host = document.getElementById("tc-host");
@@ -2192,7 +2000,6 @@ function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
     el.append(head, val, who);
     el.style.left = Math.round(x) + "px";
     el.style.top = Math.round(y) + "px";
-    /* the exit edge reports the result, so it cannot be a fixed colour */
     el.style.borderLeftColor = cls === "exit" ? result : "var(--ink-3)";
     if (x > width * 0.6) el.classList.add("flip");
     host.append(el);
@@ -2202,9 +2009,6 @@ function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
   separateMarks(host);
 }
 
-/* On a daily chart an intraday trade opens and closes on the same candle, so
-   the two cards land on top of each other. Push them apart along the price
-   axis, keeping the higher price above, rather than letting one hide the other. */
 function separateMarks(host) {
   const [a, b] = [...host.querySelectorAll(".tc-mark")];
   if (!a || !b) return;
@@ -2230,9 +2034,6 @@ function tradeHover(event) {
   const geo = TC_STATE.geo;
   const tip = document.getElementById("tc-tip");
   if (!geo) return;
-  /* the drawn window, not TC_STATE.bars — that still carries the run-up bars
-     the averages need, and reading the cursor against those reports a bar from
-     days before the one under the pointer */
   const bars = geo.shown;
   const index = clamp(Math.round(geo.indexAt(event.clientX)), geo.lo, geo.hi);
   const b = bars[index];
@@ -2274,8 +2075,6 @@ function wireTradeChart() {
     TC_VIEW.i1 = TC_VIEW.i0 + span;
   };
 
-  /* zoom time around whatever the pointer is over, so the bar under the cursor
-     stays under it */
   const zoomAbout = (span, clientX) => {
     const geo = TC_STATE.geo;
     if (!geo) return;
@@ -2294,13 +2093,6 @@ function wireTradeChart() {
     zoomAbout(span * (event.deltaY > 0 ? 1.14 : 1 / 1.14), event.clientX);
   }, { passive: false });
 
-  /* ── touch ────────────────────────────────────────────
-     A finger has no wheel to zoom with and no hover to read with, so the two
-     gestures it does have stand in for both: pinch scales time about the point
-     between the fingers, and a tap that goes nowhere reads out the bar under
-     it. The plot keeps `pan-y` on a phone, so a swipe up the page is still a
-     swipe up the page — the browser claims it and this handler hears it as a
-     cancelled pointer, never as a pan. */
   const touches = new Map();
   let pinch = null;
 
@@ -2318,8 +2110,6 @@ function wireTradeChart() {
     if (event.pointerType === "touch") {
       touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
       if (touches.size === 2) {
-        /* the second finger ends the pan the first one started, so a pinch
-           never scrolls the window sideways as it scales */
         pinch = { spread: spreadOf(), span: TC_VIEW.i1 - TC_VIEW.i0 };
         drag = null;
         hit.classList.remove("dragging");
@@ -2344,8 +2134,6 @@ function wireTradeChart() {
     touches.delete(event.pointerId);
     if (touches.size < 2) pinch = null;
     if (!drag) return;
-    /* a finger that lifted where it landed asked a question rather than moved
-       the view, and the answer is the bar it landed on */
     if (event.type === "pointerup" && event.pointerType === "touch" && drag.travel < 8) tradeHover(event);
     drag = null;
     hit.classList.remove("dragging");
@@ -2379,8 +2167,6 @@ function wireTradeChart() {
     const move = -dx * (span / geo.plotW);
     TC_VIEW.i0 += move; TC_VIEW.i1 += move;
     clampWindow();
-    /* price only follows the drag once the scale has been locked by hand,
-       so an ordinary sideways drag does not quietly rescale the y axis */
     if (TC_VIEW.yManual) {
       const shift = dy * ((geo.yMax - geo.yMin) / geo.plotH);
       TC_VIEW.yManual.min += shift; TC_VIEW.yManual.max += shift;
@@ -2400,16 +2186,12 @@ function wireTradeChart() {
     redraw();
   });
 
-  /* A finger that lifts also leaves, so honouring this for touch would wipe the
-     readout a tap just asked for. A tap's answer stays up until the next tap
-     moves it or a pan clears it; a mouse still takes its tooltip with it. */
   hit.addEventListener("pointerleave", event => {
     if (event.pointerType === "touch") return;
     document.getElementById("tc-tip").classList.remove("on");
   });
 }
 
-/* ══ views ═══════════════════════════════════════════════ */
 
 let currentView = "dashboard";
 const viewReady = { dashboard: true, portfolio: false, history: false, strategies: false, chart: true };
@@ -2419,8 +2201,6 @@ function switchView(name) {
   document.body.dataset.view = name;
 
   for (const b of document.querySelectorAll(".tabs button")) {
-    /* the chart has no tab of its own, so whichever page it was opened from
-       stays lit while it is on screen */
     const owner = name === "chart" ? TC_ORIGIN : name;
     if (b.dataset.view === owner) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
@@ -2436,18 +2216,12 @@ function switchView(name) {
     viewReady[name] = true;
   }
 
-  /* a chart measures zero while its panel is hidden */
   if (name === "dashboard") requestAnimationFrame(drawChart);
   if (name === "chart") requestAnimationFrame(drawTradeChart);
   window.scrollTo(0, 0);
 }
 
 
-/* ══ rule sheet ══════════════════════════════════════════
-
-   Fetched once when the page is first opened rather than on every poll: the
-   rules only change when the service is redeployed. The run-state badges come
-   from the live feed, so they keep refreshing with everything else. */
 
 let RULES = null;
 
@@ -2555,7 +2329,6 @@ async function renderRules() {
   paintRules();
 }
 
-/* ══ live feed ═══════════════════════════════════════════ */
 
 let calY = 0, calM = 0, booted = false;
 
@@ -2571,14 +2344,7 @@ function renderAll() {
   if (viewReady.strategies) renderRuleStates();
 }
 
-/* ══ pulse ═══════════════════════════════════════════════ */
 
-/* A mark is only half a holding. Which strategy opened it, when it opened, and
-   the fills behind it all come from matching the fill history, which the pulse
-   never reads — so marks are patched onto the rows the ledger built rather than
-   standing in for them. A roster that no longer lines up means a position has
-   opened or closed since that assembly, and the honest answer is not a
-   half-attributed row: say so, and let the ledger redraw. */
 function mergeMarks(marks) {
   const rows = new Map(OPEN_POSITIONS.map(pos => [pos.symbol, pos]));
   if (marks.length !== rows.size || marks.some(m => !rows.has(m.symbol))) return false;
@@ -2587,10 +2353,6 @@ function mergeMarks(marks) {
   return true;
 }
 
-/* The last point of a curve is the account as it stands, so it follows live
-   equity. The points behind it are Alpaca's own readings and are left alone —
-   which is also why the intraday curve still fills in five minutes at a time
-   however often this runs. Only the tip is ours to move. */
 function retipSeries(series, equity) {
   if (!series.liveTip || !series.length) return;
   series[series.length - 1].value = Math.round((equity - series.equityBase) * 100) / 100;
@@ -2621,17 +2383,11 @@ function applyPulse(pulsed) {
   return aligned;
 }
 
-/* Rebuilding a table under the pointer swallows the click that was landing on
-   it, and a symbol in the open table opens a chart. Two seconds is short
-   enough that waiting for the pointer to leave costs nothing. */
 function hovering(id) {
   const node = document.getElementById(id);
   return node !== null && node.matches(":hover");
 }
 
-/* A pulse moves figures, not structure: no trade has closed, no strategy has
-   started or stopped, so the calendar, the log and the rule sheet are left
-   standing and only what reads a mark is repainted. */
 function paintPulse() {
   renderAccount();
   if (currentView === "dashboard") {
@@ -2643,18 +2399,12 @@ function paintPulse() {
   }
 }
 
-/* One resync in flight at a time. A roster that stays out of step would
-   otherwise ask for a fresh assembly every two seconds, which is exactly the
-   upstream cost the ledger's cache exists to prevent. */
 let resyncing = false;
 
-/* One read in flight at a time. A pulse that outlasts its own interval would
-   otherwise have a second one launched on top of it, and the older answer
-   landing last would paint figures the page had already moved past. */
 let pulsing = false;
 
 async function pulse() {
-  if (!booted || pulsing) return;       /* the ledger draws the page first */
+  if (!booted || pulsing) return;       
   pulsing = true;
   try {
     const response = await fetch("/api/pulse", { headers: { Accept: "application/json" } });
@@ -2721,7 +2471,6 @@ async function refresh() {
   }
 }
 
-/* ══ wiring ══════════════════════════════════════════════ */
 
 document.querySelector(".tabs").addEventListener("click", ev => {
   const btn = ev.target.closest("button");
@@ -2810,7 +2559,7 @@ document.getElementById("theme-toggle").addEventListener("click", ev => {
   const btn = ev.target.closest("button");
   if (!btn) return;
   document.documentElement.setAttribute("data-theme", btn.dataset.setTheme);
-  try { localStorage.setItem("mt-theme", btn.dataset.setTheme); } catch (error) { /* no-op */ }
+  try { localStorage.setItem("mt-theme", btn.dataset.setTheme); } catch (error) {  }
   syncThemeButtons();
   repaintForTheme();
 });
@@ -2842,10 +2591,6 @@ new ResizeObserver(() => {
   tradeResizeTimer = setTimeout(() => { if (currentView === "chart") drawTradeChart(); }, 80);
 }).observe(document.getElementById("tc-host"));
 
-/* Crossing the breakpoint changes what is drawn, not just how it is laid out,
-   so a rotation into landscape has to bring the equity plot back with it. The
-   trade chart needs no such rescue — it is drawn at both widths, and its own
-   observer redraws it at whatever size the rotation left it. */
 PHONE.addEventListener("change", () => {
   if (!onPhone() && currentView === "dashboard") requestAnimationFrame(drawChart);
 });
@@ -2858,11 +2603,6 @@ refresh();
 setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
 setInterval(() => { if (!document.hidden) pulse(); }, PULSE_MS);
 
-/* Neither clock runs while the tab is in the background, so coming back to it
-   used to mean looking at figures up to half a minute old until the next tick
-   happened to fire. Ask on the way in instead: the pulse answers from a
-   two-second cache, and the ledger from a minute-old one, so a viewer
-   returning costs the upstream nothing it was not already spending. */
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
   pulse();
