@@ -36,8 +36,6 @@ from bot.strategies.tfb_50 import (
 from bot.types import (
     POSITION_FRACTION_CAP_MAX,
     POSITIONS_MAX,
-    RISK_PER_DAY_MAX_DEFAULT,
-    RISK_PER_TRADE_MAX_DEFAULT,
     STRATEGY_LABELS,
     StrategyName,
     TradingConfiguration,
@@ -102,9 +100,9 @@ def entry_windows() -> dict[str, dict[str, str]]:
     }
 
 
-def strategy_spec(configuration: TradingConfiguration | None) -> dict[str, Any]:
-    per_trade = configuration.risk_per_trade_max if configuration else RISK_PER_TRADE_MAX_DEFAULT
-    daily_loss = configuration.risk_per_day_max if configuration else RISK_PER_DAY_MAX_DEFAULT
+def strategy_spec(configuration: TradingConfiguration, *, configured: bool) -> dict[str, Any]:
+    per_trade = configuration.risk_per_trade_max
+    daily_loss = configuration.risk_per_day_max
     opens, closes = upcoming_session_bounds(date.today())
 
     cards = [
@@ -125,7 +123,7 @@ def strategy_spec(configuration: TradingConfiguration | None) -> dict[str, Any]:
         "fields": FIELDS,
         "strategies": cards,
         "portfolio": portfolio_rules(daily_loss),
-        "configured": configuration is not None,
+        "configured": configured,
     }
 
 

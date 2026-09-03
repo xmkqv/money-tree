@@ -25,9 +25,6 @@ type DataFeedName = Literal["sip", "delayed_sip", "iex"]
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
 POSITIONS_MAX = 10
 POSITION_FRACTION_CAP_MAX = 0.10
-POSITION_FRACTION_MAX_DEFAULT = 0.20
-RISK_PER_DAY_MAX_DEFAULT = 0.02
-RISK_PER_TRADE_MAX_DEFAULT = 0.005
 STRATEGY_LABELS: dict[StrategyName, str] = {
     "noop": "No-op",
     "orb": "ORB (5-minute)",

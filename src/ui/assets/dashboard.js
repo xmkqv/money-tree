@@ -2239,7 +2239,7 @@ function paintRules() {
 
   document.getElementById("rules-config").textContent = RULES.configured
     ? "Risk limits as reported by the bot"
-    : "Bot not reporting — risk limits shown are the defaults";
+    : "Bot not reporting — risk limits shown are from the mode environment";
 
   const host = document.getElementById("rules-cards");
   host.replaceChildren();

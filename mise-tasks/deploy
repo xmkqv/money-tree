@@ -9,11 +9,11 @@ fi
 : "${RAILWAY_TOKEN:?}"
 
 npm ci
-npx railway config plan
+railway config plan
 
 read -r -p "apply this plan? [y/N] " answer
 if [[ "$answer" != "y" ]]; then
   echo "not applied"
   exit 1
 fi
-npx railway config apply
+railway config apply

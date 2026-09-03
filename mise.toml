@@ -4,6 +4,7 @@ min_version = "2026.8.11"
 python = "3.13.15"
 uv = "0.12.1"
 node = "26.8.1"
+railway = "5.47.2"
 
 [vars]
 mode = "{% if mise_env %}{{ mise_env | join(sep='') }}{% else %}{{ throw(message='no environment selected: rerun with --env development or --env production') }}{% endif %}"

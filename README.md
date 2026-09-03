@@ -27,6 +27,11 @@ mise run setup
 The ones declared empty are secrets: write them into `.env.development`, which
 mise loads last and never tracks.
 
+`mise.production.toml` is the corresponding production contract. Set its public
+deployment URLs there, and put credentials, allowed emails, signing secrets, and
+`RAILWAY_TOKEN` in `.env.production`; mise loads that ignored file last as well.
+Neither mode inherits values from the other.
+
 ```sh
 mise run check
 ```
@@ -57,7 +62,9 @@ mise --env production exec -- uv run mt trade --strategies orb
 
 The dashboard is a FastAPI app under `src/ui/`, deployed to Railway from
 `.railway/railway.ts`. `spec.md` maps the layout, and `.railway/README.md` covers
-the infrastructure commands.
+the infrastructure commands. The deploy task publishes the production mise
+environment into each Railway service, so Railway is a target rather than a
+second configuration owner.
 
 ```sh
 mise run serve

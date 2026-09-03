@@ -1,4 +1,4 @@
-import { defineRailway, github, preserve, project, service } from "railway/iac";
+import { defineRailway, github, project, service } from "railway/iac";
 
 const botWatchPatterns = [
   "/src/bot/**",
@@ -17,6 +17,18 @@ const webWatchPatterns = [
   "/Dockerfile",
 ];
 
+function requiredVariable(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value.trim() === "") {
+    throw new Error(`${name} is required`);
+  }
+  return value;
+}
+
+function sealedVariable(name: string) {
+  return { value: requiredVariable(name), isSealed: true };
+}
+
 export default defineRailway(() => {
   const moneyTree = github("xmkqv/money-tree", { checkSuites: false });
 
@@ -33,16 +45,22 @@ export default defineRailway(() => {
     },
     replicas: { "sfo": 1 },
     env: {
-      ALLOWED_RAILWAY_EMAILS: preserve(),
-      ALPACA_API_KEY: preserve(),
-      ALPACA_API_SECRET: preserve(),
-      ALPACA_IS_PAPER: preserve(),
-      APP_BASE_URL: preserve(),
-      RAILWAY_OAUTH_CLIENT_ID: preserve(),
-      RAILWAY_OAUTH_CLIENT_SECRET: preserve(),
-      RAILWAY_OAUTH_REDIRECT_URI: preserve(),
-      SESSION_SECRET: preserve(),
-      STATE_EXPORT_SECRET: preserve(),
+      APP_BASE_URL: requiredVariable("APP_BASE_URL"),
+      RAILWAY_OAUTH_CLIENT_ID: sealedVariable("RAILWAY_OAUTH_CLIENT_ID"),
+      RAILWAY_OAUTH_CLIENT_SECRET: sealedVariable("RAILWAY_OAUTH_CLIENT_SECRET"),
+      RAILWAY_OAUTH_REDIRECT_URI: requiredVariable("RAILWAY_OAUTH_REDIRECT_URI"),
+      ALLOWED_RAILWAY_EMAILS: requiredVariable("ALLOWED_RAILWAY_EMAILS"),
+      SESSION_SECRET: sealedVariable("SESSION_SECRET"),
+      SESSION_TTL_SECONDS: requiredVariable("SESSION_TTL_SECONDS"),
+      ALPACA_IS_PAPER: requiredVariable("ALPACA_IS_PAPER"),
+      ALPACA_API_KEY: sealedVariable("ALPACA_API_KEY"),
+      ALPACA_API_SECRET: sealedVariable("ALPACA_API_SECRET"),
+      FRACTIONAL_ORDERS: requiredVariable("FRACTIONAL_ORDERS"),
+      POSITION_FRACTION_MAX: requiredVariable("POSITION_FRACTION_MAX"),
+      RISK_PER_DAY_MAX: requiredVariable("RISK_PER_DAY_MAX"),
+      RISK_PER_TRADE_MAX: requiredVariable("RISK_PER_TRADE_MAX"),
+      STATE_EXPORT_SECRET: sealedVariable("STATE_EXPORT_SECRET"),
+      PORT: requiredVariable("PORT"),
     },
   });
   const moneyTreeBot = service("money-tree-bot", {
@@ -57,25 +75,17 @@ export default defineRailway(() => {
     replicas: { "us-east4-eqdc4a": 1 },
     networking: { privateNetworkEndpoint: "money-tree" },
     env: {
-      ALPACA_API_KEY: preserve(),
-      ALPACA_API_SECRET: preserve(),
-      ALPACA_IS_PAPER: preserve(),
-      ALPACA_LIVE_API_KEY: preserve(),
-      ALPACA_LIVE_API_SECRET: preserve(),
-      FRACTIONAL_ORDERS: preserve(),
-      POSITION_FRACTION_MAX: preserve(),
-      RISK_PER_DAY_MAX: preserve(),
-      RISK_PER_TRADE_MAX: preserve(),
-      STATE_EXPORT_SECRET: preserve(),
-      STATE_EXPORT_URL: preserve(),
-      // SIP is the consolidated tape and the feed the breakout rules are written
-      // for, but reading it for the session in progress needs a data subscription
-      // this account does not have: those requests come back 403 and the scan
-      // stands down for the day. Pinned to iex so the engine trades, accepting
-      // narrower opening ranges and a share-count view of volume. Change this one
-      // literal back to sip once the subscription covers real-time SIP.
-      ALPACA_DATA_FEED: "iex",
-      STRATEGIES: "orb,sma,tfb_50",
+      STRATEGIES: requiredVariable("STRATEGIES"),
+      ALPACA_IS_PAPER: requiredVariable("ALPACA_IS_PAPER"),
+      ALPACA_API_KEY: sealedVariable("ALPACA_API_KEY"),
+      ALPACA_API_SECRET: sealedVariable("ALPACA_API_SECRET"),
+      ALPACA_DATA_FEED: requiredVariable("ALPACA_DATA_FEED"),
+      FRACTIONAL_ORDERS: requiredVariable("FRACTIONAL_ORDERS"),
+      POSITION_FRACTION_MAX: requiredVariable("POSITION_FRACTION_MAX"),
+      RISK_PER_DAY_MAX: requiredVariable("RISK_PER_DAY_MAX"),
+      RISK_PER_TRADE_MAX: requiredVariable("RISK_PER_TRADE_MAX"),
+      STATE_EXPORT_URL: requiredVariable("STATE_EXPORT_URL"),
+      STATE_EXPORT_SECRET: sealedVariable("STATE_EXPORT_SECRET"),
     },
   });
 

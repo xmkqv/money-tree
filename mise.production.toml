@@ -1,0 +1,29 @@
+[env]
+STRATEGIES = "orb,sma,tfb_50"
+ALPACA_IS_PAPER = "false"
+ALPACA_DATA_FEED = "iex"
+FRACTIONAL_ORDERS = "true"
+RISK_PER_DAY_MAX = "0.02"
+RISK_PER_TRADE_MAX = "0.005"
+POSITION_FRACTION_MAX = "0.20"
+SESSION_TTL_SECONDS = "28800"
+PORT = "8080"
+
+## access
+ALLOWED_RAILWAY_EMAILS = ""
+## broker
+ALPACA_API_KEY = ""
+ALPACA_API_SECRET = ""
+## session
+SESSION_SECRET = ""
+STATE_EXPORT_SECRET = ""
+## oauth
+RAILWAY_OAUTH_CLIENT_ID = ""
+RAILWAY_OAUTH_CLIENT_SECRET = ""
+## deployment
+APP_BASE_URL = ""
+RAILWAY_OAUTH_REDIRECT_URI = ""
+STATE_EXPORT_URL = ""
+RAILWAY_TOKEN = ""
+
+_.file = { path = ".env.production", redact = true }

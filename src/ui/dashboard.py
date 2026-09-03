@@ -29,10 +29,9 @@ from bot.strategies.shared import (
 )
 from bot.types import (
     POSITION_FRACTION_CAP_MAX,
-    POSITION_FRACTION_MAX_DEFAULT,
-    RISK_PER_DAY_MAX_DEFAULT,
     STATE_SIGNATURE_SALT,
     RuntimeSnapshot,
+    TradingConfiguration,
 )
 
 from .alpaca import AlpacaMarketDataClient, AlpacaReadClient
@@ -241,6 +240,7 @@ def read_response(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
 async def build_ledger(
     alpaca: AlpacaReadClient,
     market: AlpacaMarketDataClient,
+    fallback_configuration: TradingConfiguration,
     snapshot: RuntimeSnapshot | None,
     stale: bool,
 ) -> dict[str, Any]:
@@ -268,7 +268,7 @@ async def build_ledger(
         equity_daily.append({"date": today, "equity": equity})
 
     rows = _position_rows(positions, equity, open_cycles)
-    configuration = snapshot.configuration if snapshot else None
+    configuration = snapshot.configuration if snapshot else fallback_configuration
     benchmark_start = funded or today
 
     try:
@@ -295,15 +295,11 @@ async def build_ledger(
             100
             * min(
                 POSITION_FRACTION_CAP_MAX,
-                configuration.position_fraction_max
-                if configuration
-                else POSITION_FRACTION_MAX_DEFAULT,
+                configuration.position_fraction_max,
             ),
             2,
         ),
-        "dailyLossLimitPct": round(
-            100 * (configuration.risk_per_day_max if configuration else RISK_PER_DAY_MAX_DEFAULT), 2
-        ),
+        "dailyLossLimitPct": round(100 * configuration.risk_per_day_max, 2),
         "bot": bot_state(snapshot, stale),
         "strategies": strategy_labels(),
         "windows": entry_windows(),
@@ -510,8 +506,11 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
     @router.get("/api/strategies")
     async def strategies() -> JSONResponse:
         snapshot, _ = runtime_state()
-        configuration = snapshot.configuration if snapshot else None
-        return read_response(strategy_spec(configuration), 60)
+        reported = snapshot is not None
+        active_configuration = (
+            snapshot.configuration if snapshot else configuration.trading_configuration
+        )
+        return read_response(strategy_spec(active_configuration, configured=reported), 60)
 
     @router.get("/api/ledger")
     async def ledger(request: Request) -> JSONResponse:
@@ -521,7 +520,13 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
             async with ledger_cache.lock:
                 cached = ledger_cache.fresh()
                 if cached is None:
-                    cached = await build_ledger(alpaca(request), market(request), snapshot, stale)
+                    cached = await build_ledger(
+                        alpaca(request),
+                        market(request),
+                        configuration.trading_configuration,
+                        snapshot,
+                        stale,
+                    )
                     ledger_cache.store(cached)
         return read_response({**cached, "bot": bot_state(snapshot, stale)}, 10)
 

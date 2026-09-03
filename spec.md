@@ -8,33 +8,38 @@ refs:
 
 ```sh
 src/
-    analysis/
-        break-even-accuracy.py
-    cli/
-        __main__.py
     bot/
         strategies/
             base.py
-            noop.py
-            {name}.py
-            ...
-        portfolio.py # multi-strategy composer
-        config.py
+            daily_base.py
+            orb_base.py
+            shared.py
+            tfb_50.py
         backtest.py
-        report.py
         broker.py
+        config.py
         export.py
+        order_tag.py
+        portfolio.py
+        report.py
         trade.py
+        types.py
+    cli/
+        __main__.py
     ui/
         assets/
-            dashboard.html
             dashboard.css
+            dashboard.html
             dashboard.js
+            favicon.svg
+            theme.js
         alpaca.py
-        dashboard.py
-        config.py
         app.py
         auth.py
+        config.py
+        dashboard.py
+        ledger.py
+        strategies.py
 ```
 
 # env
@@ -56,6 +61,7 @@ env:
 
 ```yaml:ui
 env:
+  - PORT
   - APP_BASE_URL
   - ALLOWED_RAILWAY_EMAILS
   - RAILWAY_OAUTH_CLIENT_ID
@@ -66,12 +72,22 @@ env:
   - ALPACA_API_KEY
   - ALPACA_API_SECRET
   - ALPACA_IS_PAPER
+  - FRACTIONAL_ORDERS
+  - POSITION_FRACTION_MAX
+  - RISK_PER_DAY_MAX
+  - RISK_PER_TRADE_MAX
   - STATE_EXPORT_SECRET
 ```
 
 # deploy
 
 [bot → web](./.railway/railway.ts)
+
+```yaml:deploy
+env:
+  - MODE
+  - RAILWAY_TOKEN
+```
 
 ```sh
 mt trade --strategies "$STRATEGIES"
@@ -99,4 +115,4 @@ mt report --strategy {name} --symbols {symbols} --start {date} --end {date}
 
 - the bot runs multiple strategies
 - the ui renders a modern dashboard that includes an overview, strategy details, analysis, and logs
-- the deployed app bot mode (paper/live) can be toggled by updating app vendor secrets
+- the selected mise mode supplies every deployed service variable
