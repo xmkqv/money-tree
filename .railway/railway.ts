@@ -30,6 +30,11 @@ function sealedVariable(name: string) {
 }
 
 export default defineRailway(() => {
+  if (requiredVariable("MODE") !== "production") {
+    throw new Error("deploy requires production mode");
+  }
+  requiredVariable("RAILWAY_TOKEN");
+
   const moneyTree = github("xmkqv/money-tree", { checkSuites: false });
 
   const moneyTreeWeb = service("money-tree-web", {
@@ -46,7 +51,7 @@ export default defineRailway(() => {
     replicas: { "sfo": 1 },
     env: {
       APP_BASE_URL: requiredVariable("APP_BASE_URL"),
-      RAILWAY_OAUTH_CLIENT_ID: sealedVariable("RAILWAY_OAUTH_CLIENT_ID"),
+      RAILWAY_OAUTH_CLIENT_ID: requiredVariable("RAILWAY_OAUTH_CLIENT_ID"),
       RAILWAY_OAUTH_CLIENT_SECRET: sealedVariable("RAILWAY_OAUTH_CLIENT_SECRET"),
       RAILWAY_OAUTH_REDIRECT_URI: requiredVariable("RAILWAY_OAUTH_REDIRECT_URI"),
       ALLOWED_RAILWAY_EMAILS: requiredVariable("ALLOWED_RAILWAY_EMAILS"),
