@@ -11,7 +11,9 @@ wheels/
 .venv/
 .env
 .env.*
-!.env.example
+mise.local.toml
+mise.*.local.toml
+.run/
 data/
 logs/
 node_modules/

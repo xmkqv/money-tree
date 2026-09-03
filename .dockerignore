@@ -1,6 +1,13 @@
-.env
+.env*
 .git
 .ruff_cache
+.run
 .venv
+dist
 logs
+mise-tasks
+mise.lock
+mise.toml
+mise.*.toml
 node_modules
+runs
