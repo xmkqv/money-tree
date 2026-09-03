@@ -4,23 +4,23 @@ version = "0.1.0"
 description = "Four US-equity trading strategies, written out as a register and then run against it: backtesting, portfolio composition, and Alpaca execution."
 readme = "README.md"
 license = "MIT"
-requires-python = ">=3.13,<3.15"
+requires-python = ">=3.13"
 dependencies = [
-    "alpaca-py>=0.44,<1",
-    "authlib>=1,<2",
-    "exchange-calendars>=4,<5",
-    "fastapi>=0.116,<1",
-    "httpx>=0.28,<1",
-    "itsdangerous>=2.2,<3",
-    "lumibot>=4,<5",
-    "pandas>=2,<3",
-    "pandas-ta-classic>=0.6,<1",
-    "pydantic>=2,<3",
-    "pydantic-settings>=2,<3",
-    "starlette>=0.40,<1",
-    "typer>=0.16,<1",
-    "uvicorn>=0.35,<1",
-    "yfinance>=1,<2",
+    "alpaca-py>=0.44",
+    "authlib>=1.7",
+    "exchange-calendars>=4.13",
+    "fastapi>=0.141",
+    "httpx>=0.28",
+    "itsdangerous>=2.2",
+    "lumibot>=4.5",
+    "pandas>=2.3",
+    "pandas-ta-classic>=0.6",
+    "pydantic>=2.12",
+    "pydantic-settings>=2.15",
+    "starlette>=0.52",
+    "typer>=0.27",
+    "uvicorn>=0.52",
+    "yfinance>=1.6",
 ]
 [project.scripts]
 mt = "cli.__main__:app"
@@ -31,11 +31,8 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "arch>=8,<9",
-    "numpy>=2,<3",
-    "pytest>=9,<10",
-    "pyright>=1.1,<2",
-    "ruff>=0.14,<1",
+    "pyright>=1.1",
+    "ruff>=0.16",
 ]
 
 [tool.pyright]
@@ -54,10 +51,6 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
-
-[tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers"
-testpaths = ["tests"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/bot", "src/cli", "src/ui", "LICENSE", "README.md", "pyproject.toml"]
