@@ -2,9 +2,9 @@ min_version = "2026.8.11"
 
 [tools]
 python = "3.13.15"
-uv = "0.12.1"
+uv = "0.12.9"
 node = "26.8.1"
-railway = "5.47.2"
+railway = "5.49.0"
 
 [vars]
 mode = "{% if mise_env %}{{ mise_env | join(sep='') }}{% else %}{{ throw(message='no environment selected: rerun with --env development or --env production') }}{% endif %}"
@@ -13,14 +13,82 @@ mode = "{% if mise_env %}{{ mise_env | join(sep='') }}{% else %}{{ throw(message
 MODE = "{{ vars.mode }}"
 
 [tasks.setup]
-description = "install the pinned tools and sync the locked environment"
 run = ["mise install", "uv sync --locked", "npm ci"]
 
 [tasks.check]
-description = "lint and type-check"
 run = ["uv run ruff check src", "uv run pyright"]
 
 [tasks.build]
-description = "build the wheel and the sdist"
 depends = ["check"]
 run = "uv build"
+
+[tasks.serve]
+run = '''
+set -euo pipefail
+
+run_dir="${MISE_PROJECT_ROOT:?}/.run"
+pid_file="$run_dir/web.pid"
+log_file="$run_dir/web.log"
+
+if [[ -f "$pid_file" ]] && kill -0 "$(<"$pid_file")" 2>/dev/null; then
+  echo "already serving on ${APP_BASE_URL:?} (pid $(<"$pid_file"))"
+  exit 0
+fi
+
+mkdir -p "$run_dir"
+uv run --locked uvicorn ui.app:create_app \
+  --factory --workers 1 --host 127.0.0.1 --port "${PORT:?}" \
+  >"$log_file" 2>&1 &
+echo $! >"$pid_file"
+
+if ! curl -sf --retry 60 --retry-connrefused --retry-delay 1 \
+  "${APP_BASE_URL:?}/healthz" >/dev/null; then
+  echo "the dashboard never became healthy; see $log_file" >&2
+  exit 1
+fi
+echo "serving ${APP_BASE_URL:?} (pid $(<"$pid_file"))"
+'''
+
+[tasks.stop]
+run = '''
+set -euo pipefail
+
+pid_file="${MISE_PROJECT_ROOT:?}/.run/web.pid"
+
+if [[ ! -f "$pid_file" ]]; then
+  echo "nothing is serving"
+  exit 0
+fi
+
+pid="$(<"$pid_file")"
+rm -f "$pid_file"
+if ! kill -0 "$pid" 2>/dev/null; then
+  echo "nothing is serving"
+  exit 0
+fi
+
+kill "$pid"
+for _ in $(seq 20); do
+  kill -0 "$pid" 2>/dev/null || break
+  sleep 0.5
+done
+if kill -0 "$pid" 2>/dev/null; then
+  kill -9 "$pid"
+fi
+echo "stopped pid $pid"
+'''
+
+[tasks.deploy]
+run = '''
+set -euo pipefail
+
+npm ci
+railway config plan
+
+read -r -p "apply this plan? [y/N] " answer
+if [[ "$answer" != "y" ]]; then
+  echo "not applied"
+  exit 1
+fi
+railway config apply
+'''
