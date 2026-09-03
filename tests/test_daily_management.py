@@ -6,15 +6,22 @@ real frame and real indicators rather than asserted from the source text.
 """
 
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import pytest
-from pandas import DataFrame, DatetimeIndex
+from pandas import DataFrame, DatetimeIndex, Series
 
 from bot import portfolio
 from bot.portfolio import Holding, OrbCandidate, Strategy
 from bot.strategies import daily, shared, sma, tfb_50
-from bot.strategies.shared import TRADING_ZONE, normalize_ohlcv
-from bot.strategies.tfb_50 import TFB_POSITIONS_MAX
+from bot.strategies.shared import TRADING_ZONE, average_dollar_volume, normalize_ohlcv
+from bot.strategies.tfb_50 import (
+    TFB_POSITIONS_MAX,
+    TFB_PRICE_MIN,
+    TFB_TURNOVER_MIN,
+    TFB_TURNOVER_SESSIONS,
+    tfb_market_ready,
+)
 
 
 NOW = datetime(2025, 1, 2, 9, 31, tzinfo=UTC).astimezone(TRADING_ZONE)
@@ -250,7 +257,13 @@ def test_the_composer_stops_entering_tfb_50_at_its_own_cap(tfb_signals: None) ->
 class StandaloneHarness:
     """The lumibot surface a daily strategy touches, and nothing else."""
 
-    def __init__(self, turnover: dict[str, float], held: dict[str, float]) -> None:
+    def __init__(
+        self,
+        turnover: dict[str, float],
+        held: dict[str, float],
+        frames: dict[str, DataFrame] | None = None,
+    ) -> None:
+        self._frames = frames or {}
         self.parameters = {
             "symbols": list(turnover),
             "fractional_orders": True,
@@ -270,12 +283,14 @@ class StandaloneHarness:
         return NOW
 
     def get_historical_prices(self, symbol: str, length: int, step: str) -> object:
-        frame = price_history()
-        if symbol != "^GSPC":
-            frame = frame.copy(deep=True)
+        if symbol == "^GSPC":
+            return type("Bars", (), {"df": price_history()})()
+        frame = self._frames.get(symbol)
+        frame = price_history().copy(deep=True) if frame is None else frame.copy(deep=True)
+        if symbol not in self._frames:
             frame.iloc[-1, frame.columns.get_loc("volume")] = self._turnover[symbol]
-            # The last close is 159.5; cut the prior high so the trigger clears it.
-            frame.iloc[-2, frame.columns.get_loc("high")] = 150.0
+        # Cut the prior session's high so the entry trigger clears it.
+        frame.iloc[-2, frame.columns.get_loc("high")] = float(frame["close"].iloc[-1]) - 1.0
         return type("Bars", (), {"df": frame})()
 
     def get_positions(self) -> list[object]:
@@ -373,3 +388,147 @@ def test_the_momentum_engine_caps_nothing(standalone_signals: None) -> None:
 
     assert strategy.positions_max is None
     assert strategy._open_positions() == 0
+
+
+# --- TFB-50's own market screen, on both paths that can open a position ---
+
+
+def screened_frame(turnover: float, price: float = 100.0) -> DataFrame:
+    """A history whose last 20 sessions average `turnover`, at roughly `price`."""
+    frame = price_history().copy(deep=True)
+    scale = price / float(frame["close"].iloc[-1])
+    for column in ("open", "high", "low", "close"):
+        frame[column] = frame[column] * scale
+    recent = frame.index[-TFB_TURNOVER_SESSIONS:]
+    frame["volume"] = 1.0
+    frame.loc[recent, "volume"] = turnover / cast(Any, frame.loc[recent, "close"])
+    return frame
+
+
+def test_the_screen_admits_a_name_that_clears_both_floors() -> None:
+    assert tfb_market_ready(screened_frame(TFB_TURNOVER_MIN * 2)) is True
+
+
+def test_the_screen_rejects_a_name_below_the_price_floor() -> None:
+    """The register's floor is $5, so these literals do not follow the constant."""
+    assert tfb_market_ready(screened_frame(TFB_TURNOVER_MIN * 2, price=4.99)) is False
+    assert tfb_market_ready(screened_frame(TFB_TURNOVER_MIN * 2, price=5.01)) is True
+
+
+def test_the_screen_rejects_a_name_whose_twenty_session_turnover_is_thin() -> None:
+    """A busy last session must not carry a name that is usually too thin."""
+    thin = screened_frame(TFB_TURNOVER_MIN * 0.5)
+    busy_close = float(thin["close"].iloc[-1])
+    thin.iloc[-1, thin.columns.get_loc("volume")] = TFB_TURNOVER_MIN * 5 / busy_close
+
+    assert average_dollar_volume(thin, 1) > TFB_TURNOVER_MIN, "the last session is busy"
+    assert average_dollar_volume(thin, TFB_TURNOVER_SESSIONS) < TFB_TURNOVER_MIN
+    assert tfb_market_ready(thin) is False
+
+
+def test_the_screen_rejects_a_name_with_too_little_history() -> None:
+    short = screened_frame(TFB_TURNOVER_MIN * 2).tail(TFB_TURNOVER_SESSIONS - 1)
+
+    assert tfb_market_ready(short) is False
+
+
+def test_the_composer_skips_a_name_its_own_screen_rejects(tfb_signals: None) -> None:
+    """The shared discovery admitted these; this engine's floors decide again."""
+    strategy = EnteringStrategy(
+        {
+            "RICH": screened_frame(TFB_TURNOVER_MIN * 2),
+            "THIN": screened_frame(TFB_TURNOVER_MIN * 0.5),
+            "CHEAP": screened_frame(TFB_TURNOVER_MIN * 2, price=TFB_PRICE_MIN - 0.01),
+        }
+    )
+
+    strategy._run_tfb(NOW)
+
+    assert strategy.entered == ["RICH"]
+
+
+def test_the_standalone_engine_skips_a_name_its_own_screen_rejects(
+    standalone_signals: None,
+) -> None:
+    strategy = TfbStandalone(
+        {"RICH": 0.0, "THIN": 0.0},
+        held={},
+        # Priced above the average the fixture pins, so the setup passes too and
+        # the screen is the only thing that can turn a name away.
+        frames={
+            "RICH": screened_frame(TFB_TURNOVER_MIN * 2, price=200.0),
+            "THIN": screened_frame(TFB_TURNOVER_MIN * 0.5, price=200.0),
+        },
+    )
+
+    strategy.on_trading_iteration()
+
+    assert [symbol for symbol, _ in strategy.submitted] == ["RICH"]
+
+
+# --- Earnings no longer close a TFB-50 position ---
+
+
+def test_the_composer_does_not_read_the_calendar_for_tfb_50(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its register reads "earnings exit = none", so the report is not consulted."""
+    read: list[str] = []
+
+    def record(symbol: str, day: object) -> bool:
+        read.append(symbol)
+        return True
+
+    monkeypatch.setattr(portfolio, "earnings_exit_due", record)
+    frame = price_history()
+    strategy = FakeStrategy(frame)
+    held = holding(NOW, entry=float(frame["close"].iloc[-1]))
+    held.engine = "tfb_50"
+
+    strategy._manage_daily(held, NOW.replace(hour=15, minute=55))
+
+    assert read == [], "the calendar was read for an engine that does not use it"
+    assert strategy.exited == []
+
+
+def test_the_composer_still_closes_a_momentum_position_before_earnings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(portfolio, "earnings_exit_due", lambda symbol, day: True)
+    frame = price_history()
+    strategy = FakeStrategy(frame)
+    held = holding(NOW, entry=float(frame["close"].iloc[-1]))
+
+    strategy._manage_daily(held, NOW.replace(hour=15, minute=55))
+
+    assert strategy.exited == [held]
+
+
+@pytest.mark.parametrize(
+    ("strategy_class", "leaves"),
+    [(TfbStandalone, False), (SmaStandalone, True)],
+)
+def test_only_the_momentum_engine_sells_the_standalone_way_before_earnings(
+    monkeypatch: pytest.MonkeyPatch,
+    strategy_class: type[StandaloneHarness],
+    leaves: bool,
+) -> None:
+    monkeypatch.setattr(daily, "earnings_exit_due", lambda symbol, day: True)
+    monkeypatch.setattr(shared, "ta_sma", lambda close, length, talib: closes_at(100.0))
+    monkeypatch.setattr(
+        shared, "ta_rsi", lambda close, length, talib: closes_at(60.0, name="RSI_14")
+    )
+    frame = price_history()
+    last = float(frame["close"].iloc[-1])
+    strategy = strategy_class({"AAA": 1e9}, held={"AAA": 10.0})
+    strategy._highest["AAA"] = last
+    strategy._stops["AAA"] = 1.0
+
+    strategy._manage("AAA", NOW.date(), 10.0, frame)
+
+    assert [side for _, side in strategy.submitted] == (["sell"] if leaves else [])
+
+
+def closes_at(value: float, name: str | None = None) -> Series:
+    closes = price_history()["close"]
+    return Series(value, index=closes.index, name=name)

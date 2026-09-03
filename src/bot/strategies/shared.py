@@ -158,6 +158,24 @@ def latest_dollar_volume(frame: DataFrame) -> float:
     return volume * close
 
 
+def average_dollar_volume(frame: DataFrame, sessions: int) -> float:
+    """Traded value averaged over the last completed sessions, or 0.0.
+
+    A screen reads this rather than one session so a single busy day does not
+    admit a name that is usually too thin to get a position in and out of. It
+    reads 0.0 — and so fails any floor — when the history is short or the tape
+    cannot be read, because a symbol that cannot be measured is not screened in.
+    """
+    if sessions < 1 or not {"close", "volume"}.issubset(frame.columns):
+        return 0.0
+    closes = cast(Series, frame["close"]).tail(sessions)
+    volumes = cast(Series, frame["volume"]).tail(sessions)
+    if len(closes) < sessions or closes.count() < sessions or volumes.count() < sessions:
+        return 0.0
+    traded = float(cast(float, (closes * volumes).mean()))
+    return traded if isfinite(traded) and traded > 0.0 else 0.0
+
+
 def market_is_rising(frame: DataFrame) -> bool:
     close = cast(Series, frame["close"])
     if close.count() < 20:

@@ -7,6 +7,7 @@ from bot.strategies.shared import momentum_entry
 class Strategy(DailyStrategy):
     stop_multiple = 1.5
     blocks_entries_before_earnings = True
+    exits_before_earnings = True
     exit_needs_both = False
     caps_risk_per_trade = False
     risk_fraction_max = None

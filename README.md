@@ -270,7 +270,7 @@ market
     asset = US stocks
     market cap >= $500 million
     share price >= $5
-    average daily turnover >= $20 million
+    average daily turnover >= $20 million over the last 20 sessions
     market state = SPX > SMA(20)
     direction = long
 
@@ -306,7 +306,7 @@ risk
 exit
     profit targets = none
     signal exit = daily close < SMA(20) or RSI(14) < 50
-    earnings exit = close any open position on the day before earnings
+    earnings exit = none
     deadline = none
     shared rules = Stop Loss and Emergency Exit
 ```

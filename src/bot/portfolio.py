@@ -46,7 +46,7 @@ from bot.strategies.shared import (
     signal_exit,
     tfb_entry,
 )
-from bot.strategies.tfb_50 import TFB_POSITIONS_MAX, TFB_RISK_CEILING
+from bot.strategies.tfb_50 import TFB_POSITIONS_MAX, TFB_RISK_CEILING, tfb_market_ready
 from bot.types import STRATEGY_LABELS, EventLevel, StrategyName, active_strategies
 
 
@@ -74,6 +74,10 @@ ORB_CLOSE_DEADLINE = time(15, 54)
 # close under its average and weak RSI an emergency exit, and an emergency exit
 # that waited for the second condition would hold through the first.
 DAILY_EXIT_NEEDS_BOTH: dict[StrategyName, bool] = {"sma": False, "tfb_50": False}
+# Whether a daily engine closes a position on the session before the company
+# reports. Momentum (SMA) does; TFB-50's register no longer carries the rule, so
+# it holds through earnings and leaves on its own threshold and exit instead.
+DAILY_EXITS_BEFORE_EARNINGS: dict[StrategyName, bool] = {"sma": True, "tfb_50": False}
 # Where each breakout engine's three scale-out targets sit, counted in multiples
 # of the risk the fill actually took. ORB-10m's register writes them as fractions
 # of the opening range measured from the breakout level — half a range, one range,
@@ -663,6 +667,13 @@ class Strategy(StrategyBase):
             )
 
     def _run_tfb(self, now: datetime) -> None:
+        """This engine screens the universe again on its own price and turnover.
+
+        The shared discovery admits a name on a three-month average share count
+        against the current price. TFB-50's register asks for a 20-session
+        average of the value actually traded, which is read here from the same
+        daily bars the setup is read from.
+        """
         for symbol, frame in self._ranked(now):
             if self._engine_position_count("tfb_50") >= TFB_POSITIONS_MAX:
                 self._event(
@@ -672,7 +683,7 @@ class Strategy(StrategyBase):
                     "tfb_50",
                 )
                 return
-            if self._claimed(symbol) or not tfb_entry(frame):
+            if self._claimed(symbol) or not tfb_market_ready(frame) or not tfb_entry(frame):
                 continue
             last = float(cast(Any, frame["close"]).iloc[-1])
             self._enter(
@@ -992,16 +1003,18 @@ class Strategy(StrategyBase):
                 self._manage_orb(holding, now)
 
     def _manage_daily(self, holding: Holding, now: datetime) -> None:
-        try:
-            exit_for_earnings = earnings_exit_due(holding.signal, now.date())
-        except Exception as error:
-            self._event(
-                f"earnings-{holding.signal}",
-                "error",
-                f"Earnings calendar unavailable for {holding.signal}: {type(error).__name__}",
-                holding.engine,
-            )
-            exit_for_earnings = False
+        exit_for_earnings = False
+        if DAILY_EXITS_BEFORE_EARNINGS[holding.engine]:
+            try:
+                exit_for_earnings = earnings_exit_due(holding.signal, now.date())
+            except Exception as error:
+                self._event(
+                    f"earnings-{holding.signal}",
+                    "error",
+                    f"Earnings calendar unavailable for {holding.signal}: {type(error).__name__}",
+                    holding.engine,
+                )
+                exit_for_earnings = False
         if exit_for_earnings and now.time() >= time(15, 50):
             self._exit(holding)
             return

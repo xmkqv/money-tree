@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from bot.portfolio import DAILY_EXIT_NEEDS_BOTH as COMPOSER_EXIT_NEEDS_BOTH
+from bot.portfolio import DAILY_EXITS_BEFORE_EARNINGS as COMPOSER_EXITS_BEFORE_EARNINGS
 from bot.portfolio import ORB_CLOSE_DEADLINE, UNIVERSE_CAP_MIN, UNIVERSE_TURNOVER_MIN
 from bot.portfolio import ORB_ENTRY_EXTENSION_MAX as COMPOSER_ENTRY_EXTENSION_MAX
 from bot.portfolio import ORB_SIGNAL_CANDLES_MAX as COMPOSER_SIGNAL_CANDLES_MAX
@@ -28,7 +29,14 @@ from bot.strategies.orb_base import (
     ORB_TURNOVER_MIN,
 )
 from bot.strategies.shared import MIN_NOTIONAL_USD, entry_quantity, fractional_allowed
-from bot.strategies.tfb_50 import TFB_POSITIONS_MAX, TFB_RISK_CEILING
+from bot.strategies.tfb_50 import (
+    TFB_CAP_MIN,
+    TFB_POSITIONS_MAX,
+    TFB_PRICE_MIN,
+    TFB_RISK_CEILING,
+    TFB_TURNOVER_MIN,
+    TFB_TURNOVER_SESSIONS,
+)
 from bot.types import TradingConfiguration
 from tests.test_ledger import _snapshot
 from ui.dashboard import (
@@ -43,6 +51,7 @@ from ui.dashboard import (
 from ui.ledger import TRADING_ZONE
 from ui.strategies import (
     DAILY_EXIT_NEEDS_BOTH,
+    DAILY_EXITS_BEFORE_EARNINGS,
     FIELDS,
     ORB_HISTORY_SESSIONS,
     ORB_TRAIL_ATR_MULTIPLE,
@@ -420,8 +429,7 @@ def test_intraday_engines_are_flat_before_the_close() -> None:
 
     for engine in ("orb", "orb_momentum"):
         assert "15:55" in spec_rows(engine)["Emergency Exit"]
-    for engine in ("sma", "tfb_50"):
-        assert "15:50" in spec_rows(engine)["Emergency Exit"]
+    assert "15:50" in spec_rows("sma")["Emergency Exit"]
 
 
 def spec_card(spec: dict[str, Any], strategy_id: str) -> dict[str, str]:
@@ -514,8 +522,43 @@ def test_an_unreadable_earnings_calendar_does_not_force_an_exit() -> None:
     assert "return False" in inspect.getsource(DailyStrategy._earnings_exit_due)
     assert "exit_for_earnings = False" in inspect.getsource(PortfolioStrategy._manage_daily)
 
-    for engine in ("sma", "tfb_50"):
-        assert "cannot be read" in spec_rows(engine)["Emergency Exit"]
+    assert "cannot be read" in spec_rows("sma")["Emergency Exit"]
+
+
+def test_earnings_do_not_close_a_tfb_50_position() -> None:
+    """Its register reads "earnings exit = none", so the calendar is not read."""
+    assert DAILY_EXITS_BEFORE_EARNINGS == COMPOSER_EXITS_BEFORE_EARNINGS
+    assert DAILY_EXITS_BEFORE_EARNINGS == {"sma": True, "tfb_50": False}
+    assert sma.Strategy.exits_before_earnings is True
+    assert tfb_50.Strategy.exits_before_earnings is False
+
+    assert "if DAILY_EXITS_BEFORE_EARNINGS[holding.engine]:" in inspect.getsource(
+        PortfolioStrategy._manage_daily
+    )
+    assert "self.exits_before_earnings and self._earnings_exit_due" in inspect.getsource(
+        DailyStrategy._manage
+    )
+
+    rows = spec_rows("tfb_50")
+    assert "Earnings do not close a position" in rows["Emergency Exit"]
+    assert "15:50" not in rows["Emergency Exit"]
+
+
+def test_tfb_50_screens_the_universe_again_on_its_own_floors() -> None:
+    """Its register states a price floor and a 20-session turnover floor."""
+    assert TFB_CAP_MIN == UNIVERSE_CAP_MIN, "the discovery screen enforces this engine's cap"
+    assert TFB_PRICE_MIN == 5.0
+    assert TFB_TURNOVER_MIN == 20_000_000.0
+    assert TFB_TURNOVER_SESSIONS == 20
+
+    assert "tfb_market_ready(frame)" in inspect.getsource(PortfolioStrategy._run_tfb)
+    assert "tfb_market_ready(frame)" in inspect.getsource(tfb_50.Strategy._entry_ready)
+    assert "tfb_market_ready" not in inspect.getsource(PortfolioStrategy._run_sma)
+
+    market = spec_rows("tfb_50")["Market"]
+    assert f"${TFB_PRICE_MIN:.0f} or more" in market
+    assert f"last {TFB_TURNOVER_SESSIONS} completed sessions" in market
+    assert "own floors" not in spec_rows("sma")["Market"]
 
 
 def test_the_daily_setups_describe_what_the_predicates_check() -> None:

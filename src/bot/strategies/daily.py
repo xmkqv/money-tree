@@ -24,6 +24,7 @@ class DailyStrategy(StrategyBase):
     stop_multiple: ClassVar[float]
     blocks_entries_before_earnings: ClassVar[bool]
     caps_risk_per_trade: ClassVar[bool]
+    exits_before_earnings: ClassVar[bool]
     exit_needs_both: ClassVar[bool]
     # An engine whose register states its own figures rather than deferring to
     # the configuration: a per-trade risk fraction that governs instead of the
@@ -192,10 +193,11 @@ class DailyStrategy(StrategyBase):
         self._highest[symbol] = highest
         stop = max(self._stops.get(symbol, 0.0), highest - self.stop_multiple * latest_atr(frame))
         self._stops[symbol] = stop
+        leaves_for_earnings = self.exits_before_earnings and self._earnings_exit_due(symbol, day)
         if (
             last >= stop
             and not signal_exit(frame, self.exit_needs_both)
-            and not self._earnings_exit_due(symbol, day)
+            and not leaves_for_earnings
         ):
             return
         self._cancel_symbol_orders(symbol)

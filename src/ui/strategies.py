@@ -23,7 +23,13 @@ from bot.strategies.orb_base import (
     ORB_STOP_FRACTION_MIN,
     ORB_TURNOVER_MIN,
 )
-from bot.strategies.tfb_50 import TFB_POSITIONS_MAX, TFB_RISK_CEILING
+from bot.strategies.tfb_50 import (
+    TFB_POSITIONS_MAX,
+    TFB_PRICE_MIN,
+    TFB_RISK_CEILING,
+    TFB_TURNOVER_MIN,
+    TFB_TURNOVER_SESSIONS,
+)
 from bot.types import STRATEGY_LABELS, TradingConfiguration
 
 
@@ -83,6 +89,10 @@ UNCAPPED_RISK_ENGINES = frozenset({"sma"})
 # portfolio.py DAILY_EXIT_NEEDS_BOTH.
 DAILY_EXIT_NEEDS_BOTH = {"sma": False, "tfb_50": False}
 
+# Whether a daily engine closes a position on the session before the company
+# reports, from portfolio.py DAILY_EXITS_BEFORE_EARNINGS.
+DAILY_EXITS_BEFORE_EARNINGS = {"sma": True, "tfb_50": False}
+
 # When each engine can open a trade, from portfolio.py. The daily pair is
 # checked once a session before 09:40; the two breakout engines scan on their
 # own candle boundary until 10:30. Positions already open keep being managed
@@ -113,6 +123,17 @@ UNIVERSE = (
     f"US equities screened daily: market cap {_millions(500_000_000)} or more, share price "
     f"${ORB_PRICE_MIN:.0f} or more, 3-month average daily turnover "
     f"{_millions(ORB_TURNOVER_MIN)} or more, and tradable and fractionable at Alpaca."
+)
+
+# TFB-50 screens the universe again on its own figures, read from the same daily
+# bars its setup is read from rather than from the screener's three-month
+# average share count.
+TFB_UNIVERSE = (
+    f"{UNIVERSE} This engine then screens that list again on its own floors: share price "
+    f"${TFB_PRICE_MIN:.0f} or more, and turnover averaging {_millions(TFB_TURNOVER_MIN)} or "
+    f"more across the last {TFB_TURNOVER_SESSIONS} completed sessions — the value actually "
+    "traded, not a share count against today's price. A symbol whose sessions cannot be read "
+    "does not pass."
 )
 
 
@@ -364,7 +385,12 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         entry_source = "portfolio.py · _run_tfb"
 
     return [
-        Row(field="Market", value=UNIVERSE, source="portfolio.py · _discover_eligible_symbols"),
+        Row(
+            field="Market",
+            value=TFB_UNIVERSE if engine == "tfb_50" else UNIVERSE,
+            source="portfolio.py · _discover_eligible_symbols"
+            + (", strategies/tfb_50.py · tfb_market_ready" if engine == "tfb_50" else ""),
+        ),
         Row(
             field="Sentiment",
             value="The S&P 500 must be trading above its own 20-day average. If it is not, no "
@@ -421,10 +447,16 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         ),
         Row(
             field="Emergency Exit",
-            value="Closed at 15:50 on the session before the company reports earnings, "
-            "unless that calendar cannot be read, in which case the position is left "
-            "alone. The daily loss limit closes all positions and stops new entries for "
-            "the rest of the day.",
+            value=(
+                "Closed at 15:50 on the session before the company reports earnings, "
+                "unless that calendar cannot be read, in which case the position is left "
+                "alone. The daily loss limit closes all positions and stops new entries for "
+                "the rest of the day."
+                if DAILY_EXITS_BEFORE_EARNINGS[engine]
+                else "The daily loss limit closes all positions and stops new entries for "
+                "the rest of the day. Earnings do not close a position for this engine — it "
+                "holds through the report and leaves on its threshold or its exit rule."
+            ),
             source="portfolio.py · _manage_daily, _daily_loss_reached",
         ),
     ]
