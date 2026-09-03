@@ -1,34 +1,21 @@
-"""What each engine actually does, written against the code that runs it.
-
-The page this feeds exists so the rules can be checked against intent, which
-only works if it describes the live path. `bot/trade.py` runs
-`bot.portfolio.Strategy`, and that composer carries its own copy of every
-threshold rather than importing the single-strategy classes in
-`bot/strategies/`, so the numbers here are read from `portfolio.py`.
-
-Every figure quoted below is asserted against the source in
-tests/test_strategy_spec.py. A threshold changed in the bot without this table
-following it fails those tests rather than quietly leaving the page wrong.
-"""
-
 from datetime import datetime, time, timedelta
 from typing import Any, TypedDict
 
 from bot.strategies.orb_base import (
     ORB_POSITIONS_MAX,
-    ORB_PRICE_MIN,
+    ORB_PRICE_USD_MIN,
     ORB_RANGE_FRACTION_MIN,
-    ORB_RISK_CEILING,
+    ORB_RISK_MAX,
     ORB_STOP_FRACTION_MAX,
     ORB_STOP_FRACTION_MIN,
-    ORB_TURNOVER_MIN,
+    ORB_TURNOVER_USD_MIN,
 )
 from bot.strategies.tfb_50 import (
     TFB_POSITIONS_MAX,
-    TFB_PRICE_MIN,
-    TFB_RISK_CEILING,
-    TFB_TURNOVER_MIN,
+    TFB_PRICE_USD_MIN,
+    TFB_RISK_MAX,
     TFB_TURNOVER_SESSIONS,
+    TFB_TURNOVER_USD_MIN,
 )
 from bot.types import STRATEGY_LABELS, TradingConfiguration
 
@@ -49,55 +36,30 @@ FIELDS = [
     "Emergency Exit",
 ]
 
-# Defaults from bot/types.py Settings, used only when no bot is reporting.
 RISK_PER_TRADE_DEFAULT = 0.005
 RISK_PER_DAY_DEFAULT = 0.02
 POSITION_FRACTION_DEFAULT = 0.20
 
-# portfolio.py caps the notional fraction at this regardless of configuration.
-POSITION_FRACTION_CEILING = 0.10
+POSITION_FRACTION_CAP_MAX = 0.10
 POSITIONS_MAX = 10
 
-# Breakout figures the composer hard-codes: relative volume needs exactly this
-# many earlier sessions to compare against, the trail reads this ATR multiple
-# off this many completed candles, and a position worth less than this is not
-# opened at all. Each is pinned to its source in tests/test_strategy_spec.py.
 ORB_HISTORY_SESSIONS = 20
 ORB_TRAIL_ATR_MULTIPLE = 1.5
 ORB_TRAIL_BARS_MIN = 15
-POSITION_NOTIONAL_MIN = 1
+POSITION_NOTIONAL_USD_MIN = 1
 
-# How many completed candles back a breakout close may sit and still be entered,
-# from portfolio.py ORB_SIGNAL_CANDLES_MAX. Per engine, because the unit is that
-# engine's own candle.
 ORB_SIGNAL_CANDLES_MAX = {"orb": 2, "orb_momentum": 2}
 
-# How far past the breakout level, as a fraction of the opening range, the price
-# an order would pay may sit, from portfolio.py ORB_ENTRY_EXTENSION_MAX. None is
-# no ceiling. Per engine, like the target multiples.
 ORB_ENTRY_EXTENSION_MAX: dict[str, float | None] = {"orb": None, "orb_momentum": 0.25}
 
-# The three scale-out levels as multiples of the risk the fill took, from
-# portfolio.py ORB_TARGET_MULTIPLES.
 ORB_TARGET_MULTIPLES = {"orb": (1.5, 2.5, 4.0), "orb_momentum": (2.0, 3.0, 5.0)}
 
-# Engines whose register sets no per-trade risk limit, so position size comes
-# from the notional cap alone.
 UNCAPPED_RISK_ENGINES = frozenset({"sma"})
 
-# Whether a daily engine's signal exit waits for both conditions, from
-# portfolio.py DAILY_EXIT_NEEDS_BOTH.
 DAILY_EXIT_NEEDS_BOTH = {"sma": False, "tfb_50": False}
 
-# Whether a daily engine closes a position on the session before the company
-# reports, from portfolio.py DAILY_EXITS_BEFORE_EARNINGS.
 DAILY_EXITS_BEFORE_EARNINGS = {"sma": True, "tfb_50": False}
 
-# When each engine can open a trade, from portfolio.py. The daily pair is
-# offered its candidates every iteration from the open to the close; the two
-# breakout engines scan on their own candle boundary until 10:30. Positions
-# already open keep being managed after these windows close — this is when a
-# NEW trade can start.
 ENTRY_WINDOWS: dict[str, tuple[time, time]] = {
     "orb": (time(9, 35), time(10, 30)),
     "orb_momentum": (time(9, 40), time(10, 30)),
@@ -107,7 +69,6 @@ ENTRY_WINDOWS: dict[str, tuple[time, time]] = {
 
 
 def entry_windows() -> dict[str, dict[str, str]]:
-    """The windows as plain HH:MM, for the page to compare against the clock."""
     return {
         engine: {"from": f"{opens:%H:%M}", "to": f"{closes:%H:%M}"}
         for engine, (opens, closes) in ENTRY_WINDOWS.items()
@@ -118,20 +79,16 @@ def _millions(value: float) -> str:
     return f"${value / 1_000_000:g}M"
 
 
-# Turnover rather than share count: a share-count floor scales with the inverse
-# of price, so it admits $3 stocks and rejects $300 ones at the same liquidity.
 UNIVERSE = (
     f"US equities screened daily: market cap {_millions(500_000_000)} or more, share price "
-    f"${ORB_PRICE_MIN:.0f} or more, 3-month average daily turnover "
-    f"{_millions(ORB_TURNOVER_MIN)} or more, and tradable and fractionable at Alpaca."
+    f"${ORB_PRICE_USD_MIN:.0f} or more, 3-month average daily turnover "
+    f"{_millions(ORB_TURNOVER_USD_MIN)} or more, and tradable and fractionable at Alpaca."
 )
 
-# TFB-50 screens the universe again on its own figures, read from the same daily
-# bars its setup is read from rather than from the screener's three-month
-# average share count.
 TFB_UNIVERSE = (
     f"{UNIVERSE} This engine then screens that list again on its own floors: share price "
-    f"${TFB_PRICE_MIN:.0f} or more, and turnover averaging {_millions(TFB_TURNOVER_MIN)} or "
+    f"${TFB_PRICE_USD_MIN:.0f} or more, and turnover averaging "
+    f"{_millions(TFB_TURNOVER_USD_MIN)} or "
     f"more across the last {TFB_TURNOVER_SESSIONS} completed sessions — the value actually "
     "traded, not a share count against today's price. A symbol whose sessions cannot be read "
     "does not pass."
@@ -167,25 +124,16 @@ def _orb(
     target_multiples: tuple[float, float, float],
     entry_extension_max: float | None,
 ) -> list[Row]:
-    # The opening candle closes at the same instant the first scan runs: the candle
-    # stamped 09:30 covers the five minutes up to 09:35, and 09:35 is when it can
-    # first be read. portfolio.py selects it by label, between_time("09:30", "09:34"),
-    # which is the same one candle — but 09:34 is a stamp, not the end of the period,
-    # so quoting it here would understate the range by a minute.
-    #
-    # A signal candle must have closed at or after the opening candle did, so the
-    # opening candle cannot break its own range. The earliest a breakout can be read
-    # is therefore one candle later still, and the order goes in at that moment.
     session_open = datetime(2000, 1, 1, 9, 30)
     opening_end = f"{session_open + timedelta(minutes=minutes):%H:%M}"
     first_entry = f"{session_open + timedelta(minutes=2 * minutes):%H:%M}"
-    risk_cap = ORB_RISK_CEILING if minutes == 5 else per_trade
+    risk_cap = ORB_RISK_MAX if minutes == 5 else per_trade
 
     confirmation = (
         f"Volume traded up to the signal candle's close is at least {volume_multiple:g}x the "
         f"{ORB_HISTORY_SESSIONS}-session average at the same time of day, and that average "
-        f"session turns over at least {_millions(ORB_TURNOVER_MIN)}. All {ORB_HISTORY_SESSIONS} "
-        "earlier sessions "
+        f"session turns over at least {_millions(ORB_TURNOVER_USD_MIN)}. "
+        f"All {ORB_HISTORY_SESSIONS} earlier sessions "
         "must be there to compare against — a shorter history is not a weaker signal, it is "
         "no confirmation at all, and the breakout is passed over. The reading is taken as the "
         "signal candle closed rather than as the scan runs, so a breakout read a pass late is "
@@ -283,7 +231,7 @@ def _orb(
             f"close, and the fill then sets {fill_sets}. It is passed "
             "over if another engine already holds the stock, if the account is at its position "
             "cap or fully invested, if the size that fits the risk limits comes to less than "
-            f"${POSITION_NOTIONAL_MIN}, or if that live quote has already run back through the "
+            f"${POSITION_NOTIONAL_USD_MIN}, or if that live quote has already run back through the "
             "stop the breakout would have been given — a position cannot be opened already "
             f"past its own exit.{extension}",
             source="portfolio.py · on_trading_iteration, _run_orb_variant, _enter",
@@ -312,12 +260,12 @@ def _orb(
             field="Max Risk",
             value=f"{_pct(risk_cap)} of account equity per trade"
             + (
-                f" — this engine states its own {_pct(ORB_RISK_CEILING)} in the register, so "
+                f" — this engine states its own {_pct(ORB_RISK_MAX)} in the register, so "
                 f"that governs instead of the configured {_pct(per_trade)}."
                 if minutes == 5
                 else " (the configured per-trade limit; this engine states none of its own)."
             )
-            + f" A single position is never worth more than {_pct(POSITION_FRACTION_CEILING)} "
+            + f" A single position is never worth more than {_pct(POSITION_FRACTION_CAP_MAX)} "
             "of equity.",
             source="portfolio.py · _enter",
         ),
@@ -338,7 +286,7 @@ def _orb(
             "market order fills in time, and this engine never holds overnight. The "
             "daily loss limit closes all positions and stops new entries for the rest of "
             "the day.",
-            source="portfolio.py · _manage, _daily_loss_reached",
+            source="portfolio.py · _manage, _is_daily_loss_reached",
         ),
     ]
 
@@ -362,10 +310,10 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         )
         risk = (
             "No per-trade risk limit is set for this engine, so the size comes from the "
-            f"position cap alone: never more than {_pct(POSITION_FRACTION_CEILING)} of equity."
+            f"position cap alone: never more than {_pct(POSITION_FRACTION_CAP_MAX)} of equity."
         )
-        setup_source = "strategies/shared.py · momentum_entry"
-        entry_source = "strategies/shared.py · momentum_entry, portfolio.py · _run_sma"
+        setup_source = "strategies/shared.py · does_momentum_enter"
+        entry_source = "strategies/shared.py · does_momentum_enter, portfolio.py · _run_sma"
     else:
         setup = (
             "The closing price is above its 50-day average, that average is higher than it "
@@ -380,13 +328,13 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
             "one frees up. Upcoming earnings do not block an entry for this engine."
         )
         risk = (
-            f"{_pct(TFB_RISK_CEILING)} of account equity per trade — this engine states its "
-            f"own {_pct(TFB_RISK_CEILING)} in the register, so that governs instead of the "
+            f"{_pct(TFB_RISK_MAX)} of account equity per trade — this engine states its "
+            f"own {_pct(TFB_RISK_MAX)} in the register, so that governs instead of the "
             f"configured {_pct(per_trade)}. A single position is never worth more than "
-            f"{_pct(POSITION_FRACTION_CEILING)} of equity, and this engine holds at most "
+            f"{_pct(POSITION_FRACTION_CAP_MAX)} of equity, and this engine holds at most "
             f"{TFB_POSITIONS_MAX} positions at once."
         )
-        setup_source = "strategies/shared.py · tfb_entry"
+        setup_source = "strategies/shared.py · does_tfb_enter"
         entry_source = "portfolio.py · _run_tfb"
 
     return [
@@ -394,7 +342,7 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
             field="Market",
             value=TFB_UNIVERSE if engine == "tfb_50" else UNIVERSE,
             source="portfolio.py · _discover_eligible_symbols"
-            + (", strategies/tfb_50.py · tfb_market_ready" if engine == "tfb_50" else ""),
+            + (", strategies/tfb_50.py · is_tfb_market_ready" if engine == "tfb_50" else ""),
         ),
         Row(
             field="Sentiment",
@@ -448,7 +396,7 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
                 else "drops below its 20-day average, or RSI (14) falls under 50. Either "
                 "one is enough on its own."
             ),
-            source="strategies/shared.py · signal_exit",
+            source="strategies/shared.py · does_signal_exit",
         ),
         Row(
             field="Emergency Exit",
@@ -462,13 +410,12 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
                 "the rest of the day. Earnings do not close a position for this engine — it "
                 "holds through the report and leaves on its threshold or its exit rule."
             ),
-            source="portfolio.py · _manage_daily, _daily_loss_reached",
+            source="portfolio.py · _manage_daily, _is_daily_loss_reached",
         ),
     ]
 
 
 def portfolio_rules(daily_loss: float) -> list[Row]:
-    """Limits the composer applies across every engine at once."""
     return [
         Row(
             field="Position cap",
@@ -493,24 +440,18 @@ def portfolio_rules(daily_loss: float) -> list[Row]:
             field="One owner per stock",
             value="Only one engine holds a given stock at a time; the others skip it while "
             "that position is open.",
-            source="portfolio.py · _claimed",
+            source="portfolio.py · _is_claimed",
         ),
         Row(
             field="Daily loss limit",
             value=f"If equity falls {_pct(daily_loss)} below the previous close, every position "
             "is closed and no new trade is opened until the next session.",
-            source="portfolio.py · _daily_loss_reached",
+            source="portfolio.py · _is_daily_loss_reached",
         ),
     ]
 
 
 def strategy_spec(configuration: TradingConfiguration | None) -> dict[str, Any]:
-    """The rule sheet, with the live risk settings folded into the wording.
-
-    Passing the bot's reported configuration keeps the risk figures honest: they
-    are environment settings, so quoting the repository defaults would describe
-    a deployment that may not be the running one.
-    """
     per_trade = configuration.risk_per_trade_max if configuration else RISK_PER_TRADE_DEFAULT
     daily_loss = configuration.risk_per_day_max if configuration else RISK_PER_DAY_DEFAULT
 

@@ -10,7 +10,7 @@ type JsonRow = dict[str, Any]
 
 
 DATA_API_URL = "https://data.alpaca.markets"
-PAGE_LIMIT = 100
+PAGE_ROWS_MAX = 100
 PAGES_MAX = 40
 
 
@@ -43,14 +43,6 @@ class AlpacaReadClient:
         return attributed
 
     async def raw_positions(self) -> list[JsonRow]:
-        """Holdings as the broker reports them, without the strategy enrichment.
-
-        `positions` re-reads five hundred orders to name the engine behind each
-        holding. The dashboard does not need it to: it matches a position to the
-        cycle that opened it out of the fill history it already has. Skipping
-        that read is what keeps the pulse down to two calls, and so cheap enough
-        to ask for every couple of seconds.
-        """
         return cast(list[JsonRow], await self._get("/v2/positions"))
 
     async def orders(self, status: str, limit: int, until: str | None = None) -> list[JsonRow]:
@@ -94,12 +86,6 @@ class AlpacaReadClient:
         return await self._get("/v2/clock")
 
     async def raw_fills(self, after: str | None = None) -> list[JsonRow]:
-        """Fills as the broker reports them, paged, without per-page enrichment.
-
-        `fills` attaches a strategy label by re-reading orders for every page,
-        which doubles the request count. The ledger tags fills itself from a
-        single order read, so it walks the raw endpoint instead.
-        """
         collected: list[JsonRow] = []
         token: str | None = None
         for _ in range(PAGES_MAX):
@@ -110,7 +96,7 @@ class AlpacaReadClient:
                     {
                         "activity_types": "FILL",
                         "direction": "desc",
-                        "page_size": PAGE_LIMIT,
+                        "page_size": PAGE_ROWS_MAX,
                         "page_token": token,
                         "after": after,
                     },
@@ -120,12 +106,11 @@ class AlpacaReadClient:
                 break
             collected.extend(page)
             token = str(page[-1]["id"])
-            if len(page) < PAGE_LIMIT:
+            if len(page) < PAGE_ROWS_MAX:
                 break
         return collected
 
     async def raw_closed_orders(self, after: str | None = None) -> list[JsonRow]:
-        """Closed orders, paged back by submission time, so fills can be tagged."""
         collected: list[JsonRow] = []
         seen: set[str] = set()
         until: str | None = None
@@ -136,7 +121,7 @@ class AlpacaReadClient:
                     "/v2/orders",
                     {
                         "status": "closed",
-                        "limit": PAGE_LIMIT,
+                        "limit": PAGE_ROWS_MAX,
                         "direction": "desc",
                         "until": until,
                         "after": after,
@@ -149,7 +134,7 @@ class AlpacaReadClient:
             collected.extend(fresh)
             seen.update(str(order["id"]) for order in fresh)
             until = str(page[-1]["submitted_at"])
-            if len(page) < PAGE_LIMIT:
+            if len(page) < PAGE_ROWS_MAX:
                 break
         return collected
 
@@ -177,8 +162,6 @@ class AlpacaReadClient:
 
 
 class AlpacaMarketDataClient:
-    """Reads the market-data host, which is separate from the trading host."""
-
     def __init__(self, client: httpx.AsyncClient) -> None:
         self._client = client
 
@@ -193,7 +176,6 @@ class AlpacaMarketDataClient:
         end: str | None = None,
         limit: int = 1000,
     ) -> list[JsonRow]:
-        """One page of bars. Callers bound the window, so no paging is needed."""
         params = {
             "timeframe": timeframe,
             "start": start,
@@ -213,12 +195,6 @@ class AlpacaMarketDataClient:
         limit: int = 1000,
         pages_max: int = 6,
     ) -> list[JsonRow]:
-        """Bars across however many pages the window spans.
-
-        Alpaca answers at most a page at a time whatever limit is asked for, so
-        a window wider than one page comes back silently short — which on a
-        chart reads as the data simply stopping partway.
-        """
         params = {
             "timeframe": timeframe,
             "start": start,

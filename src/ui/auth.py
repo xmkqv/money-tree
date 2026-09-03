@@ -6,7 +6,7 @@ from authlib.common.security import generate_token
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import TypeAdapter
 
-from ui.config import WebSettings
+from .config import WebSettings
 
 
 AUTHORIZATION_URL = "https://backboard.railway.com/oauth/auth"

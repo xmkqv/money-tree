@@ -9,10 +9,10 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from ui.alpaca import DATA_API_URL, AlpacaMarketDataClient, AlpacaReadClient, alpaca_api_url
-from ui.auth import RailwayOAuthClient
-from ui.config import WebSettings
-from ui.dashboard import NO_STORE, RuntimeStore, create_dashboard_router, error_response
+from .alpaca import DATA_API_URL, AlpacaMarketDataClient, AlpacaReadClient, alpaca_api_url
+from .auth import RailwayOAuthClient
+from .config import WebSettings
+from .dashboard import NO_STORE, RuntimeStore, create_dashboard_router, error_response
 
 
 PUBLIC_PATHS = frozenset({"/healthz", "/login", "/auth/callback", "/internal/state"})

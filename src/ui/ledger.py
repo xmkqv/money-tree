@@ -13,8 +13,6 @@ EPSILON = 1e-9
 
 
 class Fill(TypedDict):
-    """One execution inside a cycle, so a scaled-out exit is not hidden by its average."""
-
     d: str
     m: int
     p: float
@@ -54,14 +52,6 @@ STRATEGY_IDS_BY_LABEL = {label: name for name, label in STRATEGY_LABELS.items()}
 
 
 def strategy_id(published: str) -> str:
-    """Resolve a published roster entry to the engine id the view keys on.
-
-    The bot publishes display labels — bot/trade.py maps its strategy names
-    through STRATEGY_LABELS before handing them to the exporter — while every
-    other part of this view keys on the id. Ids are accepted too, so the panel
-    keeps working if the exporter is ever changed to publish them, and an entry
-    matching neither is passed through so it stays visible rather than vanishing.
-    """
     if published in STRATEGY_LABELS:
         return published
     return STRATEGY_IDS_BY_LABEL.get(published, published)
@@ -72,8 +62,6 @@ def _local(timestamp: str) -> datetime:
 
 
 class OpenCycle(TypedDict):
-    """A position still held. Carries enough to chart it, not just to name it."""
-
     strategy: str
     opened: str
     inDate: str
@@ -85,14 +73,6 @@ def match_cycles(
     fills: list[dict[str, Any]],
     orders: list[dict[str, Any]],
 ) -> tuple[list[Cycle], dict[str, OpenCycle]]:
-    """Fold fills into position cycles — one trade per flat-to-flat round trip.
-
-    A single position is usually opened and closed across many fills (fractional
-    sizing splits every order), so matching fill-to-fill would report the same
-    trade several times over. Attribution comes from the engine tag the bot puts
-    on the opening order, and P&L is taken from raw cash flows rather than
-    averaged prices so it stays exact.
-    """
     engines = {
         order["id"]: order_engine(str(order.get("client_order_id") or "")) for order in orders
     }
@@ -196,7 +176,6 @@ def summarise(cycles: list[Cycle]) -> dict[str, Any]:
 
 
 def sessions(cycles: list[Cycle], closes: dict[str, float], opening: float) -> list[Session]:
-    """Realised P&L per trading day, each keyed to the equity it started from."""
     grouped: defaultdict[str, list[Cycle]] = defaultdict(list)
     for cycle in cycles:
         grouped[cycle["date"]].append(cycle)
@@ -227,7 +206,6 @@ SHORT_LABELS: dict[str, str] = {
 
 
 def strategy_labels() -> list[dict[str, str]]:
-    """Every engine the bot can tag, plus the catch-all for untagged orders."""
     labels = [
         {"id": name, "short": SHORT_LABELS[name], "label": STRATEGY_LABELS[name]}
         for name in STRATEGY_LABELS

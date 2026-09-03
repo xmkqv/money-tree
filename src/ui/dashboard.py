@@ -12,15 +12,16 @@ from fastapi import APIRouter, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from itsdangerous import BadSignature, SignatureExpired, TimestampSigner
-from pydantic import AwareDatetime, ValidationError
+from pydantic import ValidationError
 from starlette.responses import FileResponse
 
 from bot.strategies.orb_base import range_stop
 from bot.strategies.shared import Direction
 from bot.types import STATE_SIGNATURE_SALT, RuntimeSnapshot
-from ui.alpaca import AlpacaMarketDataClient, AlpacaReadClient
-from ui.config import WebSettings
-from ui.ledger import (
+
+from .alpaca import AlpacaMarketDataClient, AlpacaReadClient
+from .config import WebSettings
+from .ledger import (
     TRADING_ZONE,
     match_cycles,
     parse_day,
@@ -29,7 +30,7 @@ from ui.ledger import (
     strategy_labels,
     summarise,
 )
-from ui.strategies import entry_windows, strategy_spec
+from .strategies import entry_windows, strategy_spec
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
@@ -50,16 +51,6 @@ IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
 
 
 def _fingerprint_assets() -> tuple[dict[str, tuple[Path, str]], dict[bytes, bytes]]:
-    """Give every asset a URL that changes whenever its bytes change.
-
-    Assets are served as immutable, so a browser holding one cached will not
-    revalidate it for a year. At a fixed path that silently breaks upgrades: a
-    returning visitor keeps the old stylesheet and the old script while the
-    markup, which does revalidate, arrives new. The page then renders unstyled
-    and no figures ever appear, because the stale script is looking for
-    elements that no longer exist. Putting a digest of the contents in the path
-    means new bytes are always a new URL, and so always a fresh fetch.
-    """
     routes: dict[str, tuple[Path, str]] = {}
     rewrites: dict[bytes, bytes] = {}
     for name, media_type in ASSET_MEDIA_TYPES.items():
@@ -90,16 +81,6 @@ DASHBOARD_HEADERS = {
 
 
 class ReadCache:
-    """One upstream read shared by every viewer, held for as long as it is true.
-
-    The bot shares this Alpaca key, and Alpaca rate-limits per key, so the cost
-    of the dashboard is capped here rather than left to scale with viewers: one
-    assembly per period regardless of how many people are watching. The ledger
-    is a set of paged reads and is held for a minute — at the page ceiling that
-    is roughly 47 requests a minute against a 200 limit. The pulse is two reads
-    and is held for two seconds, so it adds about 60 a minute on top.
-    """
-
     def __init__(self, ttl_seconds: int) -> None:
         self._ttl = ttl_seconds
         self._lock = asyncio.Lock()
@@ -116,7 +97,6 @@ class ReadCache:
         self._stamped_at = time.monotonic()
 
     def drop(self) -> None:
-        """Retire the held answer, so the next reader assembles a new one."""
         self._payload = None
 
     @property
@@ -124,9 +104,6 @@ class ReadCache:
         return self._lock
 
 
-# How much context each timeframe puts around a trade, and the bar size Alpaca
-# is asked for. The window is bounded per timeframe so one chart is always one
-# upstream page, whatever the trade's span.
 CHART_TIMEFRAMES: dict[str, dict[str, Any]] = {
     "5Min": {"bar": "5Min", "pad_days": 1, "span_max": 10, "warmup_days": 5},
     "1Hour": {"bar": "1Hour", "pad_days": 7, "span_max": 90, "warmup_days": 46},
@@ -137,22 +114,13 @@ CHART_TTL_SECONDS = 120
 CHART_CACHE_MAX = 64
 
 
-# The exchange opens at 09:30, but Alpaca aligns intraday bars to midnight, so
-# an "hourly" bar runs 09:00 to 10:00 and straddles the open. Half-hour bars do
-# land on 09:30, so the session's hours are folded from those instead.
 SESSION_OPEN = dtime(9, 30)
 SESSION_CLOSE = dtime(16, 0)
 SESSION_SOURCE = "30Min"
-SESSION_SOURCE_LIMIT = 1000
+SESSION_SOURCE_BARS_MAX = 1000
 
 
 def session_hour_bars(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Fold half-hour bars into hours counted from the opening bell.
-
-    Regular trading only: the pre- and post-market bars Alpaca returns alongside
-    would put an 08:00 candle on a chart of the session. The last bucket is the
-    half hour to the close, since the session is six and a half hours long.
-    """
     buckets: dict[datetime, list[dict[str, Any]]] = {}
     for bar in bars:
         at = datetime.fromisoformat(str(bar["t"]).replace("Z", "+00:00")).astimezone(TRADING_ZONE)
@@ -179,14 +147,6 @@ def session_hour_bars(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 class BarCache:
-    """Keyed by symbol, timeframe and window, so revisiting a trade is free.
-
-    A chart is one upstream read, but the symbol is chosen by whoever is
-    clicking, so the volume is not bounded by the page the way the ledger is.
-    Holding each answer briefly keeps a browse through the log from turning into
-    a read per click against the limit the bot shares.
-    """
-
     def __init__(self, ttl_seconds: int = CHART_TTL_SECONDS) -> None:
         self._ttl = ttl_seconds
         self._entries: OrderedDict[str, tuple[float, list[dict[str, Any]]]] = OrderedDict()
@@ -211,14 +171,6 @@ class BarCache:
 
 
 def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, datetime, datetime]:
-    """Data start, display start and end for a trade, in exchange time.
-
-    Padding gives the trade somewhere to sit rather than starting hard on the
-    entry, and the span is clamped so a long hold cannot ask for a year of
-    five-minute bars. The data reaches further back than the display so a
-    200-period average has something to average before the first drawn bar —
-    otherwise the longest line would simply be missing from every chart.
-    """
     rules = CHART_TIMEFRAMES[timeframe]
     pad = timedelta(days=int(rules["pad_days"]))
     display = opened - pad
@@ -233,10 +185,6 @@ def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, 
     )
 
 
-# Reconstruction of the levels an engine would have set, from the same rules the
-# composer uses. It is a reconstruction and the page says so: the live stop
-# trails once a target is hit, so where it finally sat is not recoverable from
-# market data alone.
 ATR_PERIOD = 14
 DAILY_STOP_MULTIPLES = {"sma": 1.5, "tfb_50": 2.0}
 ORB_OPENING_MINUTES = {"orb": 5, "orb_momentum": 10}
@@ -244,12 +192,6 @@ ORB_TARGET_MULTIPLES = {"orb": (1.5, 2.5, 4.0), "orb_momentum": (2.0, 3.0, 5.0)}
 
 
 def wilder_atr(bars: list[dict[str, Any]], period: int = ATR_PERIOD) -> float | None:
-    """Average true range, smoothed the way pandas-ta smooths it for the bot.
-
-    Reimplemented here rather than imported so the web service does not pull in
-    the whole strategy stack — lumibot, pandas-ta and the exchange calendars —
-    to draw one dashed line.
-    """
     if len(bars) <= period:
         return None
     ranges: list[float] = []
@@ -269,7 +211,6 @@ def wilder_atr(bars: list[dict[str, Any]], period: int = ATR_PERIOD) -> float | 
 def opening_range(
     bars: list[dict[str, Any]], day: date, minutes: int
 ) -> tuple[float, float] | None:
-    """High and low of the session's first candle of that length."""
     opens = datetime.combine(day, dtime(9, 30), TRADING_ZONE)
     closes = opens + timedelta(minutes=minutes)
     inside = [
@@ -287,11 +228,7 @@ def opening_range(
 def orb_levels(
     engine: str, direction: int, entry: float, high: float, low: float
 ) -> dict[str, Any]:
-    """The stop and the three targets the composer would have set on this range."""
     stop = range_stop(cast(Direction, direction), high, low)
-    # Both engines re-cut their targets from the filled price. The ten-minute
-    # register writes its own as fractions of the range measured from the breakout
-    # level, which is these multiples of the risk a fill at that level would take.
     risk = abs(entry - stop)
     multiples = ORB_TARGET_MULTIPLES.get(engine, ORB_TARGET_MULTIPLES["orb"])
     targets = [entry + direction * risk * multiple for multiple in multiples]
@@ -337,7 +274,6 @@ def read_response(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
 
 
 def _funded_points(history: dict[str, Any]) -> list[tuple[datetime, float]]:
-    """Equity readings from the point the account was actually funded."""
     return [
         (datetime.fromtimestamp(int(point["timestamp"]), TRADING_ZONE), float(point["equity"]))
         for point in history["points"]
@@ -359,12 +295,6 @@ def _intraday_series(history: dict[str, Any]) -> tuple[list[dict[str, Any]], str
 
 
 def _position_marks(raw: list[dict[str, Any]], equity: float) -> list[dict[str, Any]]:
-    """The half of a holding that moves with the price, and nothing else.
-
-    Split out because the pulse can afford to re-read it every couple of
-    seconds, while the other half — which strategy opened the position, and
-    when — is matched out of the paged fill history and cannot.
-    """
     marks: list[dict[str, Any]] = []
     for item in raw:
         value = float(item["market_value"])
@@ -398,8 +328,6 @@ def _position_rows(
                 **mark,
                 "strategy": held.get("strategy", "unattributed"),
                 "opened": held.get("opened", "—"),
-                # only present when the position matched a cycle in the fill
-                # history; without them the page cannot place an entry on a chart
                 "inDate": held.get("inDate"),
                 "inMinute": held.get("inMinute"),
                 "fills": held.get("fills", []),
@@ -414,7 +342,6 @@ async def build_ledger(
     snapshot: RuntimeSnapshot | None,
     stale: bool,
 ) -> dict[str, Any]:
-    """One assembled view of the account: state, holdings, closed trades, curves."""
     account, positions, fills, orders, daily, intraday, clock = await asyncio.gather(
         alpaca.account(),
         alpaca.raw_positions(),
@@ -448,9 +375,6 @@ async def build_ledger(
         bars = []
 
     return {
-        # Seconds, because the pulse restamps this every two seconds and the two
-        # stamps share one line in the header: a format that changed with
-        # whichever read landed last would read as a glitch rather than a clock.
         "asOf": datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
         "today": today,
         "accountNumber": str(account["account_number"]),
@@ -487,16 +411,6 @@ async def build_ledger(
 
 
 async def build_pulse(alpaca: AlpacaReadClient) -> dict[str, Any]:
-    """Just the figures that move while a session runs.
-
-    The ledger is seven upstream reads and a walk through the fill history,
-    which is why it is held for a minute — and why a portfolio figure on the
-    page could sit ninety seconds behind the account it names. This is the same
-    account read cut down to the two calls that actually change tick to tick, so
-    it can be asked for often enough that the number moves as the market does.
-    Everything a closed trade decides — the log, the calendar, the win rate — is
-    absent on purpose: none of it changes without a fill.
-    """
     account, positions = await asyncio.gather(alpaca.account(), alpaca.raw_positions())
     equity = round(float(account["equity"]), 2)
     marks = _position_marks(positions, equity)
@@ -512,25 +426,13 @@ async def build_pulse(alpaca: AlpacaReadClient) -> dict[str, Any]:
 
 
 def bot_state(snapshot: RuntimeSnapshot | None, stale: bool) -> dict[str, Any]:
-    """Which engines are running right now, as opposed to merely configured.
-
-    A strategy counts as running only while the bot is reporting a live
-    heartbeat: a roster read from a snapshot that stopped arriving describes
-    what *was* running. Callers overlay this on the cached payload rather than
-    letting it age with it, because the snapshot is held in local memory and so
-    costs nothing to re-read, while the rest of the view is paged Alpaca calls.
-    """
     running = snapshot is not None and snapshot.status == "running" and not stale
     return {
         "status": snapshot.status if snapshot else "unknown",
         "stale": stale,
         "running": running,
-        # Without a snapshot the roster is unknown, which is not the same as
-        # every engine being switched off.
         "reported": snapshot is not None,
         "strategies": [strategy_id(name) for name in snapshot.strategies] if snapshot else [],
-        # A paused engine is still on the roster and still manages what it holds,
-        # so the view needs it separated from the engines that are not running.
         "paused": [strategy_id(name) for name in snapshot.paused] if snapshot else [],
     }
 
@@ -581,44 +483,6 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
             return error_response("Session is invalid", 401)
         return JSONResponse({"csrf_token": token}, headers=NO_STORE)
 
-    @router.get("/api/account")
-    async def account(request: Request) -> JSONResponse:
-        return read_response(await alpaca(request).account(), 5)
-
-    @router.get("/api/positions")
-    async def positions(request: Request) -> JSONResponse:
-        return read_response(await alpaca(request).positions(), 5)
-
-    @router.get("/api/orders/open")
-    async def open_orders(request: Request) -> JSONResponse:
-        return read_response(await alpaca(request).orders("open", 100), 5)
-
-    @router.get("/api/orders")
-    async def orders(
-        request: Request,
-        limit: Annotated[int, Query(ge=1, le=100)] = 100,
-        until: AwareDatetime | None = None,
-    ) -> JSONResponse:
-        max_age = 300 if until is not None else 15
-        cursor = until.isoformat() if until is not None else None
-        return read_response(await alpaca(request).orders("closed", limit, cursor), max_age)
-
-    @router.get("/api/fills")
-    async def fills(
-        request: Request,
-        limit: Annotated[int, Query(ge=1, le=100)] = 100,
-        page_token: Annotated[
-            str | None,
-            Query(
-                min_length=55,
-                max_length=55,
-                pattern=r"^[0-9]{17}::[0-9a-fA-F]{8}-(?:[0-9a-fA-F]{4}-){3}[0-9a-fA-F]{12}$",
-            ),
-        ] = None,
-    ) -> JSONResponse:
-        max_age = 300 if page_token is not None else 15
-        return read_response(await alpaca(request).fills(limit, page_token), max_age)
-
     @router.get("/api/bars")
     async def bars(
         request: Request,
@@ -627,7 +491,6 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         opened: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
         closed: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
     ) -> JSONResponse:
-        """Bars around one trade. The window is derived here, not sent by the page."""
         try:
             opened_on, closed_on = parse_day(opened), parse_day(closed)
         except ValueError:
@@ -648,7 +511,7 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
                             SESSION_SOURCE,
                             start.isoformat(),
                             end.isoformat(),
-                            limit=SESSION_SOURCE_LIMIT,
+                            limit=SESSION_SOURCE_BARS_MAX,
                         )
                         cached = session_hour_bars(half)
                     else:
@@ -691,12 +554,6 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         entry: Annotated[float, Query(gt=0)],
         opened: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
     ) -> JSONResponse:
-        """Where this engine's rules put the stop and targets for one trade.
-
-        Fetched once per trade rather than per timeframe, so switching bar size
-        costs nothing, and cached like the bars because the symbol is chosen by
-        whoever is clicking rather than bounded by the page.
-        """
         try:
             opened_on = parse_day(opened)
         except ValueError:
@@ -740,7 +597,6 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
 
     @router.get("/api/strategies")
     async def strategies() -> JSONResponse:
-        """The rule sheet, quoting whatever risk limits the bot is reporting."""
         snapshot, _ = runtime_state()
         configuration = snapshot.configuration if snapshot else None
         return read_response(strategy_spec(configuration), 60)
@@ -759,7 +615,6 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
 
     @router.get("/api/pulse")
     async def pulse(request: Request) -> JSONResponse:
-        """The moving figures, read often and shared by everyone watching."""
         cached = pulse_cache.fresh()
         if cached is None:
             async with pulse_cache.lock:
@@ -768,13 +623,6 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
                     cached = await build_pulse(alpaca(request))
                     pulse_cache.store(cached)
 
-        # A holding that has opened or closed since the ledger was assembled
-        # makes that assembly wrong rather than merely old: the new position has
-        # no strategy against it and the closed one has no trade, and only the
-        # ledger can supply either. The pulse is the first read to see it, so it
-        # retires the assembly here and the next reader pays for a fresh one,
-        # instead of the page describing half an account for the rest of the
-        # minute.
         held = ledger_cache.fresh()
         if held is not None and {row["symbol"] for row in held["positions"]} != {
             mark["symbol"] for mark in cached["positions"]
@@ -782,23 +630,6 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
             ledger_cache.drop()
 
         return read_response(cached, 0)
-
-    @router.get("/api/equity")
-    async def equity(
-        request: Request, period: Literal["1D", "1W", "1M", "1A"] = "1D"
-    ) -> JSONResponse:
-        return read_response(await alpaca(request).equity(period, PORTFOLIO_TIMEFRAMES[period]), 60)
-
-    @router.get("/api/run")
-    async def runtime() -> JSONResponse:
-        snapshot, stale = runtime_state()
-        return read_response(snapshot, 5, stale=stale)
-
-    @router.get("/api/events")
-    async def events(limit: Annotated[int, Query(ge=1, le=50)] = 50) -> JSONResponse:
-        snapshot, stale = runtime_state()
-        data = list(reversed(snapshot.events[-limit:])) if snapshot else []
-        return read_response(data, 5, stale=stale)
 
     @router.post("/internal/state", status_code=204)
     async def publish_runtime(request: Request) -> Response:
