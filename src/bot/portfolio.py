@@ -46,6 +46,7 @@ from bot.strategies.shared import (
     signal_exit,
     tfb_entry,
 )
+from bot.strategies.tfb_50 import TFB_POSITIONS_MAX, TFB_RISK_CEILING
 from bot.types import STRATEGY_LABELS, EventLevel, StrategyName, active_strategies
 
 
@@ -69,8 +70,10 @@ STOP_COVERAGE_TOLERANCE = 1e-6
 # order, so it is submitted a minute early to leave room for the fill.
 ORB_CLOSE_DEADLINE = time(15, 54)
 # Whether a daily engine's signal exit waits for both of its conditions or acts
-# on either. Momentum (SMA) exits on either; TFB-50 asks for the two together.
-DAILY_EXIT_NEEDS_BOTH: dict[StrategyName, bool] = {"sma": False, "tfb_50": True}
+# on either. Both daily engines exit on either: TFB-50's register calls the
+# close under its average and weak RSI an emergency exit, and an emergency exit
+# that waited for the second condition would hold through the first.
+DAILY_EXIT_NEEDS_BOTH: dict[StrategyName, bool] = {"sma": False, "tfb_50": False}
 # Where each breakout engine's three scale-out targets sit, counted in multiples
 # of the risk the fill actually took. ORB-10m's register writes them as fractions
 # of the opening range measured from the breakout level — half a range, one range,
@@ -661,10 +664,26 @@ class Strategy(StrategyBase):
 
     def _run_tfb(self, now: datetime) -> None:
         for symbol, frame in self._ranked(now):
+            if self._engine_position_count("tfb_50") >= TFB_POSITIONS_MAX:
+                self._event(
+                    f"tfb-capacity-{now.date()}",
+                    "info",
+                    f"TFB-50 entries paused: {TFB_POSITIONS_MAX} positions already open",
+                    "tfb_50",
+                )
+                return
             if self._claimed(symbol) or not tfb_entry(frame):
                 continue
             last = float(cast(Any, frame["close"]).iloc[-1])
-            self._enter("tfb_50", symbol, symbol, last, last - 2.0 * latest_atr(frame), now)
+            self._enter(
+                "tfb_50",
+                symbol,
+                symbol,
+                last,
+                last - 2.0 * latest_atr(frame),
+                now,
+                risk_fraction_max=TFB_RISK_CEILING,
+            )
 
     def _run_orb(self, now: datetime) -> None:
         self._run_orb_variant("orb", now, 5, 1.3, False, True)
@@ -837,6 +856,16 @@ class Strategy(StrategyBase):
             f"{settings.alpaca_data_feed} feed ({detail[:200]})",
             engine,
         )
+
+    def _engine_position_count(self, engine: StrategyName) -> int:
+        """Positions one engine holds or has ordered, for a cap of its own."""
+        held = sum(1 for holding in self._holdings.values() if holding.engine == engine)
+        ordered = sum(
+            1
+            for asset, pending in self._pending.items()
+            if pending.holding.engine == engine and asset not in self._holdings
+        )
+        return held + ordered
 
     def _orb_position_count(self) -> int:
         """Breakout positions held or ordered, across both breakout engines.

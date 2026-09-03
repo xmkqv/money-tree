@@ -264,7 +264,7 @@ exit
 
 ```text:surface
 status
-    state = paused
+    state = enabled
 
 market
     asset = US stocks
@@ -291,10 +291,11 @@ entry
     short signal = none
     order = market open after the signal candle
     earnings block = none
+    max positions = 5
 
 risk
     position size = 10% of account
-    risk per trade = not set
+    risk per trade = 0.5% of account
     risk-to-reward ratio = none
     R = not set
     initial stop = entry price - 2 * ATR(14)
@@ -304,7 +305,7 @@ risk
 
 exit
     profit targets = none
-    signal exit = daily close < SMA(20) and RSI(14) < 50
+    signal exit = daily close < SMA(20) or RSI(14) < 50
     earnings exit = close any open position on the day before earnings
     deadline = none
     shared rules = Stop Loss and Emergency Exit

@@ -23,6 +23,7 @@ from bot.strategies.orb_base import (
     ORB_STOP_FRACTION_MIN,
     ORB_TURNOVER_MIN,
 )
+from bot.strategies.tfb_50 import TFB_POSITIONS_MAX, TFB_RISK_CEILING
 from bot.types import STRATEGY_LABELS, TradingConfiguration
 
 
@@ -80,7 +81,7 @@ UNCAPPED_RISK_ENGINES = frozenset({"sma"})
 
 # Whether a daily engine's signal exit waits for both conditions, from
 # portfolio.py DAILY_EXIT_NEEDS_BOTH.
-DAILY_EXIT_NEEDS_BOTH = {"sma": False, "tfb_50": True}
+DAILY_EXIT_NEEDS_BOTH = {"sma": False, "tfb_50": False}
 
 # When each engine can open a trade, from portfolio.py. The daily pair is
 # checked once a session before 09:40; the two breakout engines scan on their
@@ -353,8 +354,11 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
             "an entry for this engine."
         )
         risk = (
-            f"{_pct(per_trade)} of account equity per trade, and a single position is "
-            f"never worth more than {_pct(POSITION_FRACTION_CEILING)} of equity."
+            f"{_pct(TFB_RISK_CEILING)} of account equity per trade — this engine states its "
+            f"own {_pct(TFB_RISK_CEILING)} in the register, so that governs instead of the "
+            f"configured {_pct(per_trade)}. A single position is never worth more than "
+            f"{_pct(POSITION_FRACTION_CEILING)} of equity, and this engine holds at most "
+            f"{TFB_POSITIONS_MAX} positions at once."
         )
         setup_source = "strategies/shared.py · tfb_entry"
         entry_source = "portfolio.py · _run_tfb"
@@ -391,7 +395,13 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
             "only ever moves up.",
             source="portfolio.py · _manage_daily",
         ),
-        Row(field="Max Risk", value=risk, source="portfolio.py · _enter"),
+        Row(
+            field="Max Risk",
+            value=risk,
+            source="portfolio.py · _run_tfb, _enter"
+            if engine == "tfb_50"
+            else "portfolio.py · _enter",
+        ),
         Row(
             field="Min. R:R",
             value="No fixed target. The trade is held while the trend holds and closed on the "

@@ -25,6 +25,12 @@ class DailyStrategy(StrategyBase):
     blocks_entries_before_earnings: ClassVar[bool]
     caps_risk_per_trade: ClassVar[bool]
     exit_needs_both: ClassVar[bool]
+    # An engine whose register states its own figures rather than deferring to
+    # the configuration: a per-trade risk fraction that governs instead of the
+    # configured limit, and a cap on how many positions it may hold. None for
+    # an engine that states neither.
+    risk_fraction_max: ClassVar[float | None]
+    positions_max: ClassVar[int | None]
 
     _baseline_equity: float
     _day: date | None
@@ -116,6 +122,21 @@ class DailyStrategy(StrategyBase):
         index = cast(Any, cast(DatetimeIndex, frame.index))
         return cast(DataFrame, frame[index.date < day])
 
+    def _open_positions(self) -> int:
+        """Names this engine is in, counting buys sent but not yet filled.
+
+        A daily entry fills at the next open, so the broker still reports
+        nothing when the rest of the morning's candidates are considered.
+        `_stops` carries one entry per position from the moment the buy goes
+        in, which is what holds the cap inside a single session.
+        """
+        held = {
+            str(position.asset.symbol)
+            for position in cast(list[Any], self.get_positions())
+            if float(position.quantity) != 0
+        }
+        return len(held.union(self._stops))
+
     def _ranked(self, symbols: list[str]) -> list[tuple[str, DataFrame]]:
         """The tradable symbols and their frames, busiest completed session first.
 
@@ -142,11 +163,15 @@ class DailyStrategy(StrategyBase):
             return
         if self.blocks_entries_before_earnings and self._earnings_blocked(symbol, day):
             return
+        if self.positions_max is not None and self._open_positions() >= self.positions_max:
+            return
         average_range = latest_atr(frame)
         price = float(cast(Any, frame["close"]).iloc[-1])
         stop_distance = self.stop_multiple * average_range
         parameters: dict[str, Any] = self.parameters
         risk_limit = float(parameters["risk_per_trade_max"]) if self.caps_risk_per_trade else None
+        if risk_limit is not None and self.risk_fraction_max is not None:
+            risk_limit = self.risk_fraction_max
         quantity = entry_quantity(
             equity,
             price,

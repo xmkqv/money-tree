@@ -9,6 +9,8 @@ class Strategy(DailyStrategy):
     blocks_entries_before_earnings = True
     exit_needs_both = False
     caps_risk_per_trade = False
+    risk_fraction_max = None
+    positions_max = None
 
     def _entry_ready(self, frame: DataFrame) -> bool:
         return momentum_entry(frame)

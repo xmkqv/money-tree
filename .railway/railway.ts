@@ -75,7 +75,7 @@ export default defineRailway(() => {
       // narrower opening ranges and a share-count view of volume. Change this one
       // literal back to sip once the subscription covers real-time SIP.
       ALPACA_DATA_FEED: "iex",
-      STRATEGIES: "orb,sma",
+      STRATEGIES: "orb,sma,tfb_50",
     },
   });
 

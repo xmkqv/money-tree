@@ -28,6 +28,7 @@ from bot.strategies.orb_base import (
     ORB_TURNOVER_MIN,
 )
 from bot.strategies.shared import MIN_NOTIONAL_USD, entry_quantity, fractional_allowed
+from bot.strategies.tfb_50 import TFB_POSITIONS_MAX, TFB_RISK_CEILING
 from bot.types import TradingConfiguration
 from tests.test_ledger import _snapshot
 from ui.dashboard import (
@@ -423,14 +424,20 @@ def test_intraday_engines_are_flat_before_the_close() -> None:
         assert "15:50" in spec_rows(engine)["Emergency Exit"]
 
 
+def spec_card(spec: dict[str, Any], strategy_id: str) -> dict[str, str]:
+    card = next(card for card in spec["strategies"] if card["id"] == strategy_id)
+    return {row["field"]: row["value"] for row in card["rows"]}
+
+
 def test_risk_wording_follows_the_reported_configuration() -> None:
     """The limits are environment settings, so the page must not quote defaults.
 
-    Read off TFB-50: Momentum (SMA) sets no per-trade risk limit, so its card
-    has no configured figure to follow.
+    Read off ORB-10m, the one engine that still follows the configured
+    per-trade limit: Momentum (SMA) sets no limit at all, and ORB-5m and TFB-50
+    both state their own figure in the register.
     """
     spec = strategy_spec(configuration(per_trade=0.0075, per_day=0.03))
-    rows = {row["field"]: row["value"] for row in spec["strategies"][3]["rows"]}
+    rows = spec_card(spec, "orb_momentum")
     rules = {row["field"]: row["value"] for row in spec["portfolio"]}
 
     assert "0.75% of account equity" in rows["Max Risk"]
@@ -440,8 +447,7 @@ def test_risk_wording_follows_the_reported_configuration() -> None:
 
 def test_spec_falls_back_to_documented_defaults_when_no_bot_is_reporting() -> None:
     spec = strategy_spec(None)
-    card = next(card for card in spec["strategies"] if card["id"] == "tfb_50")
-    rows = {row["field"]: row["value"] for row in card["rows"]}
+    rows = spec_card(spec, "orb_momentum")
 
     assert spec["configured"] is False
     assert f"{RISK_PER_TRADE_DEFAULT:.1%} of account equity" in rows["Max Risk"]
@@ -467,14 +473,40 @@ def test_the_daily_engines_give_up_on_the_twenty_day_average() -> None:
         assert "20-day average" in spec_rows(engine)["Exit Rule"]
 
 
-def test_only_the_momentum_engine_exits_on_either_condition() -> None:
-    """TFB-50 still waits for the close and RSI together."""
+def test_both_daily_engines_exit_on_either_condition() -> None:
+    """TFB-50's register calls this an emergency exit, so it waits for neither."""
     assert DAILY_EXIT_NEEDS_BOTH == COMPOSER_EXIT_NEEDS_BOTH
+    assert DAILY_EXIT_NEEDS_BOTH == {"sma": False, "tfb_50": False}
     assert sma.Strategy.exit_needs_both is False
-    assert tfb_50.Strategy.exit_needs_both is True
+    assert tfb_50.Strategy.exit_needs_both is False
 
-    assert "Either one is enough" in spec_rows("sma")["Exit Rule"]
-    assert "with RSI (14) under 50" in spec_rows("tfb_50")["Exit Rule"]
+    for engine in ("sma", "tfb_50"):
+        assert "Either one is enough" in spec_rows(engine)["Exit Rule"]
+
+
+def test_tfb_50_states_its_own_risk_ceiling() -> None:
+    """0.5% is in its register, so the configured limit does not override it."""
+    assert "risk_fraction_max=TFB_RISK_CEILING" in inspect.getsource(PortfolioStrategy._run_tfb)
+    assert TFB_RISK_CEILING == 0.005
+    assert "risk_limit = self.risk_fraction_max" in inspect.getsource(DailyStrategy._trade)
+    assert tfb_50.Strategy.risk_fraction_max == TFB_RISK_CEILING
+    assert sma.Strategy.risk_fraction_max is None
+
+    # A looser configured limit must not drag the published figure up with it.
+    rows = spec_card(strategy_spec(configuration(per_trade=0.02)), "tfb_50")
+    assert rows["Max Risk"].startswith(f"{TFB_RISK_CEILING:.1%} of account equity per trade")
+
+
+def test_tfb_50_holds_its_own_position_cap_inside_the_portfolio_one() -> None:
+    """Five for this engine, under the portfolio-wide ten."""
+    source = inspect.getsource(PortfolioStrategy._run_tfb)
+
+    assert 'self._engine_position_count("tfb_50") >= TFB_POSITIONS_MAX' in source
+    assert TFB_POSITIONS_MAX < POSITIONS_MAX
+    assert tfb_50.Strategy.positions_max == TFB_POSITIONS_MAX
+    assert sma.Strategy.positions_max is None
+
+    assert f"at most {TFB_POSITIONS_MAX} positions" in spec_rows("tfb_50")["Max Risk"]
 
 
 def test_an_unreadable_earnings_calendar_does_not_force_an_exit() -> None:
