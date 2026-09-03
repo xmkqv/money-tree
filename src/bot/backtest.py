@@ -3,8 +3,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
-from bot.config import settings
-from bot.types import StrategyName
+from .config import settings
+from .types import StrategyName
 
 
 ARTIFACT_NAMES = {
@@ -34,9 +34,10 @@ def run(
 ) -> dict[str, object]:
     from lumibot.backtesting import AlpacaBacktesting, YahooDataBacktesting
 
-    from bot.strategies.base import load_strategy
+    from .portfolio import Strategy
 
     parameters: dict[str, object] = settings.trading_configuration.model_dump()
+    parameters["strategies"] = [strategy_name]
     if symbols:
         parameters["symbols"] = symbols
     datasource = YahooDataBacktesting
@@ -59,7 +60,7 @@ def run(
     if report_mode:
         os.environ[LUMIBOT_DISABLE_UI] = "1"
     try:
-        results = load_strategy(strategy_name).backtest(
+        results = Strategy.backtest(
             datasource,
             start,
             end,

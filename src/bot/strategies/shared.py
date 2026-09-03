@@ -19,10 +19,13 @@ from pandas_ta_classic.utils import cross as ta_cross
 from pandas_ta_classic.volatility.atr import atr as ta_atr
 
 
+yfinance = cast(Any, import_module("yfinance"))
+
+
 type Direction = Literal[-1, 1]
 
 PERIOD = 14
-MIN_NOTIONAL_USD = 1.0
+NOTIONAL_USD_MIN = 1.0
 XNYS = exchange_calendars.get_calendar("XNYS")
 TRADING_ZONE = ZoneInfo(LUMIBOT_DEFAULT_TIMEZONE)
 
@@ -102,12 +105,6 @@ def entry_quantity(
     risk_per_trade_max: float | None,
     fractional_orders: bool,
 ) -> Decimal:
-    """Size a position from the notional cap, and from risk when a limit is set.
-
-    A strategy whose register reads "risk per trade = not set" passes None, and
-    is then sized by the notional cap alone. The stop still has to be a real
-    distance: a non-positive one means the caller's levels are wrong.
-    """
     if (
         not all(isfinite(value) for value in (equity, price, stop_distance))
         or equity <= 0
@@ -118,7 +115,7 @@ def entry_quantity(
     quantity = equity * position_fraction_max / price
     if risk_per_trade_max is not None:
         quantity = min(quantity, equity * risk_per_trade_max / stop_distance)
-    if quantity * price < MIN_NOTIONAL_USD:
+    if quantity * price < NOTIONAL_USD_MIN:
         return Decimal(0)
     return quantity_value(quantity, fractional_orders)
 
@@ -128,27 +125,11 @@ def quantity_value(quantity: float, fractional_orders: bool) -> Decimal:
     return Decimal(str(quantity)).quantize(increment, rounding=ROUND_DOWN)
 
 
-def fractional_allowed(direction: Direction, fractional_orders: bool) -> bool:
-    """Whole shares on a short leg, whatever the account is configured for.
-
-    A broker lends shares, not fractions of one: Alpaca accepts a fractional
-    quantity only to open or close a long. A fractional short is rejected
-    outright, and a fractional *cover* is worse than useless — it would strand a
-    fractional short position that no later order can close. Every quantity on a
-    short, entry, stop and scale-out alike, is therefore rounded down to whole
-    shares. Long orders keep whatever the account allows.
-    """
+def is_fractional_allowed(direction: Direction, fractional_orders: bool) -> bool:
     return fractional_orders and direction == 1
 
 
 def latest_dollar_volume(frame: DataFrame) -> float:
-    """The last completed session's traded value, or 0 when it cannot be read.
-
-    Used to order candidates competing for the same position slots. Share count
-    alone would rank a cheap stock above a higher-priced one turning over the
-    same money, and the position cap is a money cap, so the ranking is on value
-    traded. A symbol whose session cannot be read still trades; it ranks last.
-    """
     if frame.empty or not {"close", "volume"}.issubset(frame.columns):
         return 0.0
     volume = float(cast(float, cast(Series, frame["volume"]).iloc[-1]))
@@ -159,13 +140,6 @@ def latest_dollar_volume(frame: DataFrame) -> float:
 
 
 def average_dollar_volume(frame: DataFrame, sessions: int) -> float:
-    """Traded value averaged over the last completed sessions, or 0.0.
-
-    A screen reads this rather than one session so a single busy day does not
-    admit a name that is usually too thin to get a position in and out of. It
-    reads 0.0 — and so fails any floor — when the history is short or the tape
-    cannot be read, because a symbol that cannot be measured is not screened in.
-    """
     if sessions < 1 or not {"close", "volume"}.issubset(frame.columns):
         return 0.0
     closes = cast(Series, frame["close"]).tail(sessions)
@@ -188,7 +162,7 @@ def market_is_rising(frame: DataFrame) -> bool:
     return latest is not None and latest_average is not None and latest > latest_average
 
 
-def momentum_entry(frame: DataFrame) -> bool:
+def does_momentum_enter(frame: DataFrame) -> bool:
     close = cast(Series, frame["close"])
     if close.count() < 200:
         return False
@@ -243,9 +217,6 @@ def momentum_entry(frame: DataFrame) -> bool:
     assert latest_strength is not None
     assert latest_directional is not None
     trend = latest > latest_50 > latest_200
-    # The cross settles day 1 below and day 2 above the 20-day average. Day 2
-    # must also close up on day 1, so the reclaim is carried by the buyer rather
-    # than by an average drifting down onto a flat price.
     return (
         bool(latest_cross)
         and latest > previous
@@ -255,7 +226,7 @@ def momentum_entry(frame: DataFrame) -> bool:
     )
 
 
-def tfb_entry(frame: DataFrame) -> bool:
+def does_tfb_enter(frame: DataFrame) -> bool:
     close = cast(Series, frame["close"])
     average_50 = ta_sma(close, length=50, talib=False)
     directional = ta_adx(
@@ -291,14 +262,7 @@ def tfb_entry(frame: DataFrame) -> bool:
     )
 
 
-def signal_exit(frame: DataFrame, needs_both: bool = True) -> bool:
-    """Momentum has given out: the close is under its average, RSI is weak, or both.
-
-    Which of those counts is the caller's. TFB-50 waits for the two together.
-    Momentum (SMA) treats either as enough, because waiting for both left it
-    holding through a close under the average whenever RSI was merely soft
-    rather than weak.
-    """
+def does_signal_exit(frame: DataFrame, needs_both: bool = True) -> bool:
     close = cast(Series, frame["close"])
     if close.count() < 20:
         return False
@@ -332,16 +296,14 @@ def next_stop(direction: Direction, active: float, candidate: float) -> float:
 
 
 @lru_cache(maxsize=2048)
-def security_is_eligible(symbol: str) -> bool:
-    finance = cast(Any, import_module("yfinance"))
-    market_cap = finance.Ticker(symbol).fast_info.market_cap
+def is_security_eligible(symbol: str) -> bool:
+    market_cap = yfinance.Ticker(symbol).fast_info.market_cap
     return market_cap is not None and float(market_cap) >= 500_000_000
 
 
 @lru_cache(maxsize=512)
 def earnings_dates(symbol: str) -> tuple[date, ...]:
-    finance = cast(Any, import_module("yfinance"))
-    values = finance.Ticker(symbol).get_earnings_dates(limit=24)
+    values = yfinance.Ticker(symbol).get_earnings_dates(limit=24)
     if values is None:
         return ()
     return tuple(sorted({value.date() for value in values.index}))
@@ -351,19 +313,12 @@ def next_earnings(symbol: str, day: date) -> date | None:
     return next((value for value in earnings_dates(symbol) if value >= day), None)
 
 
-def earnings_blocked(symbol: str, day: date) -> bool:
-    """Whether earnings are close enough to stand in the way of a new position.
-
-    A calendar that reads back empty is not a reason to stay out: the rule bars
-    an entry made *near earnings*, and no known date is not that. A calendar
-    that cannot be read at all is a different matter, and the callers stand
-    aside on it.
-    """
+def is_earnings_blocked(symbol: str, day: date) -> bool:
     upcoming = next_earnings(symbol, day)
     return upcoming is not None and 0 <= (upcoming - day).days <= 5
 
 
-def earnings_exit_due(symbol: str, day: date) -> bool:
+def is_earnings_exit_due(symbol: str, day: date) -> bool:
     upcoming = next_earnings(symbol, day)
     if upcoming is None:
         return False
