@@ -44,14 +44,10 @@ def run(
     datasource_configuration: dict[str, str | bool] | None = None
     datasource_options: dict[str, object] = {}
     if strategy_name in {"orb", "orb_momentum"}:
-        api_key = settings.alpaca_api_key
-        api_secret = settings.alpaca_api_secret
-        if api_key is None or api_secret is None:
-            raise RuntimeError("Alpaca credentials are required for intraday backtests")
         datasource = AlpacaBacktesting
         datasource_configuration = {
-            "API_KEY": api_key.get_secret_value(),
-            "API_SECRET": api_secret.get_secret_value(),
+            "API_KEY": settings.alpaca_api_key.get_secret_value(),
+            "API_SECRET": settings.alpaca_api_secret.get_secret_value(),
             "PAPER": True,
         }
         datasource_options = {"timestep": "minute", "warm_up_trading_days": 60}

@@ -1,17 +1,13 @@
 from typing import Annotated, Self
 
-from pydantic import AnyHttpUrl, Field, SecretStr, field_validator, model_validator
+from pydantic import AnyHttpUrl, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-
-type RequiredSecret = Annotated[SecretStr, Field(min_length=1)]
-type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
+from bot.types import RequiredSecret, SigningSecret
 
 
 class WebSettings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", frozen=True
-    )
+    model_config = SettingsConfigDict(extra="ignore", frozen=True)
 
     app_base_url: AnyHttpUrl
     railway_oauth_client_id: str = Field(min_length=1)

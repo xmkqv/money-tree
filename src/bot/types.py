@@ -15,6 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 type RiskLimit = Annotated[float, Field(gt=0, le=1)]
+type RequiredSecret = Annotated[SecretStr, Field(min_length=1)]
 type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
 type EventLevel = Literal["info", "warning", "error"]
@@ -22,6 +23,11 @@ type StrategyName = Literal["noop", "orb", "sma", "tfb_50", "orb_momentum"]
 type DataFeedName = Literal["sip", "delayed_sip", "iex"]
 
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
+POSITIONS_MAX = 10
+POSITION_FRACTION_CAP_MAX = 0.10
+POSITION_FRACTION_MAX_DEFAULT = 0.20
+RISK_PER_DAY_MAX_DEFAULT = 0.02
+RISK_PER_TRADE_MAX_DEFAULT = 0.005
 STRATEGY_LABELS: dict[StrategyName, str] = {
     "noop": "No-op",
     "orb": "ORB (5-minute)",
@@ -56,28 +62,24 @@ class TradingConfiguration(_StrictModel):
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", extra="ignore", frozen=True
-    )
+    model_config = SettingsConfigDict(extra="ignore", frozen=True)
 
-    strategies: str = "noop"
-    alpaca_api_key: SecretStr | None = None
-    alpaca_api_secret: SecretStr | None = None
-    alpaca_is_paper: bool = True
-    alpaca_data_feed: DataFeedName = "sip"
-    state_export_url: AnyHttpUrl | None = None
-    state_export_secret: SigningSecret | None = None
-    fractional_orders: bool = True
-    risk_per_day_max: RiskLimit = 0.02
-    risk_per_trade_max: RiskLimit = 0.005
-    position_fraction_max: RiskLimit = 0.20
+    strategies: str
+    alpaca_api_key: RequiredSecret
+    alpaca_api_secret: RequiredSecret
+    alpaca_is_paper: bool
+    alpaca_data_feed: DataFeedName
+    state_export_url: AnyHttpUrl
+    state_export_secret: SigningSecret
+    fractional_orders: bool
+    risk_per_day_max: RiskLimit
+    risk_per_trade_max: RiskLimit
+    position_fraction_max: RiskLimit
 
     @model_validator(mode="after")
     def validate_limits(self) -> Self:
         if self.risk_per_trade_max > self.risk_per_day_max:
             raise ValueError("risk per trade must not exceed risk per day")
-        if (self.state_export_url is None) != (self.state_export_secret is None):
-            raise ValueError("state export URL and secret must be set together")
         values = [value.strip() for value in self.strategies.split(",") if value.strip()]
         if not values:
             raise ValueError("STRATEGIES must select at least one strategy")
