@@ -160,7 +160,7 @@ function weekRows(md) {
   });
 }
 
-function tradesFor(y, m, cell) {
+function tradesFor(cell) {
   if (!cell || cell.pnl === null) return [];
   return tradesByDate.get(cell.iso) || [];
 }
@@ -307,7 +307,7 @@ function selectedCell() {
 
 function renderToday() {
   const cell = selectedCell();
-  const trades = tradesFor(todaySel.y, todaySel.m, cell);
+  const trades = tradesFor(cell);
   const weekday = new Date(todaySel.y, todaySel.m, todaySel.day).getDay();
 
   const iso = todaySel.y + "-" + String(todaySel.m + 1).padStart(2, "0") + "-" + String(todaySel.day).padStart(2, "0");
@@ -744,7 +744,7 @@ function drawChart() {
   if (width < 60 || height < 60) return;
   readTheme();
 
-  const { s, N, lo, hi, baseline, visible } = w;
+  const { N, lo, hi, baseline, visible } = w;
   const plotW = width - PAD.l - PAD.r;
   const plotH = height - PAD.t - PAD.b;
 
@@ -762,7 +762,11 @@ function drawChart() {
 
   const px = i => PAD.l + ((i - i0) / (i1 - i0)) * plotW;
   const py = v => PAD.t + (1 - (v - yMin) / (yMax - yMin)) * plotH;
-  geo = { width, height, plotW, plotH, N, px, py, yMin, yMax, baseline, lo, hi };
+  const indexAt = clientX => {
+    const box = document.getElementById("chart-host").getBoundingClientRect();
+    return i0 + ((clientX - box.left - PAD.l) / plotW) * (i1 - i0);
+  };
+  geo = { width, height, plotW, plotH, N, px, py, indexAt, yMin, yMax, baseline, lo, hi };
 
   const zeroY = clamp(py(0), PAD.t, PAD.t + plotH);
   const line = visible.map((v, k) => (k ? "L" : "M") + px(v.i).toFixed(2) + " " + py(v.y).toFixed(2)).join(" ");
@@ -837,137 +841,190 @@ function drawChart() {
 }
 
 
-function indexAt(clientX) {
-  const host = document.getElementById("chart-host").getBoundingClientRect();
-  const x = clientX - host.left;
-  return chart.i0 + ((x - PAD.l) / geo.plotW) * (chart.i1 - chart.i0);
+const ZOOM_STEP = 1.14;
+const SCALE_TRAVEL_PX = 180;
+const TAP_TRAVEL_PX = 8;
+
+function wirePanZoom(spec) {
+  const { plot, axis, view, geometry, spanMin, spanMax, scaleMin, clampWindow, redraw, onReset } = spec;
+  const { onHover, onLeave, pinchable } = spec;
+  let drag = null;
+  let pinch = null;
+  const touches = new Map();
+
+  const twoFingers = () => [...touches.values()].slice(0, 2);
+  const spreadOf = () => {
+    const [a, b] = twoFingers();
+    return Math.hypot(a.x - b.x, a.y - b.y);
+  };
+  const midpointOf = () => {
+    const [a, b] = twoFingers();
+    return (a.x + b.x) / 2;
+  };
+
+  const zoomAbout = (span, clientX) => {
+    const geo = geometry();
+    if (!geo) return;
+    const anchor = geo.indexAt(clientX);
+    const current = view.i1 - view.i0;
+    const next = clamp(span, spanMin, spanMax(geo));
+    view.i0 = anchor - (anchor - view.i0) * (next / current);
+    view.i1 = view.i0 + next;
+    clampWindow();
+    redraw();
+  };
+
+  plot.addEventListener("wheel", event => {
+    event.preventDefault();
+    const span = view.i1 - view.i0;
+    zoomAbout(span * (event.deltaY > 0 ? ZOOM_STEP : 1 / ZOOM_STEP), event.clientX);
+  }, { passive: false });
+
+  plot.addEventListener("pointerdown", event => {
+    if (pinchable && event.pointerType === "touch") {
+      touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (touches.size === 2) {
+        pinch = { spread: spreadOf(), span: view.i1 - view.i0 };
+        drag = null;
+        plot.classList.remove("dragging");
+        onLeave?.();
+        return;
+      }
+      if (touches.size > 2) return;
+    }
+    plot.setPointerCapture(event.pointerId);
+    plot.classList.add("dragging");
+    drag = { x: event.clientX, y: event.clientY, mode: "pan", travel: 0 };
+  });
+
+  axis.addEventListener("pointerdown", event => {
+    axis.setPointerCapture(event.pointerId);
+    const geo = geometry();
+    if (!view.yManual && geo) view.yManual = { min: geo.yMin, max: geo.yMax };
+    drag = { x: event.clientX, y: event.clientY, mode: "scale", travel: 0 };
+  });
+
+  const endDrag = event => {
+    touches.delete(event.pointerId);
+    if (touches.size < 2) pinch = null;
+    if (!drag) return;
+    const tapped = event.type === "pointerup" && event.pointerType === "touch";
+    if (pinchable && tapped && drag.travel < TAP_TRAVEL_PX) onHover?.(event);
+    drag = null;
+    plot.classList.remove("dragging");
+    if (plot.hasPointerCapture?.(event.pointerId)) plot.releasePointerCapture(event.pointerId);
+    if (axis.hasPointerCapture?.(event.pointerId)) axis.releasePointerCapture(event.pointerId);
+  };
+
+  for (const el of [plot, axis]) {
+    el.addEventListener("pointerup", endDrag);
+    el.addEventListener("pointercancel", endDrag);
+    el.addEventListener("dblclick", onReset);
+  }
+
+  plot.addEventListener("pointermove", event => {
+    const geo = geometry();
+    if (!geo) return;
+    if (touches.has(event.pointerId))
+      touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (pinch && touches.size >= 2) {
+      const spread = spreadOf();
+      if (spread > 0) zoomAbout(pinch.span * (pinch.spread / spread), midpointOf());
+      return;
+    }
+    if (!drag || drag.mode !== "pan") {
+      onHover?.(event);
+      return;
+    }
+    const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
+    drag.x = event.clientX; drag.y = event.clientY;
+    drag.travel += Math.abs(dx) + Math.abs(dy);
+    const span = view.i1 - view.i0;
+    const move = -dx * (span / geo.plotW);
+    view.i0 += move; view.i1 += move;
+    clampWindow();
+    if (view.yManual) {
+      const shift = dy * ((geo.yMax - geo.yMin) / geo.plotH);
+      view.yManual.min += shift; view.yManual.max += shift;
+    }
+    redraw();
+    onLeave?.();
+  });
+
+  axis.addEventListener("pointermove", event => {
+    if (!drag || drag.mode !== "scale" || !view.yManual || !geometry()) return;
+    const dy = event.clientY - drag.y;
+    drag.y = event.clientY;
+    const mid = (view.yManual.min + view.yManual.max) / 2;
+    const half = (view.yManual.max - view.yManual.min) / 2;
+    const next = clamp(half * (1 + dy / SCALE_TRAVEL_PX), scaleMin, 1e9);
+    view.yManual = { min: mid - next, max: mid + next };
+    redraw();
+  });
+
+  plot.addEventListener("pointerleave", event => {
+    if (pinchable && event.pointerType === "touch") return;
+    onLeave?.();
+  });
 }
 
-function clampWindow() {
+function clampChartWindow() {
   const N = chart.series.length;
-  let span = chart.i1 - chart.i0;
-  span = clamp(span, 3, N - 1);
+  const span = clamp(chart.i1 - chart.i0, 3, N - 1);
   if (chart.i0 < 0) chart.i0 = 0;
   if (chart.i0 + span > N - 1) chart.i0 = N - 1 - span;
   chart.i1 = chart.i0 + span;
 }
 
-function initChartInteraction() {
-  const plot = document.getElementById("plot-hit");
-  const axis = document.getElementById("axis-hit");
+function chartHover(event) {
   const tip = document.getElementById("chart-tip");
-  const host = document.getElementById("chart-host");
+  const svg = document.getElementById("chart-host").querySelector("svg");
+  if (!svg) return;
+  const i = clamp(Math.round(geo.indexAt(event.clientX)), geo.lo, geo.hi);
+  const point = chart.series[i];
+  const y = point.value - geo.baseline;
+  const cross = svg.querySelector("#cross");
+  const dot = svg.querySelector("#crossDot");
 
-  let drag = null;
+  cross.setAttribute("x1", geo.px(i)); cross.setAttribute("x2", geo.px(i));
+  cross.setAttribute("opacity", "1");
+  dot.setAttribute("cx", geo.px(i)); dot.setAttribute("cy", geo.py(y));
+  dot.setAttribute("fill", y >= 0 ? GAIN : LOSS);
+  dot.setAttribute("opacity", "1");
 
-  plot.addEventListener("wheel", ev => {
-    ev.preventDefault();
-    if (!geo) return;
-    const anchor = indexAt(ev.clientX);
-    const span = chart.i1 - chart.i0;
-    const next = clamp(span * (ev.deltaY > 0 ? 1.14 : 1 / 1.14), 3, chart.series.length - 1);
-    chart.i0 = anchor - (anchor - chart.i0) * (next / span);
-    chart.i1 = chart.i0 + next;
-    clampWindow();
-    markCustom();
-    drawChart();
-  }, { passive: false });
+  const equityAtStart = chart.series.equityBase + geo.baseline;
+  tip.innerHTML = "<span class='tt-k'>" + point.long + "</span>" +
+    "<span class='tt-v " + tone(y) + "'>" + signedMoney(y) + "</span>" +
+    "<span class='tt-row'><span>from view start</span><span>" + signedPct((y / equityAtStart) * 100) + "</span></span>";
+  tip.classList.add("on");
+  tip.style.left = clamp(geo.px(i), 80, geo.width - 80) + "px";
+  tip.style.top = Math.max(52, geo.py(y)) + "px";
+}
 
-  plot.addEventListener("pointerdown", ev => {
-    plot.setPointerCapture(ev.pointerId);
-    plot.classList.add("dragging");
-    drag = { x: ev.clientX, y: ev.clientY, mode: "pan" };
+function chartLeave() {
+  document.getElementById("chart-tip").classList.remove("on");
+  const svg = document.getElementById("chart-host").querySelector("svg");
+  if (!svg) return;
+  svg.querySelector("#cross").setAttribute("opacity", "0");
+  svg.querySelector("#crossDot").setAttribute("opacity", "0");
+}
+
+function initChartInteraction() {
+  wirePanZoom({
+    plot: document.getElementById("plot-hit"),
+    axis: document.getElementById("axis-hit"),
+    view: chart,
+    geometry: () => geo,
+    spanMin: 3,
+    spanMax: () => chart.series.length - 1,
+    scaleMin: 1e-3,
+    clampWindow: clampChartWindow,
+    redraw: () => { markCustom(); drawChart(); },
+    onReset: () => setRange(chart.preset),
+    onHover: chartHover,
+    onLeave: chartLeave,
+    pinchable: false,
   });
-
-  axis.addEventListener("pointerdown", ev => {
-    axis.setPointerCapture(ev.pointerId);
-    if (!chart.yManual && geo) chart.yManual = { min: geo.yMin, max: geo.yMax };
-    drag = { x: ev.clientX, y: ev.clientY, mode: "scale" };
-  });
-
-  function endDrag(ev) {
-    if (!drag) return;
-    drag = null;
-    plot.classList.remove("dragging");
-    if (plot.hasPointerCapture?.(ev.pointerId)) plot.releasePointerCapture(ev.pointerId);
-    if (axis.hasPointerCapture?.(ev.pointerId)) axis.releasePointerCapture(ev.pointerId);
-  }
-
-  for (const el of [plot, axis]) {
-    el.addEventListener("pointerup", endDrag);
-    el.addEventListener("pointercancel", endDrag);
-  }
-
-  plot.addEventListener("pointermove", ev => {
-    if (!geo) return;
-
-    if (drag && drag.mode === "pan") {
-      const dx = ev.clientX - drag.x;
-      const dy = ev.clientY - drag.y;
-      drag.x = ev.clientX; drag.y = ev.clientY;
-
-      const span = chart.i1 - chart.i0;
-      const di = -dx * (span / geo.plotW);
-      chart.i0 += di; chart.i1 += di;
-      clampWindow();
-
-      if (chart.yManual) {                        
-        const dv = dy * ((geo.yMax - geo.yMin) / geo.plotH);
-        chart.yManual.min += dv; chart.yManual.max += dv;
-      }
-      markCustom();
-      drawChart();
-      tip.classList.remove("on");
-      return;
-    }
-
-    const i = clamp(Math.round(indexAt(ev.clientX)), geo.lo, geo.hi);
-    const p = chart.series[i];
-    const y = p.value - geo.baseline;
-    const svg = host.querySelector("svg");
-    if (!svg) return;
-    const cross = svg.querySelector("#cross");
-    const dot = svg.querySelector("#crossDot");
-
-    cross.setAttribute("x1", geo.px(i)); cross.setAttribute("x2", geo.px(i));
-    cross.setAttribute("opacity", "1");
-    dot.setAttribute("cx", geo.px(i)); dot.setAttribute("cy", geo.py(y));
-    dot.setAttribute("fill", y >= 0 ? GAIN : LOSS);
-    dot.setAttribute("opacity", "1");
-
-    const equityAtStart = chart.series.equityBase + geo.baseline;
-    tip.innerHTML = "<span class='tt-k'>" + p.long + "</span>" +
-      "<span class='tt-v " + tone(y) + "'>" + signedMoney(y) + "</span>" +
-      "<span class='tt-row'><span>from view start</span><span>" + signedPct((y / equityAtStart) * 100) + "</span></span>";
-    tip.classList.add("on");
-    tip.style.left = clamp(geo.px(i), 80, geo.width - 80) + "px";
-    tip.style.top = Math.max(52, geo.py(y)) + "px";
-  });
-
-  axis.addEventListener("pointermove", ev => {
-    if (!drag || drag.mode !== "scale" || !geo) return;
-    const dy = ev.clientY - drag.y;
-    drag.y = ev.clientY;
-
-    const mid = (chart.yManual.min + chart.yManual.max) / 2;
-    const half = (chart.yManual.max - chart.yManual.min) / 2;
-    const next = clamp(half * (1 + dy / 180), 1e-3, 1e9);
-    chart.yManual = { min: mid - next, max: mid + next };
-    markCustom();
-    drawChart();
-  });
-
-  plot.addEventListener("pointerleave", () => {
-    tip.classList.remove("on");
-    const svg = host.querySelector("svg");
-    if (!svg) return;
-    svg.querySelector("#cross").setAttribute("opacity", "0");
-    svg.querySelector("#crossDot").setAttribute("opacity", "0");
-  });
-
-  for (const el of [plot, axis]) {
-    el.addEventListener("dblclick", () => setRange(chart.preset));
-  }
 }
 
 
@@ -1409,7 +1466,7 @@ function renderLog() {
 const TC_BARS = { "5Min": "5 min", "1Hour": "1 hour", "1Day": "Day" };
 let TRADE = null, TC_STATE = { bar: "5Min", bars: null, hover: null };
 let TC_LEVELS = null, TC_COTRADES = [];
-let TC_VIEW = { i0: 0, i1: 0, yManual: null, custom: false };
+const TC_VIEW = { i0: 0, i1: 0, yManual: null, custom: false };
 let TC_ORIGIN = "history";
 
 const SMA_SET = [
@@ -1610,9 +1667,9 @@ function paintTradeFacts() {
     : t.heldMin >= 60 ? Math.floor(t.heldMin / 60) + "h " + (t.heldMin % 60) + "m" : t.heldMin + "m";
 
   const facts = [
-    ["Entry", money(t.entry), dayOf2(t.inDate) + " " + clockLabel(t.inMinute)],
+    ["Entry", money(t.entry), dayLabel(t.inDate) + " " + clockLabel(t.inMinute)],
     [t.open ? "Last" : "Exit", money(t.exit),
-      t.open ? "still open" : dayOf2(t.date) + " " + clockLabel(t.minute)],
+      t.open ? "still open" : dayLabel(t.date) + " " + clockLabel(t.minute)],
     ["Quantity", plainNum(Math.round(t.qty * 100) / 100), ""],
     [t.open ? "Held so far" : "Held", held, ""],
     [t.open ? "Unrealised" : "P&L", signedMoney(t.pnl),
@@ -1640,7 +1697,7 @@ function paintTradeFacts() {
   }
 }
 
-function dayOf2(iso) {
+function dayLabel(iso) {
   const [, m, d] = dparts(iso);
   return d + " " + MON3[m - 1];
 }
@@ -1676,7 +1733,7 @@ async function loadTradeBars() {
     return;
   }
   tcState("");
-  TC_VIEW = { i0: 0, i1: Math.max(1, TC_STATE.bars.length - TC_STATE.first), yManual: null, custom: false };
+  setTradeView(0, Math.max(1, TC_STATE.bars.length - TC_STATE.first));
   paintRail();
   drawTradeChart();
 }
@@ -1707,7 +1764,7 @@ function drawTradeChart() {
   const first = TC_STATE.first || 0;
   const all = bars.slice(first);
   if (!all.length) return;
-  if (TC_VIEW.i1 <= TC_VIEW.i0) TC_VIEW = { i0: 0, i1: all.length, yManual: null, custom: false };
+  if (TC_VIEW.i1 <= TC_VIEW.i0) setTradeView(0, all.length);
 
   const nearest = x => {
     let best = 0, gap = Infinity;
@@ -1835,7 +1892,7 @@ function drawTradeChart() {
     else if (previous.clamped && candidate.clamped) kept[kept.length - 1] = candidate;
   }
 
-  const rules = shown.map((b, k) => {
+  const rules = shown.map((_bar, k) => {
     const i = k + lo;
     return boundary.has(i) && i > lo
       ? '<line x1="' + px(i - 0.5).toFixed(2) + '" y1="' + TC_PAD.t + '" x2="' + px(i - 0.5).toFixed(2) +
@@ -2061,135 +2118,41 @@ function wireTradeChart() {
       b.setAttribute("aria-pressed", String(b === button));
     loadTradeBars();
   });
-  const hit = document.getElementById("tc-hit");
-  const axis = document.getElementById("tc-axis-hit");
-  let drag = null;
-
-  const redraw = () => { TC_VIEW.custom = true; drawTradeChart(); };
-
-  const clampWindow = () => {
-    const count = TC_STATE.geo ? TC_STATE.geo.count : 0;
-    if (!count) return;
-    const span = Math.min(TC_VIEW.i1 - TC_VIEW.i0, count);
-    TC_VIEW.i0 = clamp(TC_VIEW.i0, 0, count - span);
-    TC_VIEW.i1 = TC_VIEW.i0 + span;
-  };
-
-  const zoomAbout = (span, clientX) => {
-    const geo = TC_STATE.geo;
-    if (!geo) return;
-    const anchor = geo.indexAt(clientX);
-    const current = TC_VIEW.i1 - TC_VIEW.i0;
-    const next = clamp(span, 4, geo.count);
-    TC_VIEW.i0 = anchor - (anchor - TC_VIEW.i0) * (next / current);
-    TC_VIEW.i1 = TC_VIEW.i0 + next;
-    clampWindow();
-    redraw();
-  };
-
-  hit.addEventListener("wheel", event => {
-    event.preventDefault();
-    const span = TC_VIEW.i1 - TC_VIEW.i0;
-    zoomAbout(span * (event.deltaY > 0 ? 1.14 : 1 / 1.14), event.clientX);
-  }, { passive: false });
-
-  const touches = new Map();
-  let pinch = null;
-
-  const twoFingers = () => [...touches.values()].slice(0, 2);
-  const spreadOf = () => {
-    const [a, b] = twoFingers();
-    return Math.hypot(a.x - b.x, a.y - b.y);
-  };
-  const midpointOf = () => {
-    const [a, b] = twoFingers();
-    return (a.x + b.x) / 2;
-  };
-
-  hit.addEventListener("pointerdown", event => {
-    if (event.pointerType === "touch") {
-      touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
-      if (touches.size === 2) {
-        pinch = { spread: spreadOf(), span: TC_VIEW.i1 - TC_VIEW.i0 };
-        drag = null;
-        hit.classList.remove("dragging");
-        document.getElementById("tc-tip").classList.remove("on");
-        return;
-      }
-      if (touches.size > 2) return;
-    }
-    hit.setPointerCapture(event.pointerId);
-    hit.classList.add("dragging");
-    drag = { x: event.clientX, y: event.clientY, mode: "pan", travel: 0 };
+  wirePanZoom({
+    plot: document.getElementById("tc-hit"),
+    axis: document.getElementById("tc-axis-hit"),
+    view: TC_VIEW,
+    geometry: () => TC_STATE.geo,
+    spanMin: 4,
+    spanMax: geo => geo.count,
+    scaleMin: 1e-4,
+    clampWindow: clampTradeWindow,
+    redraw: () => { TC_VIEW.custom = true; drawTradeChart(); },
+    onReset: resetTradeView,
+    onHover: tradeHover,
+    onLeave: () => document.getElementById("tc-tip").classList.remove("on"),
+    pinchable: true,
   });
+}
 
-  axis.addEventListener("pointerdown", event => {
-    axis.setPointerCapture(event.pointerId);
-    const geo = TC_STATE.geo;
-    if (!TC_VIEW.yManual && geo) TC_VIEW.yManual = { min: geo.yMin, max: geo.yMax };
-    drag = { x: event.clientX, y: event.clientY, mode: "scale" };
-  });
+function clampTradeWindow() {
+  const count = TC_STATE.geo ? TC_STATE.geo.count : 0;
+  if (!count) return;
+  const span = Math.min(TC_VIEW.i1 - TC_VIEW.i0, count);
+  TC_VIEW.i0 = clamp(TC_VIEW.i0, 0, count - span);
+  TC_VIEW.i1 = TC_VIEW.i0 + span;
+}
 
-  const endDrag = event => {
-    touches.delete(event.pointerId);
-    if (touches.size < 2) pinch = null;
-    if (!drag) return;
-    if (event.type === "pointerup" && event.pointerType === "touch" && drag.travel < 8) tradeHover(event);
-    drag = null;
-    hit.classList.remove("dragging");
-    if (hit.hasPointerCapture?.(event.pointerId)) hit.releasePointerCapture(event.pointerId);
-    if (axis.hasPointerCapture?.(event.pointerId)) axis.releasePointerCapture(event.pointerId);
-  };
-  for (const el of [hit, axis]) {
-    el.addEventListener("pointerup", endDrag);
-    el.addEventListener("pointercancel", endDrag);
-    el.addEventListener("dblclick", () => {
-      TC_VIEW = { i0: 0, i1: (TC_STATE.geo?.count) || 1, yManual: null, custom: false };
-      drawTradeChart();
-    });
-  }
+function setTradeView(i0, i1) {
+  TC_VIEW.i0 = i0;
+  TC_VIEW.i1 = i1;
+  TC_VIEW.yManual = null;
+  TC_VIEW.custom = false;
+}
 
-  hit.addEventListener("pointermove", event => {
-    const geo = TC_STATE.geo;
-    if (!geo) return;
-    if (touches.has(event.pointerId)) touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (pinch && touches.size >= 2) {
-      const spread = spreadOf();
-      if (spread > 0) zoomAbout(pinch.span * (pinch.spread / spread), midpointOf());
-      return;
-    }
-    if (!drag) { tradeHover(event); return; }
-
-    const dx = event.clientX - drag.x, dy = event.clientY - drag.y;
-    drag.x = event.clientX; drag.y = event.clientY;
-    drag.travel += Math.abs(dx) + Math.abs(dy);
-    const span = TC_VIEW.i1 - TC_VIEW.i0;
-    const move = -dx * (span / geo.plotW);
-    TC_VIEW.i0 += move; TC_VIEW.i1 += move;
-    clampWindow();
-    if (TC_VIEW.yManual) {
-      const shift = dy * ((geo.yMax - geo.yMin) / geo.plotH);
-      TC_VIEW.yManual.min += shift; TC_VIEW.yManual.max += shift;
-    }
-    document.getElementById("tc-tip").classList.remove("on");
-    redraw();
-  });
-
-  axis.addEventListener("pointermove", event => {
-    if (!drag || drag.mode !== "scale" || !TC_VIEW.yManual) return;
-    const dy = event.clientY - drag.y;
-    drag.y = event.clientY;
-    const mid = (TC_VIEW.yManual.min + TC_VIEW.yManual.max) / 2;
-    const half = (TC_VIEW.yManual.max - TC_VIEW.yManual.min) / 2;
-    const next = clamp(half * (1 + dy / 180), 1e-4, 1e9);
-    TC_VIEW.yManual = { min: mid - next, max: mid + next };
-    redraw();
-  });
-
-  hit.addEventListener("pointerleave", event => {
-    if (event.pointerType === "touch") return;
-    document.getElementById("tc-tip").classList.remove("on");
-  });
+function resetTradeView() {
+  setTradeView(0, (TC_STATE.geo?.count) || 1);
+  drawTradeChart();
 }
 
 

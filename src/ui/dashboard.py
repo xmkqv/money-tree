@@ -12,72 +12,33 @@ from fastapi import APIRouter, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from itsdangerous import BadSignature, SignatureExpired, TimestampSigner
+from pandas import DataFrame, DatetimeIndex, Timedelta
 from pydantic import ValidationError
 from starlette.responses import FileResponse
 
-from bot.strategies.orb_base import range_stop
-from bot.strategies.shared import Direction
-from bot.types import STATE_SIGNATURE_SALT, RuntimeSnapshot
+from bot.strategies.daily_base import DAILY_STOP_ATR_MULTIPLES
+from bot.strategies.orb_base import ORB_OPENING_MINUTES, ORB_TARGET_MULTIPLES, range_stop
+from bot.strategies.shared import (
+    PERIOD,
+    TRADING_ZONE,
+    Direction,
+    latest_atr,
+    regular_session,
+    session_bounds,
+    session_starts,
+)
+from bot.types import (
+    POSITION_FRACTION_CAP_MAX,
+    POSITION_FRACTION_MAX_DEFAULT,
+    RISK_PER_DAY_MAX_DEFAULT,
+    STATE_SIGNATURE_SALT,
+    RuntimeSnapshot,
+)
 
 from .alpaca import AlpacaMarketDataClient, AlpacaReadClient
 from .config import WebSettings
-from .ledger import (
-    TRADING_ZONE,
-    match_cycles,
-    parse_day,
-    sessions,
-    strategy_id,
-    strategy_labels,
-    summarise,
-)
+from .ledger import match_cycles, parse_day, sessions, strategy_id, strategy_labels, totals
 from .strategies import entry_windows, strategy_spec
-
-
-ASSET_DIRECTORY = Path(__file__).with_name("assets")
-DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.html").read_bytes()
-ASSET_MEDIA_TYPES = {
-    "dashboard.css": "text/css",
-    "dashboard.js": "text/javascript",
-    "theme.js": "text/javascript",
-    "favicon.svg": "image/svg+xml",
-}
-LEDGER_TTL_SECONDS = 60
-PULSE_TTL_SECONDS = 2
-BENCHMARK_SYMBOL = "SPY"
-POSITION_CAP_FALLBACK = 0.10
-DAILY_LOSS_FALLBACK = 0.02
-NO_STORE = {"Cache-Control": "no-store"}
-IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
-
-
-def _fingerprint_assets() -> tuple[dict[str, tuple[Path, str]], dict[bytes, bytes]]:
-    routes: dict[str, tuple[Path, str]] = {}
-    rewrites: dict[bytes, bytes] = {}
-    for name, media_type in ASSET_MEDIA_TYPES.items():
-        path = ASSET_DIRECTORY / name
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
-        served = f"{path.stem}.{digest}{path.suffix}"
-        routes[served] = (path, media_type)
-        rewrites[f"/assets/{name}".encode()] = f"/assets/{served}".encode()
-    return routes, rewrites
-
-
-ASSET_ROUTES, ASSET_REWRITES = _fingerprint_assets()
-HEARTBEAT_TIMEOUT = timedelta(seconds=15)
-SIGNATURE_WINDOW_SECONDS = 30
-RUNTIME_BODY_BYTES_MAX = 65_536
-RUNTIME_SIGNATURE_ENVELOPE_BYTES = 51
-RUNTIME_REQUEST_BYTES_MAX = RUNTIME_BODY_BYTES_MAX + RUNTIME_SIGNATURE_ENVELOPE_BYTES
-PORTFOLIO_TIMEFRAMES = {"1D": "5Min", "1W": "15Min", "1M": "1D", "1A": "1D"}
-DASHBOARD_HEADERS = {
-    "Cache-Control": "private, no-cache",
-    "Content-Security-Policy": (
-        "default-src 'self'; script-src 'self'; "
-        "style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; "
-        "connect-src 'self'; img-src 'self' data:; "
-        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
-    ),
-}
 
 
 class ReadCache:
@@ -104,51 +65,10 @@ class ReadCache:
         return self._lock
 
 
-CHART_TIMEFRAMES: dict[str, dict[str, Any]] = {
-    "5Min": {"bar": "5Min", "pad_days": 1, "span_max": 10, "warmup_days": 5},
-    "1Hour": {"bar": "1Hour", "pad_days": 7, "span_max": 90, "warmup_days": 46},
-    "1Day": {"bar": "1Day", "pad_days": 120, "span_max": 900, "warmup_days": 300},
-}
-SMA_LENGTHS = (20, 50, 200)
-CHART_TTL_SECONDS = 120
-CHART_CACHE_MAX = 64
-
-
-SESSION_OPEN = dtime(9, 30)
-SESSION_CLOSE = dtime(16, 0)
-SESSION_SOURCE = "30Min"
-SESSION_SOURCE_BARS_MAX = 1000
-
-
-def session_hour_bars(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    buckets: dict[datetime, list[dict[str, Any]]] = {}
-    for bar in bars:
-        at = datetime.fromisoformat(str(bar["t"]).replace("Z", "+00:00")).astimezone(TRADING_ZONE)
-        if not (SESSION_OPEN <= at.time() < SESSION_CLOSE):
-            continue
-        opens = datetime.combine(at.date(), SESSION_OPEN, TRADING_ZONE)
-        elapsed = int((at - opens).total_seconds() // 3600)
-        buckets.setdefault(opens + timedelta(hours=elapsed), []).append(bar)
-
-    folded: list[dict[str, Any]] = []
-    for start in sorted(buckets):
-        group = sorted(buckets[start], key=lambda bar: str(bar["t"]))
-        folded.append(
-            {
-                "t": start.astimezone(UTC).isoformat().replace("+00:00", "Z"),
-                "o": float(group[0]["o"]),
-                "h": max(float(bar["h"]) for bar in group),
-                "l": min(float(bar["l"]) for bar in group),
-                "c": float(group[-1]["c"]),
-                "v": sum(float(bar.get("v") or 0) for bar in group),
-            }
-        )
-    return folded
-
-
 class BarCache:
-    def __init__(self, ttl_seconds: int = CHART_TTL_SECONDS) -> None:
+    def __init__(self, ttl_seconds: int, entries_max: int) -> None:
         self._ttl = ttl_seconds
+        self._entries_max = entries_max
         self._entries: OrderedDict[str, tuple[float, list[dict[str, Any]]]] = OrderedDict()
         self._lock = asyncio.Lock()
 
@@ -162,81 +82,12 @@ class BarCache:
     def store(self, key: str, bars: list[dict[str, Any]]) -> None:
         self._entries[key] = (time.monotonic(), bars)
         self._entries.move_to_end(key)
-        while len(self._entries) > CHART_CACHE_MAX:
+        while len(self._entries) > self._entries_max:
             self._entries.popitem(last=False)
 
     @property
     def lock(self) -> asyncio.Lock:
         return self._lock
-
-
-def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, datetime, datetime]:
-    rules = CHART_TIMEFRAMES[timeframe]
-    pad = timedelta(days=int(rules["pad_days"]))
-    display = opened - pad
-    end = closed + pad
-    if (end - display).days > int(rules["span_max"]):
-        display = end - timedelta(days=int(rules["span_max"]))
-    data = display - timedelta(days=int(rules["warmup_days"]))
-    return (
-        datetime.combine(data, dtime(0, 0), TRADING_ZONE),
-        datetime.combine(display, dtime(0, 0), TRADING_ZONE),
-        datetime.combine(end, dtime(23, 59), TRADING_ZONE),
-    )
-
-
-ATR_PERIOD = 14
-DAILY_STOP_MULTIPLES = {"sma": 1.5, "tfb_50": 2.0}
-ORB_OPENING_MINUTES = {"orb": 5, "orb_momentum": 10}
-ORB_TARGET_MULTIPLES = {"orb": (1.5, 2.5, 4.0), "orb_momentum": (2.0, 3.0, 5.0)}
-
-
-def wilder_atr(bars: list[dict[str, Any]], period: int = ATR_PERIOD) -> float | None:
-    if len(bars) <= period:
-        return None
-    ranges: list[float] = []
-    for index, bar in enumerate(bars):
-        high, low = float(bar["h"]), float(bar["l"])
-        if index == 0:
-            ranges.append(high - low)
-            continue
-        close = float(bars[index - 1]["c"])
-        ranges.append(max(high - low, abs(high - close), abs(low - close)))
-    average = ranges[0]
-    for value in ranges[1:]:
-        average += (value - average) / period
-    return average if average > 0 else None
-
-
-def opening_range(
-    bars: list[dict[str, Any]], day: date, minutes: int
-) -> tuple[float, float] | None:
-    opens = datetime.combine(day, dtime(9, 30), TRADING_ZONE)
-    closes = opens + timedelta(minutes=minutes)
-    inside = [
-        bar
-        for bar in bars
-        if opens
-        <= datetime.fromisoformat(str(bar["t"]).replace("Z", "+00:00")).astimezone(TRADING_ZONE)
-        < closes
-    ]
-    if not inside:
-        return None
-    return max(float(b["h"]) for b in inside), min(float(b["l"]) for b in inside)
-
-
-def orb_levels(
-    engine: str, direction: int, entry: float, high: float, low: float
-) -> dict[str, Any]:
-    stop = range_stop(cast(Direction, direction), high, low)
-    risk = abs(entry - stop)
-    multiples = ORB_TARGET_MULTIPLES.get(engine, ORB_TARGET_MULTIPLES["orb"])
-    targets = [entry + direction * risk * multiple for multiple in multiples]
-    return {
-        "range": {"high": round(high, 4), "low": round(low, 4)},
-        "stop": round(stop, 4),
-        "targets": [round(value, 4) for value in targets],
-    }
 
 
 class RuntimeStore:
@@ -257,6 +108,120 @@ class RuntimeStore:
         return self._snapshot
 
 
+ASSET_DIRECTORY = Path(__file__).with_name("assets")
+DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.html").read_bytes()
+ASSET_MEDIA_TYPES = {
+    "dashboard.css": "text/css",
+    "dashboard.js": "text/javascript",
+    "theme.js": "text/javascript",
+    "favicon.svg": "image/svg+xml",
+}
+LEDGER_TTL_SECONDS = 60
+PULSE_TTL_SECONDS = 2
+BENCHMARK_SYMBOL = "SPY"
+NO_STORE = {"Cache-Control": "no-store"}
+IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
+HEARTBEAT_TIMEOUT = timedelta(seconds=15)
+SIGNATURE_WINDOW_SECONDS = 30
+RUNTIME_BODY_BYTES_MAX = 65_536
+RUNTIME_SIGNATURE_ENVELOPE_BYTES = 51
+RUNTIME_REQUEST_BYTES_MAX = RUNTIME_BODY_BYTES_MAX + RUNTIME_SIGNATURE_ENVELOPE_BYTES
+CHART_TIMEFRAMES: dict[str, dict[str, Any]] = {
+    "5Min": {"bar": "5Min", "pad_days": 1, "span_max": 10, "warmup_days": 5},
+    "1Hour": {"bar": "1Hour", "pad_days": 7, "span_max": 90, "warmup_days": 46},
+    "1Day": {"bar": "1Day", "pad_days": 120, "span_max": 900, "warmup_days": 300},
+}
+SMA_LENGTHS = (20, 50, 200)
+CHART_TTL_SECONDS = 120
+CHART_CACHE_MAX = 64
+SESSION_SOURCE = "30Min"
+SESSION_SOURCE_BARS_MAX = 1000
+LEVELS_HISTORY_DAYS = 90
+DASHBOARD_HEADERS = {
+    "Cache-Control": "private, no-cache",
+    "Content-Security-Policy": (
+        "default-src 'self'; script-src 'self'; "
+        "style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; "
+        "connect-src 'self'; img-src 'self' data:; "
+        "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
+    ),
+}
+
+
+def session_hour_bars(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not bars:
+        return []
+    frame = _bar_frame(bars)
+    regular = regular_session(frame)
+    if regular.empty:
+        return []
+    index = cast(Any, cast(DatetimeIndex, regular.index))
+    starts = session_starts(cast(DatetimeIndex, regular.index))
+    elapsed = (index - starts) // Timedelta(hours=1)
+    folded = (
+        cast(Any, regular)
+        .groupby(starts + elapsed * Timedelta(hours=1))
+        .agg(o=("o", "first"), h=("h", "max"), l=("l", "min"), c=("c", "last"), v=("v", "sum"))
+    )
+    return [
+        {
+            "t": start.astimezone(UTC).isoformat().replace("+00:00", "Z"),
+            "o": float(row.o),
+            "h": float(row.h),
+            "l": float(row.l),
+            "c": float(row.c),
+            "v": float(row.v),
+        }
+        for start, row in folded.iterrows()
+    ]
+
+
+def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, datetime, datetime]:
+    rules = CHART_TIMEFRAMES[timeframe]
+    pad = timedelta(days=int(rules["pad_days"]))
+    display = opened - pad
+    end = closed + pad
+    if (end - display).days > int(rules["span_max"]):
+        display = end - timedelta(days=int(rules["span_max"]))
+    data = display - timedelta(days=int(rules["warmup_days"]))
+    return (
+        datetime.combine(data, dtime(0, 0), TRADING_ZONE),
+        datetime.combine(display, dtime(0, 0), TRADING_ZONE),
+        datetime.combine(end, dtime(23, 59), TRADING_ZONE),
+    )
+
+
+def bars_atr(bars: list[dict[str, Any]]) -> float | None:
+    if len(bars) <= PERIOD:
+        return None
+    frame = _bar_frame(bars).rename(columns={"h": "high", "l": "low", "c": "close"})
+    return latest_atr(frame)
+
+
+def opening_range(
+    bars: list[dict[str, Any]], opens: datetime, minutes: int
+) -> tuple[float, float] | None:
+    closes = opens + timedelta(minutes=minutes)
+    inside = [bar for bar in bars if opens <= _bar_time(bar) < closes]
+    if not inside:
+        return None
+    return max(float(bar["h"]) for bar in inside), min(float(bar["l"]) for bar in inside)
+
+
+def orb_levels(
+    strategy: str, direction: int, entry: float, high: float, low: float
+) -> dict[str, Any]:
+    stop = range_stop(cast(Direction, direction), high, low)
+    risk = abs(entry - stop)
+    multiples = ORB_TARGET_MULTIPLES[cast(Any, strategy)]
+    targets = [entry + direction * risk * multiple for multiple in multiples]
+    return {
+        "range": {"high": round(high, 4), "low": round(low, 4)},
+        "stop": round(stop, 4),
+        "targets": [round(value, 4) for value in targets],
+    }
+
+
 def error_response(
     detail: str, status_code: int, headers: dict[str, str] | None = None
 ) -> JSONResponse:
@@ -271,69 +236,6 @@ def read_response(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
         jsonable_encoder(content),
         headers={"Cache-Control": f"private, max-age={max_age}, must-revalidate", "Vary": "Cookie"},
     )
-
-
-def _funded_points(history: dict[str, Any]) -> list[tuple[datetime, float]]:
-    return [
-        (datetime.fromtimestamp(int(point["timestamp"]), TRADING_ZONE), float(point["equity"]))
-        for point in history["points"]
-        if point["equity"]
-    ]
-
-
-def _equity_series(history: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        {"date": when.date().isoformat(), "equity": round(value, 2)}
-        for when, value in _funded_points(history)
-    ]
-
-
-def _intraday_series(history: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
-    points = _funded_points(history)
-    rows = [{"t": when.strftime("%H:%M"), "equity": round(value, 2)} for when, value in points]
-    return rows, points[0][0].date().isoformat() if points else ""
-
-
-def _position_marks(raw: list[dict[str, Any]], equity: float) -> list[dict[str, Any]]:
-    marks: list[dict[str, Any]] = []
-    for item in raw:
-        value = float(item["market_value"])
-        marks.append(
-            {
-                "symbol": str(item["symbol"]),
-                "side": "long" if item["side"] == "long" else "short",
-                "qty": round(abs(float(item["qty"])), 4),
-                "entry": round(float(item["avg_entry_price"]), 4),
-                "last": round(float(item["current_price"]), 4),
-                "value": round(value, 2),
-                "unreal": round(float(item["unrealized_pl"]), 2),
-                "unrealPct": round(float(item["unrealized_plpc"]) * 100, 2),
-                "weight": round(value / equity * 100, 2) if equity else 0.0,
-            }
-        )
-    marks.sort(key=lambda mark: -float(mark["value"]))
-    return marks
-
-
-def _position_rows(
-    raw: list[dict[str, Any]],
-    equity: float,
-    open_cycles: dict[str, Any],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for mark in _position_marks(raw, equity):
-        held = open_cycles.get(mark["symbol"], {})
-        rows.append(
-            {
-                **mark,
-                "strategy": held.get("strategy", "unattributed"),
-                "opened": held.get("opened", "—"),
-                "inDate": held.get("inDate"),
-                "inMinute": held.get("inMinute"),
-                "fills": held.get("fills", []),
-            }
-        )
-    return rows
 
 
 async def build_ledger(
@@ -390,11 +292,17 @@ async def build_ledger(
         "marketValue": round(sum(float(row["value"]) for row in rows), 2),
         "unrealised": round(sum(float(row["unreal"]) for row in rows), 2),
         "positionCapPct": round(
-            100 * (configuration.position_fraction_max if configuration else POSITION_CAP_FALLBACK),
+            100
+            * min(
+                POSITION_FRACTION_CAP_MAX,
+                configuration.position_fraction_max
+                if configuration
+                else POSITION_FRACTION_MAX_DEFAULT,
+            ),
             2,
         ),
         "dailyLossLimitPct": round(
-            100 * (configuration.risk_per_day_max if configuration else DAILY_LOSS_FALLBACK), 2
+            100 * (configuration.risk_per_day_max if configuration else RISK_PER_DAY_MAX_DEFAULT), 2
         ),
         "bot": bot_state(snapshot, stale),
         "strategies": strategy_labels(),
@@ -402,7 +310,7 @@ async def build_ledger(
         "positions": rows,
         "trades": cycles,
         "days": sessions(cycles, closes, invested),
-        "totals": summarise(cycles),
+        "totals": totals(cycles),
         "equityDaily": equity_daily,
         "intraday": intraday_points,
         "intradayDate": intraday_date,
@@ -434,6 +342,7 @@ def bot_state(snapshot: RuntimeSnapshot | None, stale: bool) -> dict[str, Any]:
         "reported": snapshot is not None,
         "strategies": [strategy_id(name) for name in snapshot.strategies] if snapshot else [],
         "paused": [strategy_id(name) for name in snapshot.paused] if snapshot else [],
+        "events": list(reversed(snapshot.events)) if snapshot else [],
     }
 
 
@@ -451,7 +360,7 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
 
     ledger_cache = ReadCache(LEDGER_TTL_SECONDS)
     pulse_cache = ReadCache(PULSE_TTL_SECONDS)
-    bar_cache = BarCache()
+    bar_cache = BarCache(CHART_TTL_SECONDS, CHART_CACHE_MAX)
 
     def alpaca(request: Request) -> AlpacaReadClient:
         return request.state.alpaca
@@ -566,30 +475,33 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
 
         direction = 1 if side == "long" else -1
         payload: dict[str, Any] = {"strategy": strategy, "reconstructed": True}
+        bounds = session_bounds(opened_on)
 
         async with bar_cache.lock:
-            if strategy in ORB_OPENING_MINUTES:
+            if strategy in ORB_OPENING_MINUTES and bounds is not None:
+                opens = bounds[0]
+                minutes = ORB_OPENING_MINUTES[cast(Any, strategy)]
                 session = await market(request).bars(
                     symbol,
                     "5Min",
-                    datetime.combine(opened_on, dtime(9, 30), TRADING_ZONE).isoformat(),
-                    datetime.combine(opened_on, dtime(9, 45), TRADING_ZONE).isoformat(),
+                    opens.isoformat(),
+                    (opens + timedelta(minutes=3 * minutes)).isoformat(),
                     limit=10,
                 )
-                found = opening_range(session, opened_on, ORB_OPENING_MINUTES[strategy])
+                found = opening_range(session, opens, minutes)
                 if found is not None:
                     payload.update(orb_levels(strategy, direction, entry, *found))
-            elif strategy in DAILY_STOP_MULTIPLES:
+            elif strategy in DAILY_STOP_ATR_MULTIPLES:
                 history = await market(request).bars(
                     symbol,
                     "1Day",
-                    (opened_on - timedelta(days=90)).isoformat(),
+                    (opened_on - timedelta(days=LEVELS_HISTORY_DAYS)).isoformat(),
                     datetime.combine(opened_on, dtime(0, 0), TRADING_ZONE).isoformat(),
-                    limit=90,
+                    limit=LEVELS_HISTORY_DAYS,
                 )
-                average_range = wilder_atr(history)
+                average_range = bars_atr(history)
                 if average_range is not None:
-                    distance = DAILY_STOP_MULTIPLES[strategy] * average_range
+                    distance = DAILY_STOP_ATR_MULTIPLES[cast(Any, strategy)] * average_range
                     payload["stop"] = round(entry - direction * distance, 4)
                     payload["atr"] = round(average_range, 4)
             bar_cache.store(key, [payload])
@@ -664,3 +576,99 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         return Response(status_code=204, headers=NO_STORE)
 
     return router
+
+
+def _fingerprint_assets() -> tuple[dict[str, tuple[Path, str]], dict[bytes, bytes]]:
+    routes: dict[str, tuple[Path, str]] = {}
+    rewrites: dict[bytes, bytes] = {}
+    for name, media_type in ASSET_MEDIA_TYPES.items():
+        path = ASSET_DIRECTORY / name
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+        served = f"{path.stem}.{digest}{path.suffix}"
+        routes[served] = (path, media_type)
+        rewrites[f"/assets/{name}".encode()] = f"/assets/{served}".encode()
+    return routes, rewrites
+
+
+ASSET_ROUTES, ASSET_REWRITES = _fingerprint_assets()
+
+
+def _bar_time(bar: dict[str, Any]) -> datetime:
+    return datetime.fromisoformat(str(bar["t"]).replace("Z", "+00:00")).astimezone(TRADING_ZONE)
+
+
+def _bar_frame(bars: list[dict[str, Any]]) -> DataFrame:
+    frame = DataFrame(
+        {
+            "o": [float(bar["o"]) for bar in bars],
+            "h": [float(bar["h"]) for bar in bars],
+            "l": [float(bar["l"]) for bar in bars],
+            "c": [float(bar["c"]) for bar in bars],
+            "v": [float(bar.get("v") or 0) for bar in bars],
+        },
+        index=DatetimeIndex([_bar_time(bar) for bar in bars], tz=TRADING_ZONE),
+    )
+    return frame.sort_index()
+
+
+def _funded_points(history: dict[str, Any]) -> list[tuple[datetime, float]]:
+    return [
+        (datetime.fromtimestamp(int(point["timestamp"]), TRADING_ZONE), float(point["equity"]))
+        for point in history["points"]
+        if point["equity"]
+    ]
+
+
+def _equity_series(history: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {"date": when.date().isoformat(), "equity": round(value, 2)}
+        for when, value in _funded_points(history)
+    ]
+
+
+def _intraday_series(history: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
+    points = _funded_points(history)
+    rows = [{"t": when.strftime("%H:%M"), "equity": round(value, 2)} for when, value in points]
+    return rows, points[0][0].date().isoformat() if points else ""
+
+
+def _position_marks(raw: list[dict[str, Any]], equity: float) -> list[dict[str, Any]]:
+    marks: list[dict[str, Any]] = []
+    for item in raw:
+        value = float(item["market_value"])
+        marks.append(
+            {
+                "symbol": str(item["symbol"]),
+                "side": "long" if item["side"] == "long" else "short",
+                "qty": round(abs(float(item["qty"])), 4),
+                "entry": round(float(item["avg_entry_price"]), 4),
+                "last": round(float(item["current_price"]), 4),
+                "value": round(value, 2),
+                "unreal": round(float(item["unrealized_pl"]), 2),
+                "unrealPct": round(float(item["unrealized_plpc"]) * 100, 2),
+                "weight": round(value / equity * 100, 2) if equity else 0.0,
+            }
+        )
+    marks.sort(key=lambda mark: -float(mark["value"]))
+    return marks
+
+
+def _position_rows(
+    raw: list[dict[str, Any]],
+    equity: float,
+    open_cycles: dict[str, Any],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for mark in _position_marks(raw, equity):
+        held = open_cycles.get(mark["symbol"], {})
+        rows.append(
+            {
+                **mark,
+                "strategy": held.get("strategy", "unattributed"),
+                "opened": held.get("opened", "—"),
+                "inDate": held.get("inDate"),
+                "inMinute": held.get("inMinute"),
+                "fills": held.get("fills", []),
+            }
+        )
+    return rows

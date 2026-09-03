@@ -3,8 +3,6 @@ from typing import Any, cast
 import httpx
 from alpaca.common.enums import BaseURL
 
-from bot.attribution import find_order_strategy_label
-
 
 type JsonRow = dict[str, Any]
 
@@ -26,61 +24,8 @@ class AlpacaReadClient:
     async def account(self) -> Any:
         return await self._get("/v2/account")
 
-    async def positions(self) -> list[JsonRow]:
-        positions = cast(list[JsonRow], await self._get("/v2/positions"))
-        orders = await self.orders("all", 500)
-        strategies: dict[str, str] = {}
-        for order in orders:
-            symbol = order.get("symbol")
-            strategy = order["strategy"]
-            if isinstance(symbol, str) and isinstance(strategy, str):
-                strategies.setdefault(symbol, strategy)
-        attributed: list[JsonRow] = []
-        for position in positions:
-            symbol = position.get("symbol")
-            strategy = strategies.get(symbol) if isinstance(symbol, str) else None
-            attributed.append({**position, "strategy": strategy})
-        return attributed
-
     async def raw_positions(self) -> list[JsonRow]:
         return cast(list[JsonRow], await self._get("/v2/positions"))
-
-    async def orders(self, status: str, limit: int, until: str | None = None) -> list[JsonRow]:
-        orders = cast(
-            list[JsonRow],
-            await self._get(
-                "/v2/orders",
-                {"status": status, "limit": limit, "direction": "desc", "until": until},
-            ),
-        )
-        return [
-            {**order, "strategy": self._order_strategy(order.get("client_order_id"))}
-            for order in orders
-        ]
-
-    async def fills(self, limit: int, page_token: str | None = None) -> list[JsonRow]:
-        fills = cast(
-            list[JsonRow],
-            await self._get(
-                "/v2/account/activities",
-                {
-                    "activity_types": "FILL",
-                    "direction": "desc",
-                    "page_size": limit,
-                    "page_token": page_token,
-                },
-            ),
-        )
-        if not fills:
-            return []
-        newest_fill_at = max(cast(str, fill["transaction_time"]) for fill in fills)
-        orders = await self.orders("all", 500, newest_fill_at)
-        strategies = {
-            str(order["id"]): strategy
-            for order in orders
-            if isinstance(strategy := order["strategy"], str)
-        }
-        return [{**fill, "strategy": strategies.get(str(fill.get("order_id")))} for fill in fills]
 
     async def clock(self) -> Any:
         return await self._get("/v2/clock")
@@ -156,9 +101,6 @@ class AlpacaReadClient:
         response = await self._client.get(path, params=query)
         response.raise_for_status()
         return response.json()
-
-    def _order_strategy(self, value: object) -> str | None:
-        return find_order_strategy_label(value) if isinstance(value, str) else None
 
 
 class AlpacaMarketDataClient:

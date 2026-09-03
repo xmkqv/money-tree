@@ -1,15 +1,31 @@
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, TypedDict
 
+from bot.strategies.daily_base import (
+    DAILY_EARNINGS_EXIT_LEAD_MINUTES,
+    DAILY_EXITS_BEFORE_EARNINGS,
+    DAILY_STOP_ATR_MULTIPLES,
+)
 from bot.strategies.orb_base import (
+    ORB_CLOSE_LEAD_MINUTES,
+    ORB_ENTRY_EXTENSION_MAX,
+    ORB_HISTORY_SESSIONS,
+    ORB_OPENING_MINUTES,
     ORB_POSITIONS_MAX,
     ORB_PRICE_USD_MIN,
     ORB_RANGE_FRACTION_MIN,
     ORB_RISK_MAX,
+    ORB_SCAN_MINUTES,
+    ORB_SIGNAL_CANDLES_MAX,
     ORB_STOP_FRACTION_MAX,
     ORB_STOP_FRACTION_MIN,
+    ORB_TARGET_MULTIPLES,
+    ORB_TRAIL_ATR_MULTIPLE,
+    ORB_TRAIL_BARS_MIN,
     ORB_TURNOVER_USD_MIN,
+    ORB_VOLUME_MULTIPLES,
 )
+from bot.strategies.shared import NOTIONAL_USD_MIN, PERIOD, upcoming_session_bounds
 from bot.strategies.tfb_50 import (
     TFB_POSITIONS_MAX,
     TFB_PRICE_USD_MIN,
@@ -17,81 +33,14 @@ from bot.strategies.tfb_50 import (
     TFB_TURNOVER_SESSIONS,
     TFB_TURNOVER_USD_MIN,
 )
-from bot.types import STRATEGY_LABELS, TradingConfiguration
-
-
-FIELDS = [
-    "Market",
-    "Sentiment",
-    "Direction",
-    "Range",
-    "Setup",
-    "Confirmation",
-    "Sorting",
-    "Entry",
-    "Stop Loss",
-    "Max Risk",
-    "Min. R:R",
-    "Exit Rule",
-    "Emergency Exit",
-]
-
-RISK_PER_TRADE_DEFAULT = 0.005
-RISK_PER_DAY_DEFAULT = 0.02
-POSITION_FRACTION_DEFAULT = 0.20
-
-POSITION_FRACTION_CAP_MAX = 0.10
-POSITIONS_MAX = 10
-
-ORB_HISTORY_SESSIONS = 20
-ORB_TRAIL_ATR_MULTIPLE = 1.5
-ORB_TRAIL_BARS_MIN = 15
-POSITION_NOTIONAL_USD_MIN = 1
-
-ORB_SIGNAL_CANDLES_MAX = {"orb": 2, "orb_momentum": 2}
-
-ORB_ENTRY_EXTENSION_MAX: dict[str, float | None] = {"orb": None, "orb_momentum": 0.25}
-
-ORB_TARGET_MULTIPLES = {"orb": (1.5, 2.5, 4.0), "orb_momentum": (2.0, 3.0, 5.0)}
-
-UNCAPPED_RISK_ENGINES = frozenset({"sma"})
-
-DAILY_EXIT_NEEDS_BOTH = {"sma": False, "tfb_50": False}
-
-DAILY_EXITS_BEFORE_EARNINGS = {"sma": True, "tfb_50": False}
-
-ENTRY_WINDOWS: dict[str, tuple[time, time]] = {
-    "orb": (time(9, 35), time(10, 30)),
-    "orb_momentum": (time(9, 40), time(10, 30)),
-    "sma": (time(9, 30), time(16, 0)),
-    "tfb_50": (time(9, 30), time(16, 0)),
-}
-
-
-def entry_windows() -> dict[str, dict[str, str]]:
-    return {
-        engine: {"from": f"{opens:%H:%M}", "to": f"{closes:%H:%M}"}
-        for engine, (opens, closes) in ENTRY_WINDOWS.items()
-    }
-
-
-def _millions(value: float) -> str:
-    return f"${value / 1_000_000:g}M"
-
-
-UNIVERSE = (
-    f"US equities screened daily: market cap {_millions(500_000_000)} or more, share price "
-    f"${ORB_PRICE_USD_MIN:.0f} or more, 3-month average daily turnover "
-    f"{_millions(ORB_TURNOVER_USD_MIN)} or more, and tradable and fractionable at Alpaca."
-)
-
-TFB_UNIVERSE = (
-    f"{UNIVERSE} This engine then screens that list again on its own floors: share price "
-    f"${TFB_PRICE_USD_MIN:.0f} or more, and turnover averaging "
-    f"{_millions(TFB_TURNOVER_USD_MIN)} or "
-    f"more across the last {TFB_TURNOVER_SESSIONS} completed sessions — the value actually "
-    "traded, not a share count against today's price. A symbol whose sessions cannot be read "
-    "does not pass."
+from bot.types import (
+    POSITION_FRACTION_CAP_MAX,
+    POSITIONS_MAX,
+    RISK_PER_DAY_MAX_DEFAULT,
+    RISK_PER_TRADE_MAX_DEFAULT,
+    STRATEGY_LABELS,
+    StrategyName,
+    TradingConfiguration,
 )
 
 
@@ -109,25 +58,149 @@ class StrategyCard(TypedDict):
     rows: list[Row]
 
 
+FIELDS = [
+    "Market",
+    "Sentiment",
+    "Direction",
+    "Range",
+    "Setup",
+    "Confirmation",
+    "Sorting",
+    "Entry",
+    "Stop Loss",
+    "Max Risk",
+    "Min. R:R",
+    "Exit Rule",
+    "Emergency Exit",
+]
+UNIVERSE_CAP_USD_MIN = 500_000_000.0
+STRATEGY_SHORT_LABELS: dict[StrategyName, str] = {
+    "orb": "ORB5",
+    "orb_momentum": "ORB10",
+    "sma": "Momentum SMA",
+    "tfb_50": "TFB-50",
+}
+STRATEGY_KINDS: dict[StrategyName, str] = {
+    "orb": "Intraday breakout",
+    "orb_momentum": "Intraday breakout",
+    "sma": "Daily trend",
+    "tfb_50": "Daily trend",
+}
+
+
+def entry_windows() -> dict[str, dict[str, str]]:
+    opens, closes = upcoming_session_bounds(date.today())
+    scan_end = opens + timedelta(minutes=ORB_SCAN_MINUTES)
+    windows = {
+        strategy: (opens + timedelta(minutes=minutes), scan_end)
+        for strategy, minutes in ORB_OPENING_MINUTES.items()
+    }
+    windows.update({strategy: (opens, closes) for strategy in DAILY_STOP_ATR_MULTIPLES})
+    return {
+        strategy: {"from": f"{window[0]:%H:%M}", "to": f"{window[1]:%H:%M}"}
+        for strategy, window in windows.items()
+    }
+
+
+def strategy_spec(configuration: TradingConfiguration | None) -> dict[str, Any]:
+    per_trade = configuration.risk_per_trade_max if configuration else RISK_PER_TRADE_MAX_DEFAULT
+    daily_loss = configuration.risk_per_day_max if configuration else RISK_PER_DAY_MAX_DEFAULT
+    opens, closes = upcoming_session_bounds(date.today())
+
+    cards = [
+        StrategyCard(
+            id=strategy,
+            short=STRATEGY_SHORT_LABELS[strategy],
+            label=STRATEGY_LABELS[strategy],
+            kind=STRATEGY_KINDS[strategy],
+            rows=(
+                _orb(strategy, per_trade, opens, closes)
+                if strategy in ORB_OPENING_MINUTES
+                else _daily(strategy, per_trade, closes)
+            ),
+        )
+        for strategy in STRATEGY_SHORT_LABELS
+    ]
+    return {
+        "fields": FIELDS,
+        "strategies": cards,
+        "portfolio": portfolio_rules(daily_loss),
+        "configured": configuration is not None,
+    }
+
+
+def portfolio_rules(daily_loss: float) -> list[Row]:
+    return [
+        Row(
+            field="Position cap",
+            value=f"At most {POSITIONS_MAX} positions open at once, counting orders already "
+            "placed but not yet filled.",
+            source="portfolio.py · _enter",
+        ),
+        Row(
+            field="Breakout cap",
+            value=f"At most {ORB_POSITIONS_MAX} breakout positions open at once across both "
+            "intraday strategies. Every breakout is the same bet on the same half hour, so "
+            "the two strategies share one allowance rather than each taking their own.",
+            source="portfolio.py · _orb_position_count",
+        ),
+        Row(
+            field="Exposure",
+            value="The total value held never exceeds account equity, so the account never "
+            "trades on borrowed money.",
+            source="portfolio.py · _enter",
+        ),
+        Row(
+            field="One owner per stock",
+            value="Only one strategy holds a given stock at a time; the others skip it while "
+            "that position is open.",
+            source="portfolio.py · _is_claimed",
+        ),
+        Row(
+            field="Daily loss limit",
+            value=f"If equity falls {_pct(daily_loss)} below the previous close, every position "
+            "is closed and no new trade is opened until the next session.",
+            source="portfolio.py · _is_daily_loss_reached",
+        ),
+    ]
+
+
+def _millions(value: float) -> str:
+    return f"${value / 1_000_000:g}M"
+
+
 def _pct(fraction: float) -> str:
     text = f"{fraction * 100:.2f}".rstrip("0").rstrip(".")
     return f"{text}%"
 
 
-def _orb(
-    minutes: int,
-    volume_multiple: float,
-    uses_macd: bool,
-    per_trade: float,
-    ranked: bool,
-    signal_candles_max: int,
-    target_multiples: tuple[float, float, float],
-    entry_extension_max: float | None,
-) -> list[Row]:
-    session_open = datetime(2000, 1, 1, 9, 30)
-    opening_end = f"{session_open + timedelta(minutes=minutes):%H:%M}"
-    first_entry = f"{session_open + timedelta(minutes=2 * minutes):%H:%M}"
-    risk_cap = ORB_RISK_MAX if minutes == 5 else per_trade
+UNIVERSE = (
+    f"US equities screened daily: market cap {_millions(UNIVERSE_CAP_USD_MIN)} or more, share "
+    f"price ${ORB_PRICE_USD_MIN:.0f} or more, 3-month average daily turnover "
+    f"{_millions(ORB_TURNOVER_USD_MIN)} or more, and tradable and fractionable at Alpaca."
+)
+
+TFB_UNIVERSE = (
+    f"{UNIVERSE} This strategy then screens that list again on its own floors: share price "
+    f"${TFB_PRICE_USD_MIN:.0f} or more, and turnover averaging "
+    f"{_millions(TFB_TURNOVER_USD_MIN)} or "
+    f"more across the last {TFB_TURNOVER_SESSIONS} completed sessions — the value actually "
+    "traded, not a share count against today's price. A symbol whose sessions cannot be read "
+    "does not pass."
+)
+
+
+def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: datetime) -> list[Row]:
+    minutes = ORB_OPENING_MINUTES[strategy]
+    volume_multiple = ORB_VOLUME_MULTIPLES[strategy]
+    target_multiples = ORB_TARGET_MULTIPLES[strategy]
+    entry_extension_max = ORB_ENTRY_EXTENSION_MAX[strategy]
+    risk_cap = ORB_RISK_MAX if strategy == "orb" else per_trade
+    opening_end = f"{opens + timedelta(minutes=minutes):%H:%M}"
+    first_entry = f"{opens + timedelta(minutes=2 * minutes):%H:%M}"
+    scan_end = f"{opens + timedelta(minutes=ORB_SCAN_MINUTES):%H:%M}"
+    exit_at = f"{closes - timedelta(minutes=ORB_CLOSE_LEAD_MINUTES):%H:%M}"
+    exit_before = f"{closes - timedelta(minutes=ORB_CLOSE_LEAD_MINUTES - 1):%H:%M}"
 
     confirmation = (
         f"Volume traded up to the signal candle's close is at least {volume_multiple:g}x the "
@@ -137,12 +210,10 @@ def _orb(
         "must be there to compare against — a shorter history is not a weaker signal, it is "
         "no confirmation at all, and the breakout is passed over. The reading is taken as the "
         "signal candle closed rather than as the scan runs, so a breakout read a pass late is "
-        "still confirmed on the moment that made it."
+        "still confirmed on the moment that made it. Each session is measured between its own "
+        "opening and closing bell, so a half day is compared as a half day."
     )
-    if uses_macd:
-        confirmation += " MACD (12/26/9) must also be rising for a long, falling for a short."
 
-    fill_sets = "the entry, the risk and the targets"
     first, second, third = target_multiples
     multiples = f"{first:g}x, {second:g}x and {third:g}x"
     reward = f"{first:g}:1 at the first target, then {second:g}:1 and {third:g}:1."
@@ -166,8 +237,8 @@ def _orb(
         Row(field="Market", value=UNIVERSE, source="portfolio.py · _discover_eligible_symbols"),
         Row(
             field="Sentiment",
-            value="None. This engine takes signals whatever the wider market is doing.",
-            source="portfolio.py · _run_orb_variant",
+            value="None. This strategy takes signals whatever the wider market is doing.",
+            source="portfolio.py · _run_orb",
         ),
         Row(
             field="Direction",
@@ -179,46 +250,39 @@ def _orb(
         ),
         Row(
             field="Range",
-            value=f"The opening range is the first {minutes}-minute candle: 09:30 up to "
-            f"{opening_end}, the last trade before {opening_end} being the one that closes it. "
-            "Its high and low set the levels for the day.",
-            source="portfolio.py · _run_orb_variant",
+            value=f"The opening range is the first {minutes}-minute candle: the opening bell up "
+            f"to {opening_end}, the last trade before {opening_end} being the one that closes "
+            "it. Its high and low set the levels for the day. The bell is read from the "
+            "exchange calendar, so a late open moves the range with it.",
+            source="portfolio.py · _run_orb, strategies/shared.py · session_bounds",
         ),
         Row(
             field="Setup",
             value=f"The first completed {minutes}-minute candle since the range that closes above "
             "the range high (long) or below the range low (short) — a candle still forming never "
             f"signals. Checked every {minutes} minutes from {opening_end}, the moment the opening "
-            "candle closes, to 10:30, at most once per stock per day. The whole session since the "
-            "range is re-read on every pass rather than only its newest candle, so a breakout "
-            "whose bars reached the scan late is still the candle the signal is taken from — but "
-            f"only while it is one of the last {signal_candles_max} completed candles, "
-            f"{signal_candles_max * minutes} minutes of the move. A close further back than that "
-            "has already run, and is passed over rather than chased. "
-            "Once either breakout engine has traded a stock, both leave it alone for the rest "
+            f"candle closes, to {scan_end}, at most once per stock per day. The whole session "
+            "since the range is re-read on every pass rather than only its newest candle, so a "
+            "breakout whose bars reached the scan late is still the candle the signal is taken "
+            f"from — but only while it is one of the last {ORB_SIGNAL_CANDLES_MAX} completed "
+            f"candles, {ORB_SIGNAL_CANDLES_MAX * minutes} minutes of the move. A close further "
+            "back than that has already run, and is passed over rather than chased. "
+            "Once either breakout strategy has traded a stock, both leave it alone for the rest "
             f"of the session. The range itself must be at least {_pct(ORB_RANGE_FRACTION_MIN)} of "
             f"the price, and the stop cut from it between {_pct(ORB_STOP_FRACTION_MIN)} and "
             f"{_pct(ORB_STOP_FRACTION_MAX)} of the price — a narrower range puts the stop inside "
             "the spread, where the next tick decides the trade.",
-            source="portfolio.py · _run_orb_variant, orb_base.py · orb_setup",
+            source="portfolio.py · _run_orb, orb_base.py · is_orb_setup_ready",
         ),
         Row(field="Confirmation", value=confirmation, source="portfolio.py · _orb_confirm"),
         Row(
             field="Sorting",
-            value=(
-                "Ranked by the value traded in the last completed daily session — its close "
-                "times its share volume — highest first. When more breakouts fire than there "
-                "is room to hold, the busiest take the slots. This is a different question "
-                "from the confirmation above, which measures each stock against its own "
-                "history rather than against other stocks."
-                if ranked
-                else "Not ranked. Breakouts are taken in symbol order as the scan meets them, "
-                "so when more fire than the position cap allows, the earlier symbol wins "
-                "the slot."
-            ),
-            source="portfolio.py · _rank_candidates"
-            if ranked
-            else "portfolio.py · _run_orb_variant",
+            value="Ranked by the value traded in the last completed daily session — its close "
+            "times its share volume — highest first. When more breakouts fire than there "
+            "is room to hold, the busiest take the slots. This is a different question "
+            "from the confirmation above, which measures each stock against its own "
+            "history rather than against other stocks.",
+            source="portfolio.py · _rank_candidates",
         ),
         Row(
             field="Entry",
@@ -228,23 +292,23 @@ def _orb(
             "at the earliest, "
             "since the opening candle cannot break its own range. Good for the day only. The "
             "size is worked out from the live quote, falling back to the breakout candle's "
-            f"close, and the fill then sets {fill_sets}. It is passed "
-            "over if another engine already holds the stock, if the account is at its position "
+            "close, and the fill then sets the entry, the risk and the targets. It is passed "
+            "over if another strategy already holds the stock, if the account is at its position "
             "cap or fully invested, if the size that fits the risk limits comes to less than "
-            f"${POSITION_NOTIONAL_USD_MIN}, or if that live quote has already run back through the "
+            f"${NOTIONAL_USD_MIN:.0f}, or if that live quote has already run back through the "
             "stop the breakout would have been given — a position cannot be opened already "
             f"past its own exit.{extension}",
-            source="portfolio.py · on_trading_iteration, _run_orb_variant, _enter",
+            source="portfolio.py · on_trading_iteration, _run_orb, _enter",
         ),
         Row(
             field="Stop Loss",
             value="Three quarters of the way back into the opening range for a long, a quarter "
             "for a short. Once the first target is hit the stop trails "
-            f"{ORB_TRAIL_ATR_MULTIPLE:g}x the 14-period ATR behind the best price the trade has "
-            "seen, and never moves back "
-            f"past the entry price. That ATR(14) is calculated from {minutes}-minute candles "
-            "across trading sessions, using available prior-session bars as needed, so overnight "
-            f"gaps contribute to true range. At least {ORB_TRAIL_BARS_MIN} completed "
+            f"{ORB_TRAIL_ATR_MULTIPLE:g}x the {PERIOD}-period ATR behind the best price the "
+            "trade has seen, and never moves back "
+            f"past the entry price. That ATR({PERIOD}) is calculated from {minutes}-minute "
+            "candles across trading sessions, using available prior-session bars as needed, so "
+            f"overnight gaps contribute to true range. At least {ORB_TRAIL_BARS_MIN} completed "
             f"{minutes}-minute candles must be available; because prior sessions are included, "
             "this requirement will normally already be satisfied when the trade begins. "
             "The level rests as a live order at "
@@ -254,16 +318,16 @@ def _orb(
             "market there and then instead. The move to breakeven after the first target is the "
             "usual way this happens: price back at the entry is the stop being hit, and the "
             "position leaves at market rather than waiting for an order that could not be placed.",
-            source="portfolio.py · _run_orb_variant, _manage_orb, _protect, _resync_stops",
+            source="portfolio.py · _run_orb, _manage_orb, _protect, _resync_stops",
         ),
         Row(
             field="Max Risk",
             value=f"{_pct(risk_cap)} of account equity per trade"
             + (
-                f" — this engine states its own {_pct(ORB_RISK_MAX)} in the register, so "
+                f" — this strategy states its own {_pct(ORB_RISK_MAX)} in the register, so "
                 f"that governs instead of the configured {_pct(per_trade)}."
-                if minutes == 5
-                else " (the configured per-trade limit; this engine states none of its own)."
+                if strategy == "orb"
+                else " (the configured per-trade limit; this strategy states none of its own)."
             )
             + f" A single position is never worth more than {_pct(POSITION_FRACTION_CAP_MAX)} "
             "of equity.",
@@ -282,23 +346,26 @@ def _orb(
         ),
         Row(
             field="Emergency Exit",
-            value="Everything is closed before 15:55 — the exit is sent at 15:54 so the "
-            "market order fills in time, and this engine never holds overnight. The "
-            "daily loss limit closes all positions and stops new entries for the rest of "
-            "the day.",
+            value=f"Everything is closed before {exit_before} — the exit is sent at {exit_at}, "
+            f"{ORB_CLOSE_LEAD_MINUTES} minutes before the closing bell the exchange calendar "
+            "gives for the session, so the market order fills in time and a half day closes on "
+            "its own clock. This strategy never holds overnight. The daily loss limit closes all "
+            "positions and stops new entries for the rest of the day.",
             source="portfolio.py · _manage, _is_daily_loss_reached",
         ),
     ]
 
 
-def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
-    if engine == "sma":
+def _daily(strategy: StrategyName, per_trade: float, closes: datetime) -> list[Row]:
+    stop_multiple = DAILY_STOP_ATR_MULTIPLES[strategy]
+    earnings_exit = f"{closes - timedelta(minutes=DAILY_EARNINGS_EXIT_LEAD_MINUTES):%H:%M}"
+    if strategy == "sma":
         setup = (
             "The closing price crosses back above its 20-day average while the trend is "
             "already stacked underneath it: price above the 50-day average, and that "
             "average above the 200-day. Needs 200 sessions of history."
         )
-        confirmation = "RSI (14) at 50 or above, and ADX (14) at 25 or above."
+        confirmation = f"RSI ({PERIOD}) at 50 or above, and ADX ({PERIOD}) at 25 or above."
         entry = (
             "A three-day structure: one session closes below the 20-day average, the next "
             "closes back above it and higher than that first close, and the buy goes in at "
@@ -309,7 +376,7 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
             "that session."
         )
         risk = (
-            "No per-trade risk limit is set for this engine, so the size comes from the "
+            "No per-trade risk limit is set for this strategy, so the size comes from the "
             f"position cap alone: never more than {_pct(POSITION_FRACTION_CAP_MAX)} of equity."
         )
         setup_source = "strategies/shared.py · does_momentum_enter"
@@ -319,19 +386,19 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
             "The closing price is above its 50-day average, that average is higher than it "
             "was 3 sessions ago, and the close beats the previous session's high."
         )
-        confirmation = "ADX (14) at 20 or above."
+        confirmation = f"ADX ({PERIOD}) at 20 or above."
         entry = (
             "Market buy at the open, then retried every iteration until the close. The "
             "setup is cut from completed sessions, so the day's list is scanned once and "
             "re-offered: a name that could not be funded at the open — no slot left, no "
-            "affordable size, another engine holding it — is taken later in the day if "
-            "one frees up. Upcoming earnings do not block an entry for this engine."
+            "affordable size, another strategy holding it — is taken later in the day if "
+            "one frees up. Upcoming earnings do not block an entry for this strategy."
         )
         risk = (
-            f"{_pct(TFB_RISK_MAX)} of account equity per trade — this engine states its "
+            f"{_pct(TFB_RISK_MAX)} of account equity per trade — this strategy states its "
             f"own {_pct(TFB_RISK_MAX)} in the register, so that governs instead of the "
             f"configured {_pct(per_trade)}. A single position is never worth more than "
-            f"{_pct(POSITION_FRACTION_CAP_MAX)} of equity, and this engine holds at most "
+            f"{_pct(POSITION_FRACTION_CAP_MAX)} of equity, and this strategy holds at most "
             f"{TFB_POSITIONS_MAX} positions at once."
         )
         setup_source = "strategies/shared.py · does_tfb_enter"
@@ -340,20 +407,20 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
     return [
         Row(
             field="Market",
-            value=TFB_UNIVERSE if engine == "tfb_50" else UNIVERSE,
+            value=TFB_UNIVERSE if strategy == "tfb_50" else UNIVERSE,
             source="portfolio.py · _discover_eligible_symbols"
-            + (", strategies/tfb_50.py · is_tfb_market_ready" if engine == "tfb_50" else ""),
+            + (", strategies/tfb_50.py · is_tfb_market_ready" if strategy == "tfb_50" else ""),
         ),
         Row(
             field="Sentiment",
             value="The S&P 500 must be trading above its own 20-day average. If it is not, no "
-            "daily engine takes a position that day.",
+            "daily strategy takes a position that day.",
             source="portfolio.py · _run_daily",
         ),
         Row(field="Direction", value="Long only.", source="portfolio.py · _enter"),
         Row(
             field="Range",
-            value="Not used. This engine reads daily candles and has no opening range.",
+            value="Not used. This strategy reads daily candles and has no opening range.",
             source="portfolio.py · _run_daily",
         ),
         Row(field="Setup", value=setup, source=setup_source),
@@ -369,16 +436,16 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         Row(field="Entry", value=entry, source=entry_source),
         Row(
             field="Stop Loss",
-            value=f"{stop_multiple:g}x the 14-period ATR below the entry price, then trailing "
-            f"{stop_multiple:g}x ATR below the highest close reached since entry. The stop "
-            "only ever moves up.",
+            value=f"{stop_multiple:g}x the {PERIOD}-period ATR below the entry price, then "
+            f"trailing {stop_multiple:g}x ATR below the highest close reached since entry. The "
+            "stop only ever moves up.",
             source="portfolio.py · _manage_daily",
         ),
         Row(
             field="Max Risk",
             value=risk,
             source="portfolio.py · _run_tfb, _enter"
-            if engine == "tfb_50"
+            if strategy == "tfb_50"
             else "portfolio.py · _enter",
         ),
         Row(
@@ -390,122 +457,23 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         Row(
             field="Exit Rule",
             value="Closed when the price falls through the trailing stop, or when the close "
-            + (
-                "drops below its 20-day average with RSI (14) under 50."
-                if DAILY_EXIT_NEEDS_BOTH[engine]
-                else "drops below its 20-day average, or RSI (14) falls under 50. Either "
-                "one is enough on its own."
-            ),
+            f"drops below its 20-day average, or RSI ({PERIOD}) falls under 50. Either "
+            "one is enough on its own.",
             source="strategies/shared.py · does_signal_exit",
         ),
         Row(
             field="Emergency Exit",
             value=(
-                "Closed at 15:50 on the session before the company reports earnings, "
-                "unless that calendar cannot be read, in which case the position is left "
-                "alone. The daily loss limit closes all positions and stops new entries for "
-                "the rest of the day."
-                if DAILY_EXITS_BEFORE_EARNINGS[engine]
+                f"Closed {DAILY_EARNINGS_EXIT_LEAD_MINUTES} minutes before the closing bell "
+                f"({earnings_exit} on a full session) on the session before the company "
+                "reports earnings, unless that calendar cannot be read, in which case the "
+                "position is left alone. The daily loss limit closes all positions and stops "
+                "new entries for the rest of the day."
+                if DAILY_EXITS_BEFORE_EARNINGS[strategy]
                 else "The daily loss limit closes all positions and stops new entries for "
-                "the rest of the day. Earnings do not close a position for this engine — it "
+                "the rest of the day. Earnings do not close a position for this strategy — it "
                 "holds through the report and leaves on its threshold or its exit rule."
             ),
             source="portfolio.py · _manage_daily, _is_daily_loss_reached",
         ),
     ]
-
-
-def portfolio_rules(daily_loss: float) -> list[Row]:
-    return [
-        Row(
-            field="Position cap",
-            value=f"At most {POSITIONS_MAX} positions open at once, counting orders already "
-            "placed but not yet filled.",
-            source="portfolio.py · _enter",
-        ),
-        Row(
-            field="Breakout cap",
-            value=f"At most {ORB_POSITIONS_MAX} breakout positions open at once across both "
-            "intraday engines. Every breakout is the same bet on the same half hour, so "
-            "the two engines share one allowance rather than each taking their own.",
-            source="portfolio.py · _orb_position_count",
-        ),
-        Row(
-            field="Exposure",
-            value="The total value held never exceeds account equity, so the account never "
-            "trades on borrowed money.",
-            source="portfolio.py · _enter",
-        ),
-        Row(
-            field="One owner per stock",
-            value="Only one engine holds a given stock at a time; the others skip it while "
-            "that position is open.",
-            source="portfolio.py · _is_claimed",
-        ),
-        Row(
-            field="Daily loss limit",
-            value=f"If equity falls {_pct(daily_loss)} below the previous close, every position "
-            "is closed and no new trade is opened until the next session.",
-            source="portfolio.py · _is_daily_loss_reached",
-        ),
-    ]
-
-
-def strategy_spec(configuration: TradingConfiguration | None) -> dict[str, Any]:
-    per_trade = configuration.risk_per_trade_max if configuration else RISK_PER_TRADE_DEFAULT
-    daily_loss = configuration.risk_per_day_max if configuration else RISK_PER_DAY_DEFAULT
-
-    cards: list[StrategyCard] = [
-        StrategyCard(
-            id="orb",
-            short="ORB5",
-            label=STRATEGY_LABELS["orb"],
-            kind="Intraday breakout",
-            rows=_orb(
-                5,
-                1.3,
-                False,
-                per_trade,
-                True,
-                ORB_SIGNAL_CANDLES_MAX["orb"],
-                ORB_TARGET_MULTIPLES["orb"],
-                ORB_ENTRY_EXTENSION_MAX["orb"],
-            ),
-        ),
-        StrategyCard(
-            id="orb_momentum",
-            short="ORB10",
-            label=STRATEGY_LABELS["orb_momentum"],
-            kind="Intraday breakout",
-            rows=_orb(
-                10,
-                1.5,
-                False,
-                per_trade,
-                True,
-                ORB_SIGNAL_CANDLES_MAX["orb_momentum"],
-                ORB_TARGET_MULTIPLES["orb_momentum"],
-                ORB_ENTRY_EXTENSION_MAX["orb_momentum"],
-            ),
-        ),
-        StrategyCard(
-            id="sma",
-            short="Momentum SMA",
-            label=STRATEGY_LABELS["sma"],
-            kind="Daily trend",
-            rows=_daily("sma", 1.5, per_trade),
-        ),
-        StrategyCard(
-            id="tfb_50",
-            short="TFB-50",
-            label=STRATEGY_LABELS["tfb_50"],
-            kind="Daily trend",
-            rows=_daily("tfb_50", 2.0, per_trade),
-        ),
-    ]
-    return {
-        "fields": FIELDS,
-        "strategies": cards,
-        "portfolio": portfolio_rules(daily_loss),
-        "configured": configuration is not None,
-    }
