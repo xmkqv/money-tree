@@ -15,39 +15,55 @@ The register below is the specification. `src/bot/strategies/` implements it,
 
 ## quickstart
 
+Every command runs in a mode. Make development the shell default; production is
+selected per invocation.
+
 ```sh
-uv sync
-uv run pytest
+export MISE_ENV=development
+mise run setup
 ```
 
-Backtest a daily strategy and write a run directory. Daily strategies read from
-Yahoo, so this needs no credentials.
+`mise.development.toml` declares every variable the bot and the dashboard read.
+The ones declared empty are secrets: write them into `.env.development`, which
+mise loads last and never tracks.
 
 ```sh
-uv run mt report --strategy sma --symbols SPY --start 2023-01-01 --end 2024-01-01
+mise run check
+```
+
+Backtest a daily strategy and write a run directory.
+
+```sh
+mise exec -- uv run mt report --strategy sma --symbols SPY --start 2023-01-01 --end 2024-01-01
 # runs/sma-20230101-20240101
 ```
 
 The run directory holds `trades.csv`, `stats.csv`, `indicators.csv`, their parquet
 equivalents, `tearsheet.html`, and `backtest.log`.
 
-Intraday strategies (`orb`, `orb_momentum`) resolve minute bars through Alpaca and
-fail without credentials. Copy `.env.example` to `.env` and fill in
-`ALPACA_API_KEY` and `ALPACA_API_SECRET` first.
+Intraday strategies (`orb`, `orb_momentum`) resolve minute bars through Alpaca.
 
 ```sh
-uv run mt backtest --strategy orb --symbols SPY --start 2023-01-01 --end 2024-01-01
+mise exec -- uv run mt backtest --strategy orb --symbols SPY --start 2023-01-01 --end 2024-01-01
 ```
 
-Run live or paper against the broker. `ALPACA_IS_PAPER` decides which.
+Run against the broker. The mode decides paper or live: development sets
+`ALPACA_IS_PAPER=true`, production sets it false.
 
 ```sh
-uv run mt trade --strategies orb
+mise exec -- uv run mt trade --strategies orb
+mise --env production exec -- uv run mt trade --strategies orb
 ```
 
 The dashboard is a FastAPI app under `src/ui/`, deployed to Railway from
 `.railway/railway.ts`. `spec.md` maps the layout, and `.railway/README.md` covers
 the infrastructure commands.
+
+```sh
+mise run serve
+mise run stop
+mise --env production run deploy HEAD
+```
 
 ## strategy register
 
