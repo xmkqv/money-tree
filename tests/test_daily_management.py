@@ -66,6 +66,7 @@ class FakeStrategy(Strategy):
         self._daily_frames = {"AAA": frame}
         self._eligible_symbols = ["AAA"]
         self._events = set()
+        self._daily_traded = set()
         self.exporter = None
         self.exited: list[Holding] = []
 
@@ -216,19 +217,45 @@ class EnteringStrategy(FakeStrategy):
 
     def __init__(self, frames: dict[str, DataFrame]) -> None:
         super().__init__(price_history())
-        self._daily_frames = frames
         self._eligible_symbols = sorted(frames)
+        # price_history() rises, so the market-state gate passes.
+        self._daily_frames = {**frames, "^GSPC": price_history()}
+        self._daily_candidates = {}
+        self._daily_scanned_on = None
+        self._selected = ["tfb_50"]
         self._holdings = {}
         self._pending = {}
         self._claims = {}
         self._enabled = {"tfb_50"}
         self.entered: list[str] = []
 
-    def _enter(self, engine: str, signal: str, asset: str, *args: object, **kwargs: object) -> bool:
+    def _release_one(self) -> None:
+        """Close a position, the way a stop would free a slot mid-session."""
+        asset = self.entered[0]
+        self._holdings.pop(asset)
+        self._claims.pop(asset)
+
+    def _enter(
+        self,
+        engine: str,
+        signal: str,
+        asset: str,
+        price: float,
+        stop: float,
+        now: datetime,
+        **kwargs: object,
+    ) -> bool:
+        """The real _enter's bookkeeping, without the broker.
+
+        It records the same claim, holding and once-per-session ledger entry the
+        composer's own _enter writes, so the guards that read them are the ones
+        under test here rather than a fake that cannot trip them.
+        """
         self.entered.append(asset)
         self._claims[asset] = engine
         self._holdings[asset] = holding(NOW, entry=1.0)
         self._holdings[asset].engine = engine
+        self._daily_traded.add((now.date(), asset))
         return True
 
 
@@ -244,7 +271,7 @@ def test_the_composer_stops_entering_tfb_50_at_its_own_cap(tfb_signals: None) ->
     volumes = {f"S{index}": float(index + 1) * 1e6 for index in range(TFB_POSITIONS_MAX + 3)}
     strategy = EnteringStrategy({name: session_frame(volume) for name, volume in volumes.items()})
 
-    strategy._run_tfb(NOW)
+    strategy._run_daily(NOW)
 
     busiest = sorted(volumes, key=lambda symbol: -volumes[symbol])
     assert strategy.entered == busiest[:TFB_POSITIONS_MAX]
@@ -274,13 +301,14 @@ class StandaloneHarness:
         self.is_backtesting = True
         self.portfolio_value = 100_000.0
         self.exporter = None
+        self.now = NOW
         self.submitted: list[tuple[str, str]] = []
         self._turnover = turnover
         self._held = held
         self.initialize()
 
     def get_datetime(self) -> datetime:
-        return NOW
+        return self.now
 
     def get_historical_prices(self, symbol: str, length: int, step: str) -> object:
         if symbol == "^GSPC":
@@ -442,7 +470,7 @@ def test_the_composer_skips_a_name_its_own_screen_rejects(tfb_signals: None) -> 
         }
     )
 
-    strategy._run_tfb(NOW)
+    strategy._run_daily(NOW)
 
     assert strategy.entered == ["RICH"]
 
@@ -532,3 +560,113 @@ def test_only_the_momentum_engine_sells_the_standalone_way_before_earnings(
 def closes_at(value: float, name: str | None = None) -> Series:
     closes = price_history()["close"]
     return Series(value, index=closes.index, name=name)
+
+
+# --- The daily scan runs all session, from one pass over the universe ---
+
+
+def test_the_universe_is_scanned_once_and_the_list_re_offered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The setup reads completed candles, so rescanning every minute is waste."""
+    scanned: list[str] = []
+
+    def counting_entry(frame: DataFrame) -> bool:
+        scanned.append("call")
+        return True
+
+    monkeypatch.setattr(portfolio, "tfb_entry", counting_entry)
+    monkeypatch.setattr(portfolio, "latest_atr", lambda frame: 1.0)
+    volumes = {f"S{index}": float(index + 1) * 1e6 for index in range(3)}
+    strategy = EnteringStrategy({name: session_frame(volume) for name, volume in volumes.items()})
+
+    strategy._run_daily(NOW)
+    passes_after_first = len(scanned)
+    strategy._run_daily(NOW + timedelta(minutes=1))
+    strategy._run_daily(NOW + timedelta(hours=3))
+
+    assert passes_after_first == len(volumes), "the first pass reads every eligible name"
+    assert len(scanned) == passes_after_first, "later iterations must not rescan"
+
+
+def test_a_slot_freed_later_in_the_day_is_filled_on_a_later_pass(tfb_signals: None) -> None:
+    """The point of scanning all day: a name not funded at the open still gets in."""
+    volumes = {f"S{index}": float(index + 1) * 1e6 for index in range(TFB_POSITIONS_MAX + 2)}
+    strategy = EnteringStrategy({name: session_frame(volume) for name, volume in volumes.items()})
+    busiest = sorted(volumes, key=lambda symbol: -volumes[symbol])
+
+    strategy._run_daily(NOW)
+    assert strategy.entered == busiest[:TFB_POSITIONS_MAX], "the cap is full at the open"
+
+    strategy._release_one()
+    strategy._run_daily(NOW + timedelta(hours=4))
+
+    assert strategy.entered == busiest[: TFB_POSITIONS_MAX + 1], "the freed slot went to the next"
+    assert busiest[0] not in strategy.entered[TFB_POSITIONS_MAX:], "no same-session re-entry"
+
+
+def test_no_daily_entry_is_taken_when_the_market_state_fails(tfb_signals: None) -> None:
+    strategy = EnteringStrategy({"AAA": session_frame(TFB_TURNOVER_MIN * 2)})
+    # A falling index: the register takes no daily position on such a day.
+    falling = price_history().copy(deep=True)
+    falling["close"] = falling["close"].iloc[::-1].to_numpy()
+    strategy._daily_frames["^GSPC"] = falling
+
+    strategy._run_daily(NOW)
+
+    assert strategy.entered == []
+    assert strategy._daily_candidates == {}
+
+
+# --- The standalone class scans all session too, and never re-enters a name ---
+
+
+def test_the_standalone_engine_fills_a_freed_slot_on_a_later_iteration(
+    standalone_signals: None,
+) -> None:
+    """No once-a-day gate: the second iteration is a real pass, not a no-op."""
+    volumes = turnovers(TFB_POSITIONS_MAX + 2)
+    strategy = TfbStandalone(volumes, held={})
+    busiest = sorted(volumes, key=lambda symbol: -volumes[symbol])
+
+    strategy.on_trading_iteration()
+    assert [symbol for symbol, _ in strategy.submitted] == busiest[:TFB_POSITIONS_MAX]
+
+    # A stop takes one out, the way it would mid-session.
+    strategy._stops.pop(busiest[0])
+    strategy.on_trading_iteration()
+
+    entered = [symbol for symbol, _ in strategy.submitted]
+    assert entered == busiest[: TFB_POSITIONS_MAX + 1], "the freed slot went to the next name"
+
+
+def test_the_standalone_engine_does_not_re_enter_a_name_it_left_today(
+    standalone_signals: None,
+) -> None:
+    """The candle that fires an exit can still satisfy an entry — hence the ledger."""
+    strategy = TfbStandalone({"AAA": 1e9}, held={})
+
+    strategy.on_trading_iteration()
+    assert [symbol for symbol, _ in strategy.submitted] == ["AAA"]
+
+    strategy._stops.pop("AAA")
+    strategy._highest.pop("AAA")
+    strategy.on_trading_iteration()
+    strategy.on_trading_iteration()
+
+    assert [symbol for symbol, _ in strategy.submitted] == ["AAA"], "bought back the same session"
+    assert (NOW.date(), "AAA") in strategy._traded
+
+
+def test_the_standalone_ledger_lets_the_name_back_the_next_session(
+    standalone_signals: None,
+) -> None:
+    """The ledger is keyed by session, so it bars a re-entry today and not tomorrow."""
+    strategy = TfbStandalone({"AAA": 1e9}, held={})
+    strategy.on_trading_iteration()
+    strategy._stops.pop("AAA")
+
+    strategy.now = NOW + timedelta(days=1)
+    strategy.on_trading_iteration()
+
+    assert [symbol for symbol, _ in strategy.submitted] == ["AAA", "AAA"]

@@ -94,14 +94,15 @@ DAILY_EXIT_NEEDS_BOTH = {"sma": False, "tfb_50": False}
 DAILY_EXITS_BEFORE_EARNINGS = {"sma": True, "tfb_50": False}
 
 # When each engine can open a trade, from portfolio.py. The daily pair is
-# checked once a session before 09:40; the two breakout engines scan on their
-# own candle boundary until 10:30. Positions already open keep being managed
-# after these windows close — this is when a NEW trade can start.
+# offered its candidates every iteration from the open to the close; the two
+# breakout engines scan on their own candle boundary until 10:30. Positions
+# already open keep being managed after these windows close — this is when a
+# NEW trade can start.
 ENTRY_WINDOWS: dict[str, tuple[time, time]] = {
     "orb": (time(9, 35), time(10, 30)),
     "orb_momentum": (time(9, 40), time(10, 30)),
-    "sma": (time(9, 30), time(9, 40)),
-    "tfb_50": (time(9, 30), time(9, 40)),
+    "sma": (time(9, 30), time(16, 0)),
+    "tfb_50": (time(9, 30), time(16, 0)),
 }
 
 
@@ -353,7 +354,8 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         entry = (
             "A three-day structure: one session closes below the 20-day average, the next "
             "closes back above it and higher than that first close, and the buy goes in at "
-            "the open of the third. Market buy before 09:40, checked once a day. Skipped if "
+            "the open of the third. Market buy, retried every iteration until the close. "
+            "Skipped if "
             "the company reports earnings within 5 days. A company with no earnings date on "
             "file is not held back; one whose calendar cannot be read at all is left for "
             "that session."
@@ -371,8 +373,11 @@ def _daily(engine: str, stop_multiple: float, per_trade: float) -> list[Row]:
         )
         confirmation = "ADX (14) at 20 or above."
         entry = (
-            "Market buy before 09:40, checked once a day. Upcoming earnings do not block "
-            "an entry for this engine."
+            "Market buy at the open, then retried every iteration until the close. The "
+            "setup is cut from completed sessions, so the day's list is scanned once and "
+            "re-offered: a name that could not be funded at the open — no slot left, no "
+            "affordable size, another engine holding it — is taken later in the day if "
+            "one frees up. Upcoming earnings do not block an entry for this engine."
         )
         risk = (
             f"{_pct(TFB_RISK_CEILING)} of account equity per trade — this engine states its "

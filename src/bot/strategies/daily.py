@@ -35,19 +35,19 @@ class DailyStrategy(StrategyBase):
 
     _baseline_equity: float
     _day: date | None
-    _evaluated_on: date | None
     _highest: dict[str, float]
     _locked_on: date | None
     _stops: dict[str, float]
+    _traded: set[tuple[date, str]]
 
     def initialize(self) -> None:
         self.sleeptime = "1D" if self.is_backtesting else "1M"
         self._baseline_equity = 0.0
         self._day = None
-        self._evaluated_on = None
         self._highest = {}
         self._locked_on = None
         self._stops = {}
+        self._traded = set()
 
     def on_trading_iteration(self) -> None:
         parameters: dict[str, Any] = self.parameters
@@ -56,16 +56,17 @@ class DailyStrategy(StrategyBase):
         if day != self._day:
             self._day = day
             self._baseline_equity = last_equity if last_equity > 0 else equity
-            self._evaluated_on = None
             self._locked_on = None
         if self._locked_on == day:
             return
         if equity <= self._baseline_equity * (1.0 - float(parameters["risk_per_day_max"])):
             self._flatten(day)
             return
-        if self._evaluated_on == day:
-            return
-        self._evaluated_on = day
+        # Scanned every iteration to the close, not once before 09:40: no rule in
+        # the register bounds the scan to the first ten minutes, and a candidate
+        # that could not be funded early is worth offering again when a slot
+        # frees. The setup itself reads completed candles, so it cannot change
+        # intraday — what changes is the room to take it.
         market = self._frame("^GSPC", 30)
         if market is None or not market_is_rising(market):
             return
@@ -164,6 +165,8 @@ class DailyStrategy(StrategyBase):
             return
         if self.blocks_entries_before_earnings and self._earnings_blocked(symbol, day):
             return
+        if (day, symbol) in self._traded:
+            return
         if self.positions_max is not None and self._open_positions() >= self.positions_max:
             return
         average_range = latest_atr(frame)
@@ -185,6 +188,10 @@ class DailyStrategy(StrategyBase):
             return
         self._highest[symbol] = price
         self._stops[symbol] = price - stop_distance
+        # One entry per symbol per session. The candle that fires an exit can
+        # still satisfy an entry, so without this a name that stopped out in the
+        # morning would be bought straight back on the next iteration.
+        self._traded.add((day, symbol))
         self.submit_order(self.create_order(symbol, quantity, "buy", time_in_force="day"))
 
     def _manage(self, symbol: str, day: date, held: float, frame: DataFrame) -> None:

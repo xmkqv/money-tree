@@ -13,10 +13,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from alpaca.data.enums import DataFeed
 
 from bot.portfolio import DAILY_EXIT_NEEDS_BOTH as COMPOSER_EXIT_NEEDS_BOTH
 from bot.portfolio import DAILY_EXITS_BEFORE_EARNINGS as COMPOSER_EXITS_BEFORE_EARNINGS
-from bot.portfolio import ORB_CLOSE_DEADLINE, UNIVERSE_CAP_MIN, UNIVERSE_TURNOVER_MIN
+from bot.portfolio import (
+    DAILY_FEED,
+    ORB_CLOSE_DEADLINE,
+    UNIVERSE_CAP_MIN,
+    UNIVERSE_TURNOVER_MIN,
+)
 from bot.portfolio import ORB_ENTRY_EXTENSION_MAX as COMPOSER_ENTRY_EXTENSION_MAX
 from bot.portfolio import ORB_SIGNAL_CANDLES_MAX as COMPOSER_SIGNAL_CANDLES_MAX
 from bot.portfolio import ORB_TARGET_MULTIPLES as COMPOSER_TARGET_MULTIPLES
@@ -52,6 +58,7 @@ from ui.ledger import TRADING_ZONE
 from ui.strategies import (
     DAILY_EXIT_NEEDS_BOTH,
     DAILY_EXITS_BEFORE_EARNINGS,
+    ENTRY_WINDOWS,
     FIELDS,
     ORB_HISTORY_SESSIONS,
     ORB_TRAIL_ATR_MULTIPLE,
@@ -79,6 +86,15 @@ def configuration(per_trade: float = 0.005, per_day: float = 0.02) -> TradingCon
         risk_per_day_max=per_day,
         risk_per_trade_max=per_trade,
     )
+
+
+LABELS = {"sma": "Momentum (SMA)", "tfb_50": "TFB-50"}
+
+
+def register_block(engine: str) -> str:
+    """The engine's own block of the README register."""
+    blocks = Path("README.md").read_text().split("#### ")[1:]
+    return next(block for block in blocks if block.startswith(LABELS[engine]))
 
 
 def spec_rows(strategy_id: str) -> dict[str, str]:
@@ -393,9 +409,9 @@ def test_the_five_minute_engine_states_its_own_risk_ceiling() -> None:
 
 @pytest.mark.parametrize(("engine", "multiple"), [("sma", 1.5), ("tfb_50", 2.0)])
 def test_daily_stop_multiples_match_the_composer(engine: str, multiple: float) -> None:
-    runner = PortfolioStrategy._run_sma if engine == "sma" else PortfolioStrategy._run_tfb
+    scanner = PortfolioStrategy._scan_sma if engine == "sma" else PortfolioStrategy._scan_tfb
 
-    assert f"{multiple} * latest_atr(frame)" in inspect.getsource(runner)
+    assert f"{multiple} * latest_atr(frame)" in inspect.getsource(scanner)
     assert f"{multiple:g}x the 14-period ATR" in spec_rows(engine)["Stop Loss"]
 
     module = sma if engine == "sma" else tfb_50
@@ -403,8 +419,8 @@ def test_daily_stop_multiples_match_the_composer(engine: str, multiple: float) -
 
 
 def test_only_the_momentum_engine_blocks_entries_before_earnings() -> None:
-    assert "earnings_blocked" in inspect.getsource(PortfolioStrategy._run_sma)
-    assert "earnings_blocked" not in inspect.getsource(PortfolioStrategy._run_tfb)
+    assert "earnings_blocked" in inspect.getsource(PortfolioStrategy._scan_sma)
+    assert "earnings_blocked" not in inspect.getsource(PortfolioStrategy._scan_tfb)
 
     assert "within 5 days" in spec_rows("sma")["Entry"]
     assert "do not block" in spec_rows("tfb_50")["Entry"]
@@ -551,9 +567,9 @@ def test_tfb_50_screens_the_universe_again_on_its_own_floors() -> None:
     assert TFB_TURNOVER_MIN == 20_000_000.0
     assert TFB_TURNOVER_SESSIONS == 20
 
-    assert "tfb_market_ready(frame)" in inspect.getsource(PortfolioStrategy._run_tfb)
+    assert "tfb_market_ready(frame)" in inspect.getsource(PortfolioStrategy._scan_tfb)
     assert "tfb_market_ready(frame)" in inspect.getsource(tfb_50.Strategy._entry_ready)
-    assert "tfb_market_ready" not in inspect.getsource(PortfolioStrategy._run_sma)
+    assert "tfb_market_ready" not in inspect.getsource(PortfolioStrategy._scan_sma)
 
     market = spec_rows("tfb_50")["Market"]
     assert f"${TFB_PRICE_MIN:.0f} or more" in market
@@ -648,15 +664,61 @@ def test_entry_windows_match_the_composer() -> None:
     assert "opening_end <= now.time() <= time(10, 30)" in variant
 
     loop = inspect.getsource(PortfolioStrategy.on_trading_iteration)
-    assert "now.time() < time(9, 40)" in loop
     assert "self._run_daily(now)" in loop
+    assert "time(9, 40)" not in loop, "the daily scan runs to the close, not to 09:40"
 
     assert entry_windows() == {
         "orb": {"from": "09:35", "to": "10:30"},
         "orb_momentum": {"from": "09:40", "to": "10:30"},
-        "sma": {"from": "09:30", "to": "09:40"},
-        "tfb_50": {"from": "09:30", "to": "09:40"},
+        "sma": {"from": "09:30", "to": "16:00"},
+        "tfb_50": {"from": "09:30", "to": "16:00"},
     }
+
+
+def test_daily_bars_are_read_on_the_consolidated_tape() -> None:
+    """The daily screens measure traded value, which a partial feed understates."""
+    assert DAILY_FEED == DataFeed.SIP
+    assert "self._daily_bars(" in inspect.getsource(PortfolioStrategy._prepare)
+
+    fetch = inspect.getsource(PortfolioStrategy._daily_bars)
+    assert "feed=DAILY_FEED" in fetch
+    # A subscription that bars SIP must degrade visibly, not silently.
+    assert "daily-feed-" in fetch
+    assert "warning" in fetch
+
+
+def test_the_daily_scan_runs_every_iteration_to_the_close() -> None:
+    """No rule bounded it to 09:40, so nothing in the loop does either."""
+    loop = inspect.getsource(PortfolioStrategy.on_trading_iteration)
+    assert "self._run_daily(now)" in loop
+    assert "_daily_run_on" not in loop, "the once-a-day gate is gone"
+
+    scan = inspect.getsource(PortfolioStrategy._run_daily)
+    assert "self._daily_scanned_on != now.date()" in scan, "the universe is scanned once a day"
+
+    for engine in ("sma", "tfb_50"):
+        assert ENTRY_WINDOWS[engine][1] == time(16, 0)
+        assert "until the close" in spec_rows(engine)["Entry"]
+        assert "rescan" in register_block(engine)
+
+
+def test_a_daily_name_is_entered_once_per_session() -> None:
+    """Entry and exit read the same completed candle, so re-entry would churn."""
+    entered = inspect.getsource(PortfolioStrategy._enter)
+    assert "self._daily_traded.add((now.date(), asset))" in entered
+    assert "self._daily_traded.add(" in inspect.getsource(PortfolioStrategy._restore)
+
+    guard = inspect.getsource(PortfolioStrategy._daily_entered)
+    assert "(day, symbol) in self._daily_traded" in guard
+    for runner in (PortfolioStrategy._run_sma, PortfolioStrategy._run_tfb):
+        assert "self._daily_entered(now.date()" in inspect.getsource(runner)
+
+    trade = inspect.getsource(DailyStrategy._trade)
+    assert "(day, symbol) in self._traded" in trade
+    assert "self._traded.add((day, symbol))" in trade
+
+    for engine in ("sma", "tfb_50"):
+        assert "one entry per symbol per session" in register_block(engine)
 
 
 def test_every_engine_on_the_page_has_an_entry_window() -> None:

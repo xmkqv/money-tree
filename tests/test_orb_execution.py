@@ -292,6 +292,7 @@ class SizingStrategy(Strategy):
         self._closing = set()
         self._events = set()
         self._orb_traded = set()
+        self._daily_traded = set()
         self._orb_scanned = set()
         self.exporter = None
         self.broker = FakeBroker()
@@ -402,7 +403,7 @@ def test_a_position_restored_mid_session_still_blocks_re_entry() -> None:
     assert "self._orb_traded.add(" in inspect.getsource(Strategy._restore)
 
 
-def test_the_daily_engines_do_not_write_to_the_traded_ledger() -> None:
+def test_the_daily_engines_keep_their_own_once_per_session_ledger() -> None:
     strategy = TradedStrategy()
     strategy._enabled = {"sma"}
 
@@ -415,7 +416,8 @@ def test_the_daily_engines_do_not_write_to_the_traded_ledger() -> None:
         datetime(2026, 8, 25, 13, 50, tzinfo=UTC),
     )
 
-    assert strategy._orb_traded == set()
+    assert strategy._orb_traded == set(), "the breakout ledger is not theirs"
+    assert strategy._daily_traded == {(datetime(2026, 8, 25, 13, 50, tzinfo=UTC).date(), "CCK")}
 
 
 # --- the breakout is read off the first candle to close outside the range -
