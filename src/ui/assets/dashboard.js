@@ -40,6 +40,9 @@ const DAY3 = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 const REFRESH_MS = 30000;
 
 const PULSE_MS = 2000;
+/* The run snapshot is served from a five-second cache, so asking faster than
+   that only re-reads the same answer. */
+const INSIDES_MS = 5000;
 
 
 const PHONE = window.matchMedia("(max-width: 720px)");
@@ -2157,7 +2160,7 @@ function resetTradeView() {
 
 
 let currentView = "dashboard";
-const viewReady = { dashboard: true, portfolio: false, history: false, strategies: false, chart: true };
+const viewReady = { dashboard: true, portfolio: false, history: false, strategies: false, insides: false, chart: true };
 
 function switchView(name) {
   currentView = name;
@@ -2168,7 +2171,7 @@ function switchView(name) {
     if (b.dataset.view === owner) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }
-  for (const id of ["dashboard", "portfolio", "history", "strategies", "chart"]) {
+  for (const id of ["dashboard", "portfolio", "history", "strategies", "insides", "chart"]) {
     document.getElementById("view-" + id).classList.toggle("hidden", id !== name);
   }
 
@@ -2179,11 +2182,255 @@ function switchView(name) {
     viewReady[name] = true;
   }
 
+  /* The run state is a five-second read of a value held in memory, and it is
+     the whole point of this page, so it is asked for on the way in and on
+     every tick the page is open rather than riding the ledger's cadence. */
+  if (name === "insides") readInsides();
   if (name === "dashboard") requestAnimationFrame(drawChart);
   if (name === "chart") requestAnimationFrame(drawTradeChart);
   window.scrollTo(0, 0);
 }
 
+
+
+/* The bot's own report on itself. Everything drawn here comes from the state
+   snapshot the bot posts every few seconds, which the web service holds in
+   memory and nothing writes down — so the page says what it can and cannot
+   know rather than letting an empty table read as a quiet session. */
+
+const RUN_WORDS = {
+  running: "Running",
+  starting: "Starting",
+  stopped: "Stopped",
+  failed: "Failed",
+  unknown: "Not reporting",
+};
+const RUN_TONES = { running: "pos", starting: "warn", stopped: "flat", failed: "neg" };
+const LEVEL_RANK = { info: 0, warning: 1, error: 2 };
+const SWITCH_WORDS = { online: "on", paused: "paused", offline: "off", unknown: "?" };
+/* The bot keeps this many events per run, from bot/export.py. */
+const EVENTS_KEPT = 50;
+
+let INSIDES = null;
+let insidesLevel = "all";
+
+/* Trailing zeros make 0.5% read as 0.50%, which invites the eye to compare it
+   with figures it is not stated to that precision. Same rule as _pct in
+   ui/strategies.py, so the two pages quote a limit identically. */
+function limitPct(fraction) {
+  return Number((fraction * 100).toFixed(2)).toString() + "%";
+}
+
+function secondsLabel(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  if (seconds < 60) return Math.round(seconds) + "s";
+  if (seconds < 3600) return Math.floor(seconds / 60) + "m " + Math.round(seconds % 60) + "s";
+  const hours = Math.floor(seconds / 3600);
+  return hours + "h " + Math.floor((seconds % 3600) / 60) + "m";
+}
+
+/* Seconds matter here in a way they do not anywhere else on the site: a burst
+   of events inside one minute is exactly what a bad open looks like. */
+function eventClock(iso) {
+  const at = new Date(iso);
+  const clock = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/New_York",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(at);
+  return dayOf(iso) + " " + clock;
+}
+
+/* The roster of names is normally learnt from the ledger, but this page has to
+   read when the ledger cannot: an engine reporting an error is exactly when
+   the broker read is also failing, and a page that went blank then would be
+   useless at the one moment it is wanted. So the label is resolved when the
+   roster is known and passed through untouched when it is not. */
+function engineOf(published) {
+  if (!published) return null;
+  const roster = (LIVE && LIVE.strategies) || [];
+  return roster.find(s => s.id === published || s.label === published) || null;
+}
+
+function engineIdOf(published) {
+  const known = engineOf(published);
+  return known ? known.id : null;
+}
+
+function engineNameOf(published) {
+  if (!published) return "—";
+  const known = engineOf(published);
+  return known ? known.short : published;
+}
+
+function paintInsidesRun() {
+  const snapshot = INSIDES;
+  const status = snapshot ? snapshot.status : "unknown";
+  const stale = !snapshot || INSIDES_STALE;
+  const now = Date.now();
+  const since = snapshot ? (now - Date.parse(snapshot.started_at)) / 1000 : NaN;
+  const heard = snapshot ? (now - Date.parse(snapshot.heartbeat_at)) / 1000 : NaN;
+
+  document.getElementById("in-run").textContent = snapshot
+    ? "run " + String(snapshot.run_id).slice(0, 8)
+    : "no run reported";
+
+  const alarm = document.getElementById("in-alarm");
+  alarm.textContent = !snapshot
+    ? "The bot has never reported to this page. Either it is not running, or it has no "
+      + "STATE_EXPORT_URL and STATE_EXPORT_SECRET to report through — in which case every "
+      + "event it raises is discarded where it is raised."
+    : stale
+      ? "The bot has stopped reporting. Everything below is its last word, not its current "
+        + "state."
+      : status === "failed"
+        ? "The bot reported a failure. The events below are the last thing it said."
+        : "";
+  alarm.hidden = !alarm.textContent;
+
+  document.getElementById("in-tiles").replaceChildren(
+    tile("Status", RUN_WORDS[status] || status, RUN_TONES[status] || "flat",
+      stale && snapshot ? "last report is stale" : ""),
+    tile("Last report", snapshot ? secondsLabel(heard) + " ago" : "—", stale ? "warn" : "pos",
+      "posted every 5s"),
+    tile("Running for", snapshot ? secondsLabel(since) : "—", "", "since the run began"),
+    tile("Reports", snapshot ? String(snapshot.sequence) : "—", "", "snapshots posted"),
+  );
+
+  const roster = document.getElementById("in-roster");
+  roster.replaceChildren();
+  if (!snapshot) {
+    const none = document.createElement("span");
+    none.className = "engine is-unknown";
+    none.textContent = "Roster unknown — the bot has not reported one.";
+    roster.append(none);
+    return;
+  }
+  const paused = new Set(snapshot.paused || []);
+  /* The bot publishes its roster in its own order. Listed here by the name on
+     screen, like every other list of engines on the site — and reading runs of
+     digits as numbers, so ORB5 comes before ORB10, the way label_order in
+     ledger.py sorts the lists the server builds. */
+  const roll = [...snapshot.strategies].sort((a, b) =>
+    engineNameOf(a).localeCompare(engineNameOf(b), undefined, { numeric: true }));
+  for (const published of roll) {
+    const state = paused.has(published) ? "paused" : "online";
+    const id = engineIdOf(published);
+    const wrap = document.createElement("span");
+    wrap.className = "engine is-" + state;
+    const chip = document.createElement("span");
+    chip.className = "chip";
+    chip.style.background = STRATEGY_COLOURS[id] || "var(--ink-3)";
+    const name = document.createElement("span");
+    name.textContent = engineNameOf(published);
+    const word = document.createElement("span");
+    word.className = "st";
+    word.textContent = SWITCH_WORDS[state];
+    wrap.append(chip, name, word);
+    roster.append(wrap);
+  }
+}
+
+function paintInsidesLimits() {
+  const limits = INSIDES && INSIDES.configuration;
+  const host = document.getElementById("in-limits");
+  if (!limits) {
+    host.replaceChildren(tile("Limits", "—", "flat", "not reported"));
+    return;
+  }
+  host.replaceChildren(
+    tile("Risk per trade", limitPct(limits.risk_per_trade_max), "", "of equity, per position"),
+    tile("Risk per day", limitPct(limits.risk_per_day_max), "", "then everything is closed"),
+    tile("Position cap", limitPct(limits.position_fraction_max), "", "of equity in one name"),
+    tile("Fractional", limits.fractional_orders ? "Yes" : "No", "", "part shares allowed"),
+  );
+}
+
+function paintInsidesEvents() {
+  const all = INSIDES ? INSIDES.events.slice().reverse() : [];
+  const shown = insidesLevel === "all" ? all : all.filter(e => LEVEL_RANK[e.level] > 0);
+  const attention = all.filter(e => LEVEL_RANK[e.level] > 0).length;
+
+  const note = document.getElementById("in-note");
+  if (!INSIDES) {
+    note.textContent = "No events: the bot has not reported. That is not the same as a quiet "
+      + "session — an unreported bot raises events into nothing.";
+  } else if (!all.length) {
+    note.textContent = "The bot has reported no events on this run yet.";
+  } else {
+    note.textContent = all.length + " event" + (all.length === 1 ? "" : "s") + " on this run, "
+      + attention + " needing a look. The bot keeps only its last " + EVENTS_KEPT + ", and both it "
+      + "and this page hold them in memory only — a restart of either starts the list again, so "
+      + "a short list is not proof of a quiet run.";
+  }
+
+  /* The message leads and the clock trails because buildTable reads a row the
+     way the trade tables are shaped: the first cell becomes the card's subject
+     on a phone and the last is set beside it. What the bot said is the subject
+     here, and the clock is the short figure that pairs with it. */
+  const rows = shown.map(event => [
+    { t: event.message, cls: "msg" },
+    { node: levelPill(event.level) },
+    { t: engineNameOf(event.strategy) },
+    { t: event.kind, cls: "flat" },
+    { t: eventClock(event.occurred_at), cls: "flat" },
+  ]);
+  buildTable(
+    document.getElementById("in-events"),
+    ["What it said", "Level", "Engine", "Kind", "When"],
+    rows,
+    99,
+    row => {
+      const level = row[1].node.dataset.level;
+      return level === "error" ? "failure" : level === "warning" ? "attention" : "";
+    },
+  );
+  if (!rows.length) {
+    const body = document.createElement("tbody");
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 5;
+    td.className = "empty";
+    td.textContent = insidesLevel === "all"
+      ? "Nothing reported."
+      : "Nothing needing a look. Every event on this run is routine.";
+    tr.append(td);
+    body.append(tr);
+    document.getElementById("in-events").append(body);
+  }
+}
+
+function levelPill(level) {
+  const pill = document.createElement("span");
+  pill.className = "lvl lvl-" + level;
+  pill.dataset.level = level;
+  pill.textContent = level;
+  return pill;
+}
+
+function paintInsides() {
+  paintInsidesRun();
+  paintInsidesLimits();
+  paintInsidesEvents();
+}
+
+let INSIDES_STALE = true;
+
+async function readInsides() {
+  try {
+    const response = await fetch("/api/run", { credentials: "same-origin" });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    const body = await response.json();
+    INSIDES = body.data;
+    INSIDES_STALE = Boolean(body.stale);
+  } catch (error) {
+    INSIDES = null;
+    INSIDES_STALE = true;
+  }
+  paintInsides();
+}
 
 
 let RULES = null;
@@ -2305,6 +2552,11 @@ function renderAll() {
   if (viewReady.portfolio) renderPortfolio();
   if (viewReady.history) renderHistory();
   if (viewReady.strategies) renderRuleStates();
+  /* The roster names engines by their short label, which is learnt from the
+     ledger. Until that arrives the page falls back to the long label the bot
+     published, so repaint once it lands rather than leaving the two forms
+     mixed for as long as the reader stays on the page. */
+  if (viewReady.insides && INSIDES) paintInsidesRun();
 }
 
 
@@ -2440,6 +2692,16 @@ document.querySelector(".tabs").addEventListener("click", ev => {
   if (btn && btn.dataset.view) switchView(btn.dataset.view);
 });
 
+document.getElementById("in-levels").addEventListener("click", ev => {
+  const btn = ev.target.closest("button");
+  if (!btn) return;
+  insidesLevel = btn.dataset.level;
+  for (const b of document.querySelectorAll("#in-levels button")) {
+    b.setAttribute("aria-pressed", String(b === btn));
+  }
+  paintInsidesEvents();
+});
+
 document.getElementById("chart-range").addEventListener("click", ev => {
   const btn = ev.target.closest("button");
   if (btn) setRange(btn.dataset.range);
@@ -2565,9 +2827,13 @@ wireTradeChart();
 refresh();
 setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
 setInterval(() => { if (!document.hidden) pulse(); }, PULSE_MS);
+setInterval(() => {
+  if (!document.hidden && currentView === "insides") readInsides();
+}, INSIDES_MS);
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
   pulse();
   refresh();
+  if (currentView === "insides") readInsides();
 });
