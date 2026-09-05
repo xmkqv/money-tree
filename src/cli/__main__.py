@@ -1,11 +1,11 @@
 from datetime import datetime
-from typing import Annotated, cast
+from typing import Annotated
 
 import typer
 
 from bot import backtest, report, trade
 from bot.config import settings
-from bot.types import STRATEGY_LABELS, StrategyName
+from bot.types import STRATEGY_LABELS, StrategyName, resolve_roster
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -15,14 +15,19 @@ def _parse_symbols(value: str) -> list[str]:
     return [symbol for item in value.split(",") if (symbol := item.strip())]
 
 
-def _parse_strategies(value: str) -> list[StrategyName]:
+def _read_strategies(value: str) -> tuple[list[StrategyName], dict[str, StrategyName]]:
+    """The roster as current names, plus whichever entries used an old one."""
     selected = [item.strip() for item in value.split(",") if item.strip()]
-    allowed = STRATEGY_LABELS
-    unknown = set(selected).difference(allowed)
-    if not selected or unknown or len(selected) != len(set(selected)):
-        names = ", ".join(sorted(allowed))
-        raise typer.BadParameter(f"strategies must be unique names from: {names}")
-    return cast(list[StrategyName], selected)
+    names, renamed = resolve_roster(selected)
+    if not selected or len(names) != len(selected) or len(names) != len(set(names)):
+        allowed = ", ".join(sorted(STRATEGY_LABELS))
+        raise typer.BadParameter(f"strategies must be unique names from: {allowed}")
+    return names, renamed
+
+
+def _parse_strategies(value: str) -> list[StrategyName]:
+    names, _ = _read_strategies(value)
+    return names
 
 
 def _parse_strategy(value: str) -> StrategyName:
@@ -54,4 +59,4 @@ def run_report(
 
 @app.command("trade")
 def run_trade(strategies: Annotated[str, typer.Option()] = settings.strategies) -> None:
-    trade.run(_parse_strategies(strategies))
+    trade.run(*_read_strategies(strategies))

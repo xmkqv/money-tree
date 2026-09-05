@@ -1,5 +1,5 @@
 from collections.abc import Iterable
-from typing import Annotated, Literal, Self, cast
+from typing import Annotated, Literal, Self
 
 from pydantic import (
     UUID4,
@@ -34,6 +34,41 @@ STRATEGY_LABELS: dict[StrategyName, str] = {
     "orb15": "ORB (15-minute)",
 }
 PAUSED_STRATEGIES: frozenset[StrategyName] = frozenset({"orb10"})
+# Names a strategy used to answer to. The roster is an environment variable held
+# outside this repository, so renaming a strategy in code alone leaves the bot
+# refusing a value it accepted yesterday — and refusing it while reading its
+# settings, before it can report why. Old names keep resolving, so a roster that
+# has not caught up costs a warning rather than the run.
+STRATEGY_ALIASES: dict[str, StrategyName] = {
+    "orb": "orb5",
+    "orb_momentum": "orb10",
+}
+
+
+def resolve_strategy(name: str) -> StrategyName | None:
+    """The name this strategy goes by now, or None if it goes by no name at all."""
+    if name in STRATEGY_LABELS:
+        return name
+    return STRATEGY_ALIASES.get(name)
+
+
+def resolve_roster(values: Iterable[str]) -> tuple[list[StrategyName], dict[str, StrategyName]]:
+    """A roster read as current names, alongside the renamed entries it used.
+
+    Rosters are resolved here and nowhere else, so everything downstream — the
+    pause list, the labels the bot publishes, the composer — only ever sees the
+    name a strategy goes by now.
+    """
+    names: list[StrategyName] = []
+    renamed: dict[str, StrategyName] = {}
+    for value in values:
+        resolved = resolve_strategy(value)
+        if resolved is None:
+            continue
+        names.append(resolved)
+        if value != resolved:
+            renamed[value] = resolved
+    return names, renamed
 
 
 def active_strategies(selected: Iterable[StrategyName]) -> list[StrategyName]:
@@ -78,20 +113,32 @@ class Settings(BaseSettings):
     def validate_limits(self) -> Self:
         if self.risk_per_trade_max > self.risk_per_day_max:
             raise ValueError("risk per trade must not exceed risk per day")
-        values = [value.strip() for value in self.strategies.split(",") if value.strip()]
+        values = self._selected_strategies()
         if not values:
             raise ValueError("STRATEGIES must select at least one strategy")
-        if len(values) != len(set(values)):
-            raise ValueError("STRATEGIES must not contain duplicates")
-        unknown = set(values).difference(STRATEGY_LABELS)
+        unknown = {value for value in values if resolve_strategy(value) is None}
         if unknown:
             raise ValueError(f"unknown strategies: {', '.join(sorted(unknown))}")
+        # Duplicates are counted after resolution, so "orb,orb5" is the one
+        # strategy twice rather than two names that merely look different.
+        names, _ = resolve_roster(values)
+        if len(names) != len(set(names)):
+            raise ValueError("STRATEGIES must not contain duplicates")
         return self
+
+    def _selected_strategies(self) -> list[str]:
+        return [value.strip() for value in self.strategies.split(",") if value.strip()]
 
     @property
     def strategy_names(self) -> list[StrategyName]:
-        values = [item.strip() for item in self.strategies.split(",")]
-        return cast(list[StrategyName], [value for value in values if value in STRATEGY_LABELS])
+        names, _ = resolve_roster(self._selected_strategies())
+        return names
+
+    @property
+    def renamed_strategies(self) -> dict[str, StrategyName]:
+        """Entries in STRATEGIES that are answering to an old name."""
+        _, renamed = resolve_roster(self._selected_strategies())
+        return renamed
 
     @property
     def trading_configuration(self) -> TradingConfiguration:
