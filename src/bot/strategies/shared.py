@@ -100,7 +100,7 @@ def entry_quantity(
     equity: float,
     price: float,
     stop_distance: float,
-    position_fraction_max: float,
+    position_value_usd_max: float,
     risk_per_trade_max: float | None,
     fractional_orders: bool,
 ) -> Decimal:
@@ -111,7 +111,7 @@ def entry_quantity(
         or stop_distance <= 0
     ):
         return Decimal(0)
-    quantity = equity * position_fraction_max / price
+    quantity = position_value_usd_max / price
     if risk_per_trade_max is not None:
         quantity = min(quantity, equity * risk_per_trade_max / stop_distance)
     if quantity * price < NOTIONAL_USD_MIN:

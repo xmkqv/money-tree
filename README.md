@@ -140,7 +140,7 @@ entry
     open positions may remain after the entry window
 
 risk
-    position size = 10% of account
+    position size = $1,000 at most
     short position size = whole shares only
     risk per trade = 0.15% of account equity
     concurrent breakout positions = 3, shared across both intraday engines
@@ -207,7 +207,7 @@ entry
     open positions may remain after the entry window
 
 risk
-    position size = 10% of account
+    position size = $1,000 at most
     short position size = whole shares only
     risk per trade = not set
     concurrent breakout positions = 3, shared across both intraday engines
@@ -270,7 +270,7 @@ entry
         ignored when no earnings date is known
 
 risk
-    position size = 10% of account
+    position size = $1,000 at most
     risk per trade = not set
     risk-to-reward ratio = not set
     R = not set
@@ -324,7 +324,7 @@ entry
     one entry per symbol per session
 
 risk
-    position size = 10% of account
+    position size = $1,000 at most
     risk per trade = 0.5% of account
     risk-to-reward ratio = none
     R = not set

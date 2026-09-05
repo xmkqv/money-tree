@@ -15,6 +15,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 type RiskLimit = Annotated[float, Field(gt=0, le=1)]
+type PositionValueUsd = Annotated[float, Field(gt=0)]
 type RequiredSecret = Annotated[SecretStr, Field(min_length=1)]
 type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
@@ -24,7 +25,7 @@ type DataFeedName = Literal["sip", "delayed_sip", "iex"]
 
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
 POSITIONS_MAX = 10
-POSITION_FRACTION_CAP_MAX = 0.10
+POSITION_VALUE_USD_MAX = 1_000.0
 STRATEGY_LABELS: dict[StrategyName, str] = {
     "noop": "No-op",
     "orb5": "ORB (5-minute)",
@@ -53,7 +54,7 @@ class _StrictModel(BaseModel):
 
 class TradingConfiguration(_StrictModel):
     fractional_orders: bool
-    position_fraction_max: RiskLimit
+    position_value_usd_max: PositionValueUsd
     risk_per_day_max: RiskLimit
     risk_per_trade_max: RiskLimit
 
@@ -71,7 +72,7 @@ class Settings(BaseSettings):
     fractional_orders: bool
     risk_per_day_max: RiskLimit
     risk_per_trade_max: RiskLimit
-    position_fraction_max: RiskLimit
+    position_value_usd_max: PositionValueUsd
 
     @model_validator(mode="after")
     def validate_limits(self) -> Self:
@@ -96,7 +97,7 @@ class Settings(BaseSettings):
     def trading_configuration(self) -> TradingConfiguration:
         return TradingConfiguration(
             fractional_orders=self.fractional_orders,
-            position_fraction_max=self.position_fraction_max,
+            position_value_usd_max=self.position_value_usd_max,
             risk_per_day_max=self.risk_per_day_max,
             risk_per_trade_max=self.risk_per_trade_max,
         )

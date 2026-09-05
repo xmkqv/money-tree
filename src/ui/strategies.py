@@ -34,7 +34,7 @@ from bot.strategies.tfb_50 import (
     TFB_VOLUME_SHARES_MIN,
 )
 from bot.types import (
-    POSITION_FRACTION_CAP_MAX,
+    POSITION_VALUE_USD_MAX,
     POSITIONS_MAX,
     STRATEGY_LABELS,
     StrategyName,
@@ -170,6 +170,10 @@ def portfolio_rules(daily_loss: float) -> list[Row]:
 
 def _millions(value: float) -> str:
     return f"${value / 1_000_000:g}M"
+
+
+def _usd(value: float) -> str:
+    return f"${value:,.0f}"
 
 
 def _pct(fraction: float) -> str:
@@ -333,8 +337,7 @@ def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: date
                 if strategy == "orb5"
                 else " (the configured per-trade limit; this strategy states none of its own)."
             )
-            + f" A single position is never worth more than {_pct(POSITION_FRACTION_CAP_MAX)} "
-            "of equity.",
+            + f" A single position is never worth more than {_usd(POSITION_VALUE_USD_MAX)}.",
             source="portfolio.py · _enter",
         ),
         Row(field="Min. R:R", value=f"{reward} {targets}", source="portfolio.py · on_filled_order"),
@@ -381,7 +384,7 @@ def _daily(strategy: StrategyName, per_trade: float, closes: datetime) -> list[R
         )
         risk = (
             "No per-trade risk limit is set for this strategy, so the size comes from the "
-            f"position cap alone: never more than {_pct(POSITION_FRACTION_CAP_MAX)} of equity."
+            f"position cap alone: never more than {_usd(POSITION_VALUE_USD_MAX)}."
         )
         setup_source = "strategies/shared.py · does_momentum_enter"
         entry_source = "strategies/shared.py · does_momentum_enter, portfolio.py · _run_sma"
@@ -402,7 +405,7 @@ def _daily(strategy: StrategyName, per_trade: float, closes: datetime) -> list[R
             f"{_pct(TFB_RISK_MAX)} of account equity per trade — this strategy states its "
             f"own {_pct(TFB_RISK_MAX)} in the register, so that governs instead of the "
             f"configured {_pct(per_trade)}. A single position is never worth more than "
-            f"{_pct(POSITION_FRACTION_CAP_MAX)} of equity, and this strategy holds at most "
+            f"{_usd(POSITION_VALUE_USD_MAX)}, and this strategy holds at most "
             f"{TFB_POSITIONS_MAX} positions at once."
         )
         setup_source = "strategies/shared.py · does_tfb_enter"

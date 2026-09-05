@@ -3,7 +3,13 @@ from typing import Annotated, Self
 from pydantic import AnyHttpUrl, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from bot.types import RequiredSecret, RiskLimit, SigningSecret, TradingConfiguration
+from bot.types import (
+    PositionValueUsd,
+    RequiredSecret,
+    RiskLimit,
+    SigningSecret,
+    TradingConfiguration,
+)
 
 
 class WebSettings(BaseSettings):
@@ -20,7 +26,7 @@ class WebSettings(BaseSettings):
     alpaca_api_key: RequiredSecret
     alpaca_api_secret: RequiredSecret
     fractional_orders: bool
-    position_fraction_max: RiskLimit
+    position_value_usd_max: PositionValueUsd
     risk_per_day_max: RiskLimit
     risk_per_trade_max: RiskLimit
     state_export_secret: SigningSecret
@@ -42,7 +48,7 @@ class WebSettings(BaseSettings):
     def trading_configuration(self) -> TradingConfiguration:
         return TradingConfiguration(
             fractional_orders=self.fractional_orders,
-            position_fraction_max=self.position_fraction_max,
+            position_value_usd_max=self.position_value_usd_max,
             risk_per_day_max=self.risk_per_day_max,
             risk_per_trade_max=self.risk_per_trade_max,
         )

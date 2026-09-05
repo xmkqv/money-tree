@@ -187,6 +187,7 @@ function derive(live) {
     buyingPower: live.buyingPower,
     openPositions: live.positions.length,
     positionCapPct: live.positionCapPct,
+    positionCapUsd: live.positionCapUsd,
     dailyLossLimitPct: live.dailyLossLimitPct,
   };
   ACCOUNT.totalReturn = Math.round((ACCOUNT.portfolio - ACCOUNT.invested) * 100) / 100;
@@ -2343,7 +2344,7 @@ function paintInsidesLimits() {
   host.replaceChildren(
     tile("Risk per trade", limitPct(limits.risk_per_trade_max), "", "of equity, per position"),
     tile("Risk per day", limitPct(limits.risk_per_day_max), "", "then everything is closed"),
-    tile("Position cap", limitPct(limits.position_fraction_max), "", "of equity in one name"),
+    tile("Position cap", money(limits.position_value_usd_max), "", "at most in one name"),
     tile("Fractional", limits.fractional_orders ? "Yes" : "No", "", "part shares allowed"),
   );
 }

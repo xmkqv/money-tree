@@ -68,7 +68,7 @@ from .strategies.shared import (
 )
 from .strategies.tfb_50 import TFB_POSITIONS_MAX, is_tfb_market_ready
 from .types import (
-    POSITION_FRACTION_CAP_MAX,
+    POSITION_VALUE_USD_MAX,
     POSITIONS_MAX,
     STRATEGY_LABELS,
     EventLevel,
@@ -1049,7 +1049,7 @@ class Strategy(StrategyBase):
             equity,
             price,
             abs(price - stop),
-            min(POSITION_FRACTION_CAP_MAX, float(self.parameters["position_fraction_max"])),
+            min(POSITION_VALUE_USD_MAX, float(self.parameters["position_value_usd_max"])),
             risk_fraction,
             is_fractional_allowed(direction, bool(self.parameters["fractional_orders"])),
         )

@@ -28,7 +28,7 @@ from bot.strategies.shared import (
     session_starts,
 )
 from bot.types import (
-    POSITION_FRACTION_CAP_MAX,
+    POSITION_VALUE_USD_MAX,
     STATE_SIGNATURE_SALT,
     RuntimeSnapshot,
     TradingConfiguration,
@@ -287,6 +287,7 @@ async def build_ledger(
     except httpx.HTTPError:
         bars = []
 
+    position_cap = min(POSITION_VALUE_USD_MAX, configuration.position_value_usd_max)
     return {
         "asOf": datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
         "today": today,
@@ -302,14 +303,9 @@ async def build_ledger(
         "buyingPower": round(float(account["buying_power"]), 2),
         "marketValue": round(sum(float(row["value"]) for row in rows), 2),
         "unrealised": round(sum(float(row["unreal"]) for row in rows), 2),
-        "positionCapPct": round(
-            100
-            * min(
-                POSITION_FRACTION_CAP_MAX,
-                configuration.position_fraction_max,
-            ),
-            2,
-        ),
+        "positionCapUsd": position_cap,
+        # The gauges read a position as a share of equity, so the cap is served both ways.
+        "positionCapPct": round(100 * position_cap / equity, 2) if equity > 0 else 0.0,
         "dailyLossLimitPct": round(100 * configuration.risk_per_day_max, 2),
         "bot": bot_state(snapshot, stale),
         "strategies": strategy_labels(),
