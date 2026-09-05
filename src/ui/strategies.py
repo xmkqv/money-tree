@@ -117,7 +117,8 @@ def strategy_spec(configuration: TradingConfiguration, *, configured: bool) -> d
                 else _daily(strategy, per_trade, closes)
             ),
         )
-        for strategy in STRATEGY_SHORT_LABELS
+        # Listed by the short label, the same order the rest of the site uses.
+        for strategy in sorted(STRATEGY_SHORT_LABELS, key=STRATEGY_SHORT_LABELS.__getitem__)
     ]
     return {
         "fields": FIELDS,

@@ -81,11 +81,21 @@ def strategy_id(published: str) -> str:
 
 
 def strategy_labels() -> list[dict[str, str]]:
-    labels = [
-        {"id": name, "short": SHORT_LABELS[name], "label": STRATEGY_LABELS[name]}
-        for name in STRATEGY_LABELS
-        if name != "noop"
-    ]
+    """Every engine the page names, in the order it lists them.
+
+    Sorted by the short label, because that is the name the reader sees and the
+    order they look things up by. The untagged catch-all is appended rather than
+    sorted: it is not an engine, so it belongs after all of them whatever it is
+    called.
+    """
+    labels = sorted(
+        (
+            {"id": name, "short": SHORT_LABELS[name], "label": STRATEGY_LABELS[name]}
+            for name in STRATEGY_LABELS
+            if name != "noop"
+        ),
+        key=lambda entry: entry["short"],
+    )
     labels.append({"id": UNATTRIBUTED, "short": "Untagged", "label": "No mt- order tag"})
     return labels
 
