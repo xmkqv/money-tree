@@ -629,6 +629,7 @@ function renderStrategies(period) {
     const nm = document.createElement("span");
     nm.className = "name";
     nm.textContent = s.label;
+    nm.title = s.label;
     strat.append(chip, nm);
     if (s.id !== "unattributed") strat.append(stateBadges(s.id));
     nameCell.append(strat);
@@ -1191,6 +1192,7 @@ function renderPortfolio() {
 
   document.getElementById("pf-risk").textContent = money(ACCOUNT.buyingPower);
 
+  document.getElementById("pf-cap-note").textContent = "vs " + money(ACCOUNT.positionCapUsd) + " cap";
   document.getElementById("pf-cap").innerHTML =
     "<b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "%";
   const cm = document.getElementById("pf-cap-meter");
