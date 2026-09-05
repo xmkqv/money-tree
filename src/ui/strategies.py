@@ -14,7 +14,7 @@ from bot.strategies.orb_base import (
     ORB_POSITIONS_MAX,
     ORB_PRICE_USD_MIN,
     ORB_RANGE_FRACTION_MIN,
-    ORB_RISK_MAX,
+    ORB_RISK_MAXES,
     ORB_SCAN_MINUTES,
     ORB_SIGNAL_CANDLES_MAX,
     ORB_STOP_FRACTION_MAX,
@@ -77,12 +77,14 @@ UNIVERSE_CAP_USD_MIN = 500_000_000.0
 STRATEGY_SHORT_LABELS: dict[StrategyName, str] = {
     "orb5": "ORB5",
     "orb10": "ORB10",
+    "orb15": "ORB15",
     "sma": "Momentum SMA",
     "tfb_50": "TFB-50",
 }
 STRATEGY_KINDS: dict[StrategyName, str] = {
     "orb5": "Intraday breakout",
     "orb10": "Intraday breakout",
+    "orb15": "Intraday breakout",
     "sma": "Daily trend",
     "tfb_50": "Daily trend",
 }
@@ -142,9 +144,9 @@ def portfolio_rules(daily_loss: float) -> list[Row]:
         ),
         Row(
             field="Breakout cap",
-            value=f"At most {ORB_POSITIONS_MAX} breakout positions open at once across both "
+            value=f"At most {ORB_POSITIONS_MAX} breakout positions open at once across all "
             "intraday strategies. Every breakout is the same bet on the same half hour, so "
-            "the two strategies share one allowance rather than each taking their own.",
+            "they share one allowance rather than each taking their own.",
             source="portfolio.py · _orb_position_count",
         ),
         Row(
@@ -198,7 +200,7 @@ def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: date
     volume_multiple = ORB_VOLUME_MULTIPLES[strategy]
     target_multiples = ORB_TARGET_MULTIPLES[strategy]
     entry_extension_max = ORB_ENTRY_EXTENSION_MAX[strategy]
-    risk_cap = ORB_RISK_MAX if strategy == "orb5" else per_trade
+    risk_cap = ORB_RISK_MAXES.get(strategy, per_trade)
     opening_end = f"{opens + timedelta(minutes=minutes):%H:%M}"
     first_entry = f"{opens + timedelta(minutes=2 * minutes):%H:%M}"
     scan_end = f"{opens + timedelta(minutes=ORB_SCAN_MINUTES):%H:%M}"
@@ -270,7 +272,7 @@ def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: date
             f"from — but only while it is one of the last {ORB_SIGNAL_CANDLES_MAX} completed "
             f"candles, {ORB_SIGNAL_CANDLES_MAX * minutes} minutes of the move. A close further "
             "back than that has already run, and is passed over rather than chased. "
-            "Once either breakout strategy has traded a stock, both leave it alone for the rest "
+            "Once any breakout strategy has traded a stock, the others leave it alone for the rest "
             f"of the session. The range itself must be at least {_pct(ORB_RANGE_FRACTION_MIN)} of "
             f"the price, and the stop cut from it between {_pct(ORB_STOP_FRACTION_MIN)} and "
             f"{_pct(ORB_STOP_FRACTION_MAX)} of the price — a narrower range puts the stop inside "
@@ -327,9 +329,9 @@ def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: date
             field="Max Risk",
             value=f"{_pct(risk_cap)} of account equity per trade"
             + (
-                f" — this strategy states its own {_pct(ORB_RISK_MAX)} in the register, so "
+                f" — this strategy states its own {_pct(risk_cap)} in the register, so "
                 f"that governs instead of the configured {_pct(per_trade)}."
-                if strategy == "orb5"
+                if strategy in ORB_RISK_MAXES
                 else " (the configured per-trade limit; this strategy states none of its own)."
             )
             + f" A single position is never worth more than {_pct(POSITION_FRACTION_CAP_MAX)} "

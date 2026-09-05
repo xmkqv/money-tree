@@ -51,6 +51,7 @@ const onPhone = () => PHONE.matches;
 const STRATEGY_COLOURS = {
   orb5: "var(--s-orb5)",
   orb10: "var(--s-orb10)",
+  orb15: "var(--s-orb15)",
   sma: "var(--s-momentum)",
   tfb_50: "var(--s-tfb50)",
   unattributed: "var(--ink-3)",

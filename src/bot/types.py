@@ -19,7 +19,7 @@ type RequiredSecret = Annotated[SecretStr, Field(min_length=1)]
 type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
 type EventLevel = Literal["info", "warning", "error"]
-type StrategyName = Literal["noop", "orb5", "sma", "tfb_50", "orb10"]
+type StrategyName = Literal["noop", "orb5", "sma", "tfb_50", "orb10", "orb15"]
 type DataFeedName = Literal["sip", "delayed_sip", "iex"]
 
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
@@ -31,6 +31,7 @@ STRATEGY_LABELS: dict[StrategyName, str] = {
     "sma": "Momentum (SMA)",
     "tfb_50": "TFB-50",
     "orb10": "ORB (10-minute)",
+    "orb15": "ORB (15-minute)",
 }
 PAUSED_STRATEGIES: frozenset[StrategyName] = frozenset({"orb10"})
 
@@ -114,8 +115,8 @@ class RuntimeSnapshot(_StrictModel):
     run_id: UUID4
     sequence: int = Field(ge=1)
     status: RunStatus
-    strategies: list[str] = Field(min_length=1, max_length=5)
-    paused: list[str] = Field(default_factory=list, max_length=5)
+    strategies: list[str] = Field(min_length=1, max_length=6)
+    paused: list[str] = Field(default_factory=list, max_length=6)
     started_at: AwareDatetime
     heartbeat_at: AwareDatetime
     configuration: TradingConfiguration

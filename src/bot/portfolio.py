@@ -34,7 +34,7 @@ from .strategies.orb_base import (
     ORB_OPENING_MINUTES,
     ORB_POSITIONS_MAX,
     ORB_PRICE_USD_MIN,
-    ORB_RISK_MAX,
+    ORB_RISK_MAXES,
     ORB_SCAN_MINUTES,
     ORB_SIGNAL_CANDLES_MAX,
     ORB_STRATEGIES,
@@ -124,8 +124,12 @@ class LoadUniverseError(Exception):
     pass
 
 
-FIVE_MINUTES = TimeFrame(5, cast(TimeFrameUnit, TimeFrameUnit.Minute))
-TEN_MINUTES = TimeFrame(10, cast(TimeFrameUnit, TimeFrameUnit.Minute))
+# One timeframe per opening-range length, so the bars a strategy reads follow
+# its own candle rather than a test against five or ten minutes.
+ORB_TIMEFRAMES: dict[int, TimeFrame] = {
+    minutes: TimeFrame(minutes, cast(TimeFrameUnit, TimeFrameUnit.Minute))
+    for minutes in sorted(set(ORB_OPENING_MINUTES.values()))
+}
 DATA_FEEDS: dict[str, DataFeed] = {
     "sip": DataFeed.SIP,
     "delayed_sip": DataFeed.DELAYED_SIP,
@@ -141,7 +145,7 @@ UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
 PREPARATION_ATTEMPTS_MAX = 2
 STOP_COVERAGE_DRIFT_MAX = 1e-6
 PENDING_TTL_MINUTES = 5
-STRATEGY_RISK_MAX: dict[StrategyName, float | None] = {"orb5": ORB_RISK_MAX, **DAILY_RISK_MAX}
+STRATEGY_RISK_MAX: dict[StrategyName, float | None] = {**ORB_RISK_MAXES, **DAILY_RISK_MAX}
 
 
 class Strategy(StrategyBase):
@@ -742,7 +746,7 @@ class Strategy(StrategyBase):
         if not candidates:
             return
         candidates = self._rank_candidates(candidates, now)
-        timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
+        timeframe = ORB_TIMEFRAMES[minutes]
         try:
             histories = self._frames(
                 [candidate.symbol for candidate in candidates],
@@ -882,7 +886,7 @@ class Strategy(StrategyBase):
     def _intraday(
         self, symbols: list[str], now: datetime, opens: datetime, minutes: int
     ) -> dict[str, DataFrame]:
-        timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
+        timeframe = ORB_TIMEFRAMES[minutes]
         return {
             symbol: self._completed(frame, now, minutes)
             for symbol, frame in self._frames(symbols, opens, timeframe, now).items()
@@ -970,7 +974,7 @@ class Strategy(StrategyBase):
         if holding.stage == 0:
             return
         minutes = ORB_OPENING_MINUTES[holding.strategy]
-        timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
+        timeframe = ORB_TIMEFRAMES[minutes]
         try:
             recent = self._frames([holding.symbol], now - timedelta(days=5), timeframe, now).get(
                 holding.symbol

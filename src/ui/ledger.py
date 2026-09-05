@@ -69,6 +69,7 @@ STRATEGY_IDS_BY_LABEL = {label: name for name, label in STRATEGY_LABELS.items()}
 SHORT_LABELS: dict[str, str] = {
     "orb5": "ORB5",
     "orb10": "ORB10",
+    "orb15": "ORB15",
     "sma": "Momentum SMA",
     "tfb_50": "TFB-50",
     UNATTRIBUTED: "Untagged",
