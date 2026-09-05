@@ -2,6 +2,7 @@ import contextlib
 import hashlib
 import logging
 import queue
+import sys
 import threading
 from datetime import UTC, datetime
 from typing import Literal
@@ -22,6 +23,52 @@ from .types import (
 
 logger = logging.getLogger(__name__)
 EXPORT_INTERVAL_SECONDS = 5
+
+# Where the bot's own account of itself is written down.
+#
+#   _record_event ─┬─▶ publish ─▶ snapshot ─▶ dashboard   memory, both ends
+#                  └─▶ log_event ─────────▶ stdout        kept by the host
+#
+# The snapshot is held in memory at both ends, so it starts again whenever
+# either side restarts. The log is the copy that survives a restart, and it is
+# the only place a warning raised on Tuesday can still be read on Thursday.
+event_log = logging.getLogger("bot.events")
+LOG_LEVELS: dict[EventLevel, int] = {
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+}
+
+
+def _configure_event_log() -> None:
+    """Give the event log its own line to stdout.
+
+    Lumibot leaves the root logger without a handler and sets it to warnings
+    only, so an event handed to the root would be dropped if it was routine and
+    printed bare if it was not. This logger carries its own handler and does not
+    pass records upward, so every event is written the same way whatever lumibot
+    does to the root. Done on first use, so importing this module changes
+    nothing on its own.
+    """
+    if event_log.handlers:
+        return
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(name)s | %(message)s"))
+    event_log.addHandler(handler)
+    event_log.setLevel(logging.INFO)
+    event_log.propagate = False
+
+
+def log_event(
+    kind: str,
+    level: EventLevel,
+    message: str,
+    strategy: str | None = None,
+) -> None:
+    """Write one event to stdout, where the host keeps it."""
+    _configure_event_log()
+    named = "" if strategy is None else f"[{strategy}] "
+    event_log.log(LOG_LEVELS[level], "%s %s%s", kind, named, message)
 
 
 class StateExporter:
@@ -64,6 +111,7 @@ class StateExporter:
         *,
         strategy: str | None = None,
     ) -> None:
+        log_event(kind, level, message, strategy)
         with self.lock:
             self.status = status
             self.sequence += 1
