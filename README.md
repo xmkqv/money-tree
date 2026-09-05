@@ -42,12 +42,11 @@ mise exec -- uv run mt trade --strategies orb
 mise --env production exec -- uv run mt trade --strategies orb
 ```
 
-Serve the dashboard, stop it, and deploy.
+Serve the dashboard and stop it. A push to main deploys.
 
 ```sh
 mise run serve
 mise run stop
-mise --env production run deploy
 ```
 
 ## license
