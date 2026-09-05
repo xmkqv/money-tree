@@ -33,7 +33,9 @@ STRATEGY_LABELS: dict[StrategyName, str] = {
     "orb10": "ORB (10-minute)",
     "orb15": "ORB (15-minute)",
 }
-PAUSED_STRATEGIES: frozenset[StrategyName] = frozenset({"orb10"})
+# Nothing is paused. A strategy named here is loaded and manages whatever it
+# already holds, but opens nothing new.
+PAUSED_STRATEGIES: frozenset[StrategyName] = frozenset()
 # Names a strategy used to answer to. The roster is an environment variable held
 # outside this repository, so renaming a strategy in code alone leaves the bot
 # refusing a value it accepted yesterday — and refusing it while reading its
