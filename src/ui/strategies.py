@@ -30,8 +30,8 @@ from bot.strategies.tfb_50 import (
     TFB_POSITIONS_MAX,
     TFB_PRICE_USD_MIN,
     TFB_RISK_MAX,
-    TFB_TURNOVER_SESSIONS,
-    TFB_TURNOVER_USD_MIN,
+    TFB_VOLUME_SESSIONS,
+    TFB_VOLUME_SHARES_MIN,
 )
 from bot.types import (
     POSITION_FRACTION_CAP_MAX,
@@ -185,11 +185,12 @@ UNIVERSE = (
 
 TFB_UNIVERSE = (
     f"{UNIVERSE} This strategy then screens that list again on its own floors: share price "
-    f"${TFB_PRICE_USD_MIN:.0f} or more, and turnover averaging "
-    f"{_millions(TFB_TURNOVER_USD_MIN)} or "
-    f"more across the last {TFB_TURNOVER_SESSIONS} completed sessions — the value actually "
-    "traded, not a share count against today's price. A symbol whose sessions cannot be read "
-    "does not pass."
+    f"${TFB_PRICE_USD_MIN:.0f} or more, and volume averaging "
+    f"{TFB_VOLUME_SHARES_MIN / 1_000_000:g} million shares or "
+    f"more across the last {TFB_VOLUME_SESSIONS} completed sessions — a share count, not the "
+    "value traded, so a higher-priced stock has to change hands as often as a cheap one rather "
+    "than clearing the same dollar figure on fewer shares. A symbol whose sessions cannot be "
+    "read does not pass."
 )
 
 

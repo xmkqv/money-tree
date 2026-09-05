@@ -298,7 +298,7 @@ market
     asset = US stocks
     market cap >= $500 million
     share price >= $5
-    average daily turnover >= $20 million over the last 20 sessions
+    average daily volume >= 1 million shares over the last 20 sessions
     market state = SPX > SMA(20)
     direction = long
 

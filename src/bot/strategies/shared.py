@@ -138,14 +138,13 @@ def latest_dollar_volume(frame: DataFrame) -> float:
     return volume * close
 
 
-def average_dollar_volume(frame: DataFrame, sessions: int) -> float:
-    if sessions < 1 or not {"close", "volume"}.issubset(frame.columns):
+def average_share_volume(frame: DataFrame, sessions: int) -> float:
+    if sessions < 1 or "volume" not in frame.columns:
         return 0.0
-    closes = cast(Series, frame["close"]).tail(sessions)
     volumes = cast(Series, frame["volume"]).tail(sessions)
-    if len(closes) < sessions or closes.count() < sessions or volumes.count() < sessions:
+    if len(volumes) < sessions or volumes.count() < sessions:
         return 0.0
-    traded = float(cast(float, (closes * volumes).mean()))
+    traded = float(cast(Any, volumes).mean())
     return traded if isfinite(traded) and traded > 0.0 else 0.0
 
 
