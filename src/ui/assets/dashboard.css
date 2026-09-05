@@ -25,6 +25,7 @@
 
   --s-orb5:     #2A72CC;
   --s-orb10:    #9A6B12;
+  --s-orb15:    #0F7B8A;
   --s-momentum: #6A57C8;
   --s-tfb50:    #B23F79;
 
@@ -72,6 +73,7 @@
     --hold-ink:  #E8AE45;
     --s-orb5:     #3A8AE8;
     --s-orb10:    #C08820;
+    --s-orb15:    #35A9BC;
     --s-momentum: #7F6EE0;
     --s-tfb50:    #C9548F;
     --grid:      rgba(255, 255, 255, .055);
@@ -110,6 +112,7 @@
   --hold-ink:  #E8AE45;
   --s-orb5:     #3A8AE8;
   --s-orb10:    #C08820;
+  --s-orb15:    #35A9BC;
   --s-momentum: #7F6EE0;
   --s-tfb50:    #C9548F;
   --grid:      rgba(255, 255, 255, .055);

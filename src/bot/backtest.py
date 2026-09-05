@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import cast
 
 from .config import settings
+from .strategies.orb_base import ORB_STRATEGIES
 from .types import StrategyName
 
 
@@ -43,7 +44,7 @@ def run(
     datasource = YahooDataBacktesting
     datasource_configuration: dict[str, str | bool] | None = None
     datasource_options: dict[str, object] = {}
-    if strategy_name in {"orb", "orb_momentum"}:
+    if strategy_name in ORB_STRATEGIES:
         datasource = AlpacaBacktesting
         datasource_configuration = {
             "API_KEY": settings.alpaca_api_key.get_secret_value(),

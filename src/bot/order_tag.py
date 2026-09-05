@@ -26,6 +26,7 @@ STRATEGY_CODES: dict[StrategyName, str] = {
     "sma": "s",
     "tfb_50": "t",
     "orb_momentum": "m",
+    "orb15": "f",
 }
 STRATEGIES_BY_CODE: dict[str, StrategyName] = {
     code: strategy for strategy, code in STRATEGY_CODES.items()

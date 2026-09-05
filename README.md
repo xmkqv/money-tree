@@ -1,6 +1,6 @@
 # money-tree
 
-Four US-equity trading strategies, written down first and then run: backtesting,
+Five US-equity trading strategies, written down first and then run: backtesting,
 multi-strategy portfolio composition, and Alpaca execution.
 
 The register below is the specification. `src/bot/strategies/` implements it,
@@ -46,7 +46,7 @@ mise exec -- uv run mt report --strategy sma --symbols SPY --start 2023-01-01 --
 The run directory holds `trades.csv`, `stats.csv`, `indicators.csv`, their parquet
 equivalents, `tearsheet.html`, and `backtest.log`.
 
-Intraday strategies (`orb`, `orb_momentum`) resolve minute bars through Alpaca.
+Intraday strategies (`orb`, `orb_momentum`, `orb15`) resolve minute bars through Alpaca.
 
 ```sh
 mise exec -- uv run mt backtest --strategy orb --symbols SPY --start 2023-01-01 --end 2024-01-01
@@ -143,7 +143,7 @@ risk
     position size = 10% of account
     short position size = whole shares only
     risk per trade = 0.15% of account equity
-    concurrent breakout positions = 3, shared across both intraday engines
+    concurrent breakout positions = 3, shared across all intraday engines
     risk-to-reward ratio = not set
     R = absolute(entry price - initial stop)
     long initial stop = opening range level(0.75)
@@ -210,7 +210,7 @@ risk
     position size = 10% of account
     short position size = whole shares only
     risk per trade = not set
-    concurrent breakout positions = 3, shared across both intraday engines
+    concurrent breakout positions = 3, shared across all intraday engines
     risk-to-reward ratio = 1:2
     R = absolute(entry price - initial stop)
     long initial stop = opening range level(0.75)
@@ -227,6 +227,74 @@ exit
     at +2R close = 50% of original position
     at +3R close = 25% of original position
     at +5R close = remaining 25% of original position
+    signal exit = none
+    earnings exit = none
+    deadline = close any remaining position before 15:55 ET
+    shared rules = none
+```
+
+#### ORB (15-minute)
+
+The 5-minute rules on a 15-minute candle. Same volume filter, same stop, same
+targets, one third as many chances to fire.
+
+```text:surface
+status
+    state = enabled
+
+market
+    asset = US stocks
+    market cap >= $500 million
+    share price >= $5
+    average daily turnover >= $20 million
+    market state = none
+    direction = long or short
+
+setup
+    timeframe = 15-minute candles
+    opening range = 09:30-09:45 ET
+    marks = opening range high, midpoint, and low
+    volume = cumulative volume >= 1.3 * 20-day average cumulative volume at the same time
+    opening range size >= 0.4% of price
+    initial stop distance = 1% to 5% of price
+    volume is read as of the signal candle's close
+    other filters = none
+
+sorting
+    rank = last completed daily session close * volume, highest first
+    applies when more breakouts fire than there is room to hold
+
+entry
+    window = 09:45-10:30 ET
+    long signal = first candle close above the opening range high
+    short signal = first candle close below the opening range low
+    signal candle = the first such candle since the range, within the last 2 completed candles
+    order = next 15-minute candle open, directly after the signal candle
+    entry block = live quote already through the initial stop
+    earnings block = none
+    open positions may remain after the entry window
+
+risk
+    position size = 10% of account
+    short position size = whole shares only
+    risk per trade = 0.15% of account equity
+    concurrent breakout positions = 3, shared across all intraday engines
+    risk-to-reward ratio = not set
+    R = absolute(entry price - initial stop)
+    long initial stop = opening range level(0.75)
+    short initial stop = opening range level(0.25)
+    at +1.5R set stop = breakeven
+    at +1.5R enable trailing stop = 1.5 * ATR(14) on 15-minute candles
+    ATR(14) window = 15-minute candles across sessions, prior-session bars used as needed
+    overnight gaps contribute to true range
+    ATR(14) needs 15 completed 15-minute candles, taken from earlier sessions at entry
+    active stop cannot move past breakeven into a loss
+    stop at or beyond the last price = close the position at market
+
+exit
+    at +1.5R close = 50% of original position
+    at +2.5R close = 25% of original position
+    at +4R close = remaining 25% of original position
     signal exit = none
     earnings exit = none
     deadline = close any remaining position before 15:55 ET
