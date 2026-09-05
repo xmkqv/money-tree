@@ -50,6 +50,7 @@
       <button type="button" data-view="portfolio">Portfolio</button>
       <button type="button" data-view="history">History</button>
       <button type="button" data-view="strategies">Strategies</button>
+      <button type="button" data-view="insides">The Insides</button>
       <button type="button" id="logout" class="ghost" title="Sign out">Sign out</button>
     </nav>
   </header>
@@ -394,6 +395,57 @@
         </div>
       </section>
       <div class="rules-grid" id="rules-cards"></div>
+    </div>
+  </div>
+
+  <div class="view hidden" id="view-insides">
+    <div class="rules">
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>The run</h2>
+          <span class="eyebrow" id="in-run">&mdash;</span>
+        </div>
+        <div class="panel-body">
+          <p class="rules-warning" id="in-alarm" hidden></p>
+          <p class="rules-note">
+            What the bot says about itself, straight from the state it publishes every few
+            seconds. Nothing here is read from the broker: this is the engine's own account of
+            what it is doing.
+          </p>
+          <div class="tiles" id="in-tiles"></div>
+          <div class="roster" id="in-roster"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Limits it is running</h2>
+          <span class="eyebrow">Reported, not assumed</span>
+        </div>
+        <div class="panel-body">
+          <p class="rules-note">
+            These are environment settings, so the running bot is the only authority on them.
+            A figure here that surprises you is a deployment to check, not a rule to change.
+          </p>
+          <div class="tiles" id="in-limits"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Events</h2>
+          <div class="segmented" id="in-levels" role="group" aria-label="Event level">
+            <button type="button" data-level="all" aria-pressed="true">All</button>
+            <button type="button" data-level="attention" aria-pressed="false">Needs a look</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <p class="rules-note" id="in-note">&mdash;</p>
+          <div class="table-scroll"><table class="data" id="in-events"></table></div>
+        </div>
+      </section>
+
     </div>
   </div>
 

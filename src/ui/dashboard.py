@@ -117,6 +117,10 @@ ASSET_MEDIA_TYPES = {
 }
 LEDGER_TTL_SECONDS = 60
 PULSE_TTL_SECONDS = 2
+# How long a browser may hold the run snapshot. The bot posts one every five
+# seconds, so a shorter window hands a reader the same answer twice and a
+# longer one shows a heartbeat as stale before it is.
+RUN_TTL_SECONDS = 5
 BENCHMARK_SYMBOL = "SPY"
 NO_STORE = {"Cache-Control": "no-store"}
 IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
@@ -547,6 +551,17 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
             ledger_cache.drop()
 
         return read_response(cached, 0)
+
+    @router.get("/api/run")
+    async def runtime() -> JSONResponse:
+        """Everything the bot says about itself, for The Insides.
+
+        Read straight out of memory, and deliberately independent of the
+        broker: a bot reporting errors is exactly when the Alpaca reads are
+        failing too, and this is the page a reader turns to then.
+        """
+        snapshot, stale = runtime_state()
+        return read_response(snapshot, RUN_TTL_SECONDS, stale=stale)
 
     @router.post("/internal/state", status_code=204)
     async def publish_runtime(request: Request) -> Response:
