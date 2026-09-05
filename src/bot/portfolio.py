@@ -219,6 +219,11 @@ class Strategy(StrategyBase):
             self._pending.pop(symbol)
             holding = pending.holding
             holding.entry = self._entry_price(order, price)
+            if holding.strategy in DAILY_STRATEGIES:
+                # The threshold is a distance from the entry, not a level cut from the signal
+                # candle's close. A daily entry fills at the next open, so a gap between the
+                # two would otherwise move the risk taken away from the risk sized for.
+                holding.stop = holding.entry - holding.direction * holding.risk
             holding.risk = abs(holding.entry - holding.stop)
             holding.highest = holding.entry
             holding.lowest = holding.entry
