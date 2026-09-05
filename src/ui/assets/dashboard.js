@@ -2522,7 +2522,7 @@ document.getElementById("theme-toggle").addEventListener("click", ev => {
   const btn = ev.target.closest("button");
   if (!btn) return;
   document.documentElement.setAttribute("data-theme", btn.dataset.setTheme);
-  try { localStorage.setItem("mt-theme", btn.dataset.setTheme); } catch (error) {  }
+  try { localStorage.setItem("mt-theme", btn.dataset.setTheme); } catch {}
   syncThemeButtons();
   repaintForTheme();
 });
