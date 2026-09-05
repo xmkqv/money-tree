@@ -224,21 +224,18 @@ GET  /api/pulse
 # deploy
 
 ```text:surface
-vendor[host] project money-tree — [railway.ts][railway]
+vendor[host] project money-tree — managed in the Railway dashboard
     money-tree-web  uvicorn ui.app:create_app · healthcheck /healthz · watches src/ui, export.py, types.py
     money-tree-bot  mt trade --strategies $STRATEGIES · private endpoint money-tree · watches src/bot, src/cli
 
 deploy()
-    inv:MODE ≠ production → error
-    inv:RAILWAY_TOKEN empty → error
-    plan → ask → apply
+    push to main → vendor[host] builds the watched paths → rolls the service
 ```
 
-- each service receives its variables from the production mode; secrets are sealed
+- each service holds its own variables in the dashboard; secrets are sealed there
 
 ---
 
 # refs
 
 [engine]: https://github.com/Lumiwealth/lumibot#quick-start
-[railway]: ./.railway/railway.ts

@@ -23,7 +23,5 @@ SESSION_SECRET = ""
 STATE_EXPORT_SECRET = ""
 ## oauth
 RAILWAY_OAUTH_CLIENT_SECRET = ""
-## deployment
-RAILWAY_TOKEN = ""
 
 _.file = { path = ".env.production", redact = true }
