@@ -6,7 +6,6 @@
 .venv
 dist
 logs
-mise-tasks
 mise.lock
 mise.toml
 mise.*.toml
