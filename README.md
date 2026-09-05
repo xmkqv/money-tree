@@ -7,6 +7,11 @@ The register below is the specification. `src/bot/strategies/` implements it,
 `STRATEGY_LABELS` in `src/bot/types.py` lists what actually runs, and
 `PAUSED_STRATEGIES` there names the strategies that take no new entries.
 
+`STRATEGIES` picks the roster, and it lives in the deployment rather than in this
+repository. `STRATEGY_ALIASES` keeps the names a strategy used to answer to, so a
+roster that has not caught up with a rename still starts the bot — with a warning
+naming what to fix — instead of refusing to start.
+
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python: 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](pyproject.toml)
 

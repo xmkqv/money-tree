@@ -6,7 +6,7 @@ from .export import StateExporter
 from .types import StrategyName, published_roster
 
 
-def run(strategy_names: list[StrategyName]) -> None:
+def run(strategy_names: list[StrategyName], renamed: dict[str, StrategyName]) -> None:
     from lumibot.traders import Trader
 
     from .portfolio import Strategy
@@ -22,6 +22,17 @@ def run(strategy_names: list[StrategyName]) -> None:
     )
     exporter.start()
     exporter.publish("starting", "run", "info", "Trading run is starting")
+    if renamed:
+        # The roster still names a strategy that has been renamed. It is honoured,
+        # and said out loud: the environment holding it is the thing to fix, and
+        # nothing else will mention it.
+        using = ", ".join(f"{was} is now {now}" for was, now in sorted(renamed.items()))
+        exporter.publish(
+            "starting",
+            "roster.renamed",
+            "warning",
+            f"STRATEGIES uses names that have been renamed: {using}",
+        )
     try:
         parameters = {**configuration.model_dump(), "strategies": strategy_names}
         strategy = Strategy(broker=build_alpaca_broker(), parameters=parameters, name="Portfolio")
