@@ -29,14 +29,14 @@ ORB_TRAIL_ATR_MULTIPLE = 1.5
 ORB_TRAIL_BARS_MIN = 15
 ORB_SCAN_MINUTES = 60
 ORB_CLOSE_LEAD_MINUTES = 6
-ORB_STRATEGIES: frozenset[StrategyName] = frozenset({"orb", "orb_momentum"})
-ORB_OPENING_MINUTES: dict[StrategyName, int] = {"orb": 5, "orb_momentum": 10}
-ORB_VOLUME_MULTIPLES: dict[StrategyName, float] = {"orb": 1.3, "orb_momentum": 1.5}
+ORB_STRATEGIES: frozenset[StrategyName] = frozenset({"orb5", "orb10"})
+ORB_OPENING_MINUTES: dict[StrategyName, int] = {"orb5": 5, "orb10": 10}
+ORB_VOLUME_MULTIPLES: dict[StrategyName, float] = {"orb5": 1.3, "orb10": 1.5}
 ORB_TARGET_MULTIPLES: dict[StrategyName, tuple[float, float, float]] = {
-    "orb": (1.5, 2.5, 4.0),
-    "orb_momentum": (2.0, 3.0, 5.0),
+    "orb5": (1.5, 2.5, 4.0),
+    "orb10": (2.0, 3.0, 5.0),
 }
-ORB_ENTRY_EXTENSION_MAX: dict[StrategyName, float | None] = {"orb": None, "orb_momentum": 0.25}
+ORB_ENTRY_EXTENSION_MAX: dict[StrategyName, float | None] = {"orb5": None, "orb10": 0.25}
 
 
 def range_stop(direction: Direction, high: float, low: float) -> float:

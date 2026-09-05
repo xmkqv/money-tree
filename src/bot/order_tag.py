@@ -20,12 +20,14 @@ ORDER_TAG_PREFIX = "mt"
 ORDER_TAG_PARTS = 6
 RISK_FRACTION_SCALE = 1_000_000
 ORDER_KINDS: frozenset[str] = frozenset({"e", "s", "x"})
+# One letter each, and these letters never change: they are written into the client order id
+# of every order the bot places, so the broker's own record is read back through them.
 STRATEGY_CODES: dict[StrategyName, str] = {
     "noop": "n",
-    "orb": "o",
+    "orb5": "o",
     "sma": "s",
     "tfb_50": "t",
-    "orb_momentum": "m",
+    "orb10": "m",
 }
 STRATEGIES_BY_CODE: dict[str, StrategyName] = {
     code: strategy for strategy, code in STRATEGY_CODES.items()

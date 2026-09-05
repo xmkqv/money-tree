@@ -466,7 +466,7 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         request: Request,
         symbol: Annotated[str, Query(min_length=1, max_length=12, pattern=r"^[A-Z][A-Z.]*$")],
         strategy: Annotated[
-            Literal["orb", "orb_momentum", "sma", "tfb_50", "unattributed"], Query()
+            Literal["orb5", "orb10", "sma", "tfb_50", "unattributed"], Query()
         ],
         side: Annotated[Literal["long", "short"], Query()],
         entry: Annotated[float, Query(gt=0)],

@@ -75,14 +75,14 @@ FIELDS = [
 ]
 UNIVERSE_CAP_USD_MIN = 500_000_000.0
 STRATEGY_SHORT_LABELS: dict[StrategyName, str] = {
-    "orb": "ORB5",
-    "orb_momentum": "ORB10",
+    "orb5": "ORB5",
+    "orb10": "ORB10",
     "sma": "Momentum SMA",
     "tfb_50": "TFB-50",
 }
 STRATEGY_KINDS: dict[StrategyName, str] = {
-    "orb": "Intraday breakout",
-    "orb_momentum": "Intraday breakout",
+    "orb5": "Intraday breakout",
+    "orb10": "Intraday breakout",
     "sma": "Daily trend",
     "tfb_50": "Daily trend",
 }
@@ -198,7 +198,7 @@ def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: date
     volume_multiple = ORB_VOLUME_MULTIPLES[strategy]
     target_multiples = ORB_TARGET_MULTIPLES[strategy]
     entry_extension_max = ORB_ENTRY_EXTENSION_MAX[strategy]
-    risk_cap = ORB_RISK_MAX if strategy == "orb" else per_trade
+    risk_cap = ORB_RISK_MAX if strategy == "orb5" else per_trade
     opening_end = f"{opens + timedelta(minutes=minutes):%H:%M}"
     first_entry = f"{opens + timedelta(minutes=2 * minutes):%H:%M}"
     scan_end = f"{opens + timedelta(minutes=ORB_SCAN_MINUTES):%H:%M}"
@@ -329,7 +329,7 @@ def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: date
             + (
                 f" — this strategy states its own {_pct(ORB_RISK_MAX)} in the register, so "
                 f"that governs instead of the configured {_pct(per_trade)}."
-                if strategy == "orb"
+                if strategy == "orb5"
                 else " (the configured per-trade limit; this strategy states none of its own)."
             )
             + f" A single position is never worth more than {_pct(POSITION_FRACTION_CAP_MAX)} "

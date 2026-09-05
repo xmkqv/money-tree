@@ -67,8 +67,8 @@ UNATTRIBUTED = "unattributed"
 EPSILON = 1e-9
 STRATEGY_IDS_BY_LABEL = {label: name for name, label in STRATEGY_LABELS.items()}
 SHORT_LABELS: dict[str, str] = {
-    "orb": "ORB5",
-    "orb_momentum": "ORB10",
+    "orb5": "ORB5",
+    "orb10": "ORB10",
     "sma": "Momentum SMA",
     "tfb_50": "TFB-50",
     UNATTRIBUTED: "Untagged",

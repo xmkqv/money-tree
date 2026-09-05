@@ -46,7 +46,7 @@ mise exec -- uv run mt report --strategy sma --symbols SPY --start 2023-01-01 --
 The run directory holds `trades.csv`, `stats.csv`, `indicators.csv`, their parquet
 equivalents, `tearsheet.html`, and `backtest.log`.
 
-Intraday strategies (`orb`, `orb_momentum`) resolve minute bars through Alpaca.
+Intraday strategies (`orb5`, `orb10`) resolve minute bars through Alpaca.
 
 ```sh
 mise exec -- uv run mt backtest --strategy orb --symbols SPY --start 2023-01-01 --end 2024-01-01

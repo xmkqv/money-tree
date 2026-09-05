@@ -49,8 +49,8 @@ const PHONE = window.matchMedia("(max-width: 720px)");
 const onPhone = () => PHONE.matches;
 
 const STRATEGY_COLOURS = {
-  orb: "var(--s-orb5)",
-  orb_momentum: "var(--s-orb10)",
+  orb5: "var(--s-orb5)",
+  orb10: "var(--s-orb10)",
   sma: "var(--s-momentum)",
   tfb_50: "var(--s-tfb50)",
   unattributed: "var(--ink-3)",
