@@ -33,7 +33,7 @@ from bot.strategies.shared import (
 )
 from bot.strategies.tfb_50 import TFB_POSITIONS_MAX, TFB_RISK_MAX, TFB_TURNOVER_SESSIONS
 from bot.types import (
-    POSITION_FRACTION_CAP_MAX,
+    POSITION_FRACTION_CAP,
     POSITIONS_MAX,
     STRATEGY_LABELS,
     STRATEGY_SHORT_LABELS,
@@ -243,115 +243,113 @@ def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: date
         ),
         Row(
             field="Direction",
-            value="Long and short. A short is skipped when the broker will not lend the stock, "
-            "and is sized in whole shares — a broker lends shares, not fractions of one, so "
-            "every order on a short leg is rounded down to a whole number. Longs use "
-            "fractional quantities when the account allows them.",
+            value="Long and short. A short is skipped when the broker will not lend the "
+            "stock. A short is sized in whole shares, because a broker lends whole shares "
+            "only, so every order on a short leg is rounded down to a whole number. Longs "
+            "use fractional quantities when the account allows them.",
             source="portfolio.py · _enter, _protect, _exit",
         ),
         Row(
             field="Range",
-            value=f"The opening range is the first {minutes}-minute candle: the opening bell up "
-            f"to {opening_end}, the last trade before {opening_end} being the one that closes "
-            "it. Its high and low set the levels for the day. The bell is read from the "
-            "exchange calendar, so a late open moves the range with it.",
+            value=f"The opening range is the first {minutes}-minute candle, from the opening "
+            f"bell to {opening_end}. The last trade before {opening_end} closes it. Its high "
+            "and low set the levels for the day. The bell is read from the exchange calendar, "
+            "so a late open moves the range with it.",
             source="portfolio.py · _run_orb, strategies/shared.py · session_bounds",
         ),
         Row(
             field="Setup",
-            value=f"The first completed {minutes}-minute candle since the range that closes above "
-            "the range high (long) or below the range low (short) — a candle still forming never "
-            f"signals. Checked every {minutes} minutes from {opening_end}, the moment the opening "
-            f"candle closes, to {scan_end}, at most once per stock per day. The whole session "
-            "since the range is re-read on every pass rather than only its newest candle, so a "
-            "breakout whose bars reached the scan late is still the candle the signal is taken "
-            f"from — but only while it is one of the last {ORB_SIGNAL_CANDLES_MAX} completed "
-            f"candles, {ORB_SIGNAL_CANDLES_MAX * minutes} minutes of the move. A close further "
-            "back than that has already run, and is passed over rather than chased. "
-            "Once either breakout strategy has traded a stock, both leave it alone for the rest "
-            f"of the session. The range itself must be at least {_pct(ORB_RANGE_FRACTION_MIN)} of "
-            f"the price, and the stop cut from it between {_pct(ORB_STOP_FRACTION_MIN)} and "
-            f"{_pct(ORB_STOP_FRACTION_MAX)} of the price — a narrower range puts the stop inside "
-            "the spread, where the next tick decides the trade.",
+            value=f"The first completed {minutes}-minute candle since the range that closes "
+            "above the range high (long) or below the range low (short). A candle still "
+            f"forming never signals. Checked every {minutes} minutes from {opening_end}, when "
+            f"the opening candle closes, to {scan_end}, at most once per stock per day. Every "
+            "pass re-reads the whole session since the range rather than only its newest "
+            "candle, so a breakout whose bars reached the scan late still supplies the signal "
+            f"candle. It must be one of the last {ORB_SIGNAL_CANDLES_MAX} completed candles, "
+            f"which is {ORB_SIGNAL_CANDLES_MAX * minutes} minutes of the move. An older close "
+            "has already run, and is passed over. Once either breakout strategy has traded a "
+            "stock, both leave it alone for the rest of the session. The range itself must be "
+            f"at least {_pct(ORB_RANGE_FRACTION_MIN)} of the price, and the stop cut from it "
+            f"must fall between {_pct(ORB_STOP_FRACTION_MIN)} and "
+            f"{_pct(ORB_STOP_FRACTION_MAX)} of the price. A narrower range puts the stop "
+            "inside the spread.",
             source="portfolio.py · _run_orb, orb_base.py · is_orb_setup_ready",
         ),
         Row(field="Confirmation", value=confirmation, source="portfolio.py · _orb_confirm"),
         Row(
             field="Sorting",
-            value="Ranked by the value traded in the last completed daily session — its close "
-            "times its share volume — highest first. When more breakouts fire than there "
-            "is room to hold, the busiest take the slots. This is a different question "
-            "from the confirmation above, which measures each stock against its own "
-            "history rather than against other stocks.",
+            value="Ranked by the value traded in the last completed daily session, which is "
+            "its close times its share volume, highest first. When more breakouts fire than "
+            "there is room to hold, the busiest take the slots. This is a different question "
+            "from the confirmation above, which measures each stock against its own history "
+            "rather than against other stocks.",
             source="portfolio.py · _rank_candidates",
         ),
         Row(
             field="Entry",
-            value="A market order goes in the moment the scan reads the breakout, filling at the "
-            "next executable price — the open of the next "
-            f"{minutes}-minute candle when the signal is read on its own boundary, {first_entry} "
-            "at the earliest, "
-            "since the opening candle cannot break its own range. Good for the day only. The "
-            "size is worked out from the live quote, falling back to the breakout candle's "
-            "close, and the fill then sets the entry, the risk and the targets. It is passed "
-            "over if another strategy already holds the stock, if the account is at its position "
-            "cap or fully invested, if the size that fits the risk limits comes to less than "
-            f"${NOTIONAL_USD_MIN:.0f}, or if that live quote has already run back through the "
-            "stop the breakout would have been given — a position cannot be opened already "
-            f"past its own exit.{extension}",
+            value="A market order goes in the moment the scan reads the breakout, and fills "
+            f"at the next executable price. That is the open of the next {minutes}-minute "
+            f"candle when the signal is read on its own boundary, and {first_entry} at the "
+            "earliest, because the opening candle cannot break its own range. Good for the "
+            "day only. The size is worked out from the live quote, and falls back to the "
+            "breakout candle's close. The fill then sets the entry, the risk and the targets. "
+            "The entry is passed over if another strategy already holds the stock, if the "
+            "account is at its position cap or fully invested, if the size that fits the risk "
+            f"limits comes to less than ${NOTIONAL_USD_MIN:.0f}, or if that live quote has "
+            f"already run back through the stop the breakout would have been given.{extension}",
             source="portfolio.py · on_trading_iteration, _run_orb, _enter",
         ),
         Row(
             field="Stop Loss",
-            value="Three quarters of the way back into the opening range for a long, a quarter "
-            "for a short. Once the first target is hit the stop trails "
+            value="Three quarters of the way back into the opening range for a long, a "
+            "quarter for a short. Once the first target is hit, the stop trails "
             f"{ORB_TRAIL_ATR_MULTIPLE:g}x the {PERIOD}-period ATR behind the best price the "
-            "trade has seen, and never moves back "
-            f"past the entry price. That ATR({PERIOD}) is calculated from {minutes}-minute "
-            "candles across trading sessions, using available prior-session bars as needed, so "
-            f"overnight gaps contribute to true range. At least {ORB_TRAIL_BARS_MIN} completed "
-            f"{minutes}-minute candles must be available; because prior sessions are included, "
-            "this requirement will normally already be satisfied when the trade begins. "
-            "The level rests as a live order at "
-            "the broker, replaced whenever it moves and re-sent if it ever stops covering the "
-            "whole position. A level the market has already reached cannot rest as an order, so "
-            "when the stop lands at or beyond the last price the whole position is closed at "
-            "market there and then instead. The move to breakeven after the first target is the "
-            "usual way this happens: price back at the entry is the stop being hit, and the "
-            "position leaves at market rather than waiting for an order that could not be placed.",
+            f"trade has seen, and never moves back past the entry price. That ATR({PERIOD}) "
+            f"is calculated from {minutes}-minute candles across trading sessions, using "
+            "prior-session bars where they are available, so overnight gaps contribute to "
+            f"true range. At least {ORB_TRAIL_BARS_MIN} completed {minutes}-minute candles "
+            "must be available. Prior sessions count towards that total, so the trade "
+            "normally starts with enough. The level rests as a live order at the broker. It "
+            "is replaced whenever it moves, and re-sent if it stops covering the whole "
+            "position. A level the market has already reached cannot rest as an order. When "
+            "the stop lands at or beyond the last price, the whole position is closed at "
+            "market instead. The move to breakeven after the first target is the usual way "
+            "this happens. Price back at the entry means the stop is hit, so the position "
+            "leaves at market.",
             source="portfolio.py · _run_orb, _manage_orb, _protect, _resync_stops",
         ),
         Row(
             field="Max Risk",
             value=f"{_pct(risk_cap)} of account equity per trade"
             + (
-                f" — this strategy states its own {_pct(ORB_RISK_MAX)} in the spec, so "
-                f"that governs instead of the configured {_pct(per_trade)}."
+                f". This strategy states its own {_pct(ORB_RISK_MAX)} in the spec, so that "
+                f"governs instead of the configured {_pct(per_trade)}."
                 if strategy == "orb"
-                else " (the configured per-trade limit; this strategy states none of its own)."
+                else ", which is the configured per-trade limit. This strategy states none "
+                "of its own."
             )
-            + f" A single position is never worth more than {_pct(POSITION_FRACTION_CAP_MAX)} "
+            + f" A single position is never worth more than {_pct(POSITION_FRACTION_CAP)} "
             "of equity.",
             source="portfolio.py · _enter",
         ),
         Row(field="Min. R:R", value=f"{reward} {targets}", source="portfolio.py · on_filled_order"),
         Row(
             field="Exit Rule",
-            value="Scaled out in three: half the position as first filled at the first target, "
-            "a quarter of it at the second, the remainder at the third. On a short each slice "
-            "is rounded down to whole shares, and one worth less than a single share is "
-            "skipped rather than sent — the resting stop still covers the position, and the "
-            "next target or the closing deadline takes it. The trailing stop takes whatever "
-            "is left if price turns first.",
+            value="Scaled out in three: half the position as first filled at the first "
+            "target, a quarter of it at the second, the remainder at the third. On a short "
+            "each slice is rounded down to whole shares, and a slice worth less than a single "
+            "share is skipped. The resting stop still covers the position, and the next "
+            "target or the closing deadline takes it. The trailing stop takes whatever is "
+            "left if price turns first.",
             source="portfolio.py · _manage_orb",
         ),
         Row(
             field="Emergency Exit",
-            value=f"Everything is closed before {exit_before} — the exit is sent at {exit_at}, "
-            f"{ORB_CLOSE_LEAD_MINUTES} minutes before the closing bell the exchange calendar "
-            "gives for the session, so the market order fills in time and a half day closes on "
-            "its own clock. This strategy never holds overnight. The daily loss limit closes all "
-            "positions and stops new entries for the rest of the day.",
+            value=f"Everything is closed before {exit_before}. The exit is sent at {exit_at}, "
+            f"which is {ORB_CLOSE_LEAD_MINUTES} minutes before the closing bell the exchange "
+            "calendar gives for the session, so the market order fills in time and a half day "
+            "closes on its own clock. This strategy never holds overnight. The daily loss "
+            "limit closes all positions and stops new entries for the rest of the day.",
             source="portfolio.py · _manage, _is_daily_loss_reached",
         ),
     ]
@@ -373,12 +371,12 @@ def _daily(strategy: StrategyName, per_trade: float, closes: datetime) -> list[R
             "the open of the third. Market buy, retried every iteration until the close. "
             "Skipped if "
             "the company reports earnings within 5 days. A company with no earnings date on "
-            "file is not held back; one whose calendar cannot be read at all is left for "
-            "that session."
+            "file can still be bought. A company whose calendar cannot be read at all is left "
+            "for that session."
         )
         risk = (
             "No per-trade risk limit is set for this strategy, so the size comes from the "
-            f"position cap alone: never more than {_pct(POSITION_FRACTION_CAP_MAX)} of equity."
+            f"position cap alone: never more than {_pct(POSITION_FRACTION_CAP)} of equity."
         )
         setup_source = "strategies/shared.py · does_momentum_enter"
         entry_source = "strategies/shared.py · does_momentum_enter, portfolio.py · _run_sma"
@@ -391,15 +389,16 @@ def _daily(strategy: StrategyName, per_trade: float, closes: datetime) -> list[R
         entry = (
             "Market buy at the open, then retried every iteration until the close. The "
             "setup is cut from completed sessions, so the day's list is scanned once and "
-            "re-offered: a name that could not be funded at the open — no slot left, no "
-            "affordable size, another strategy holding it — is taken later in the day if "
-            "one frees up. Upcoming earnings do not block an entry for this strategy."
+            "re-offered. A name that could not be funded at the open is taken later in the "
+            "day if room frees up. It may have missed out because no slot was left, because "
+            "no affordable size was available, or because another strategy held it. Upcoming "
+            "earnings do not block an entry for this strategy."
         )
         risk = (
-            f"{_pct(TFB_RISK_MAX)} of account equity per trade — this strategy states its "
+            f"{_pct(TFB_RISK_MAX)} of account equity per trade. This strategy states its "
             f"own {_pct(TFB_RISK_MAX)} in the spec, so that governs instead of the "
             f"configured {_pct(per_trade)}. A single position is never worth more than "
-            f"{_pct(POSITION_FRACTION_CAP_MAX)} of equity, and this strategy holds at most "
+            f"{_pct(POSITION_FRACTION_CAP)} of equity, and this strategy holds at most "
             f"{TFB_POSITIONS_MAX} positions at once."
         )
         setup_source = "strategies/shared.py · does_tfb_enter"

@@ -21,7 +21,6 @@ ORDER_TAG_PARTS = 6
 RISK_FRACTION_SCALE = 1_000_000
 ORDER_KINDS: frozenset[OrderKind] = frozenset({"e", "s", "x"})
 STRATEGY_CODES: dict[StrategyName, str] = {
-    "noop": "n",
     "orb": "o",
     "sma": "s",
     "tfb_50": "t",

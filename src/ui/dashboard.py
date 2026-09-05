@@ -28,7 +28,7 @@ from bot.strategies.shared import (
     session_starts,
 )
 from bot.types import (
-    POSITION_FRACTION_CAP_MAX,
+    POSITION_FRACTION_CAP,
     STATE_SIGNATURE_SALT,
     StateEvent,
     StateSnapshot,
@@ -432,7 +432,7 @@ async def build_ledger(
         positionCapPct=round(
             100
             * min(
-                POSITION_FRACTION_CAP_MAX,
+                POSITION_FRACTION_CAP,
                 configuration.position_fraction_max,
             ),
             2,
