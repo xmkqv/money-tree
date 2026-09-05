@@ -7,12 +7,12 @@ license = "MIT"
 requires-python = ">=3.13"
 dependencies = [
     "alpaca-py>=0.44",
-    "authlib>=1.7",
+    "authlib>=1.8",
     "exchange-calendars>=4.13",
     "fastapi>=0.141",
     "httpx>=0.28",
     "itsdangerous>=2.2",
-    "lumibot>=4.5",
+    "lumibot>=4.5.90",
     "pandas>=2.3",
     "pandas-ta-classic>=0.6",
     "pydantic>=2.12",
@@ -20,17 +20,18 @@ dependencies = [
     "starlette>=0.52",
     "typer>=0.27",
     "uvicorn>=0.52",
-    "yfinance>=1.6",
+    "yfinance>=1.7",
 ]
 [project.scripts]
 mt = "cli.__main__:app"
 
 [build-system]
-requires = ["hatchling>=1.27"]
+requires = ["hatchling>=1.32"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "pandas-stubs>=2.3",
     "pyright>=1.1",
     "ruff>=0.16",
 ]

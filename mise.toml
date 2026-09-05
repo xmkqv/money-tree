@@ -4,13 +4,15 @@ min_version = "2026.8.11"
 python = "3.13.15"
 uv = "0.12.9"
 node = "26.8.1"
-railway = "5.49.0"
+railway = "5.49.2"
 
 [vars]
 mode = "{% if mise_env %}{{ mise_env | join(sep='') }}{% else %}{{ throw(message='no environment selected: rerun with --env development or --env production') }}{% endif %}"
 
 [env]
 MODE = "{{ vars.mode }}"
+UV_PYTHON = "python3.13"
+UV_PYTHON_PREFERENCE = "only-system"
 
 [tasks.setup]
 run = ["mise install", "uv sync --locked", "npm ci"]
