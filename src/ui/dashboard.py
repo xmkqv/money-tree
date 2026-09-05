@@ -5,7 +5,7 @@ from collections import OrderedDict
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dtime
 from pathlib import Path
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal, NotRequired, TypedDict, cast
 
 import httpx
 from fastapi import APIRouter, Query, Request, Response
@@ -30,29 +30,166 @@ from bot.strategies.shared import (
 from bot.types import (
     POSITION_FRACTION_CAP_MAX,
     STATE_SIGNATURE_SALT,
+    RuntimeEvent,
     RuntimeSnapshot,
+    StrategyName,
     TradingConfiguration,
+    is_strategy_name,
 )
 
-from .alpaca import AlpacaMarketDataClient, AlpacaReadClient
+from .alpaca import AlpacaMarketDataClient, AlpacaReadClient, Bar, EquityPoint, Position
 from .config import WebSettings
-from .ledger import match_cycles, parse_day, sessions, strategy_id, strategy_labels, totals
-from .strategies import entry_windows, strategy_spec
+from .ledger import (
+    UNATTRIBUTED,
+    Cycle,
+    Fill,
+    OpenCycle,
+    Session,
+    Totals,
+    match_cycles,
+    parse_day,
+    sessions,
+    strategy_id,
+    strategy_labels,
+    totals,
+)
+from .strategies import EntryWindow, entry_windows, strategy_spec
 
 
-class ReadCache:
+class BarRow(TypedDict):
+    t: str
+    o: float
+    h: float
+    l: float  # noqa: E741
+    c: float
+    v: float
+
+
+class OpeningRange(TypedDict):
+    high: float
+    low: float
+
+
+class OrbLevels(TypedDict):
+    range: OpeningRange
+    stop: float
+    targets: list[float]
+
+
+class Levels(TypedDict):
+    strategy: str
+    reconstructed: bool
+    range: NotRequired[OpeningRange]
+    stop: NotRequired[float]
+    targets: NotRequired[list[float]]
+    atr: NotRequired[float]
+
+
+class TimeframeRules(TypedDict):
+    bar: str
+    pad_days: int
+    span_max: int
+    warmup_days: int
+
+
+class BotState(TypedDict):
+    status: str
+    stale: bool
+    running: bool
+    reported: bool
+    strategies: list[str]
+    paused: list[str]
+    events: list[RuntimeEvent]
+
+
+class PositionMark(TypedDict):
+    symbol: str
+    side: str
+    qty: float
+    entry: float
+    last: float
+    value: float
+    unreal: float
+    unrealPct: float
+    weight: float
+
+
+class PositionRow(PositionMark):
+    strategy: str
+    opened: str
+    inDate: str | None
+    inMinute: int | None
+    fills: list[Fill]
+
+
+class EquityDay(TypedDict):
+    date: str
+    equity: float
+
+
+class IntradayPoint(TypedDict):
+    t: str
+    equity: float
+
+
+class BenchmarkClose(TypedDict):
+    date: str
+    close: float
+
+
+class Pulse(TypedDict):
+    asOf: str
+    equity: float
+    cash: float
+    buyingPower: float
+    marketValue: float
+    unrealised: float
+    positions: list[PositionMark]
+
+
+class Ledger(TypedDict):
+    asOf: str
+    today: str
+    accountNumber: str
+    status: str
+    marketOpen: bool
+    nextOpen: str
+    invested: float
+    funded: str
+    equity: float
+    lastEquity: float
+    cash: float
+    buyingPower: float
+    marketValue: float
+    unrealised: float
+    positionCapPct: float
+    dailyLossLimitPct: float
+    bot: BotState
+    strategies: list[dict[str, str]]
+    windows: dict[str, EntryWindow]
+    positions: list[PositionRow]
+    trades: list[Cycle]
+    days: list[Session]
+    totals: Totals
+    equityDaily: list[EquityDay]
+    intraday: list[IntradayPoint]
+    intradayDate: str
+    spy: list[BenchmarkClose]
+
+
+class ReadCache[Payload]:
     def __init__(self, ttl_seconds: int) -> None:
         self._ttl = ttl_seconds
         self._lock = asyncio.Lock()
-        self._payload: dict[str, Any] | None = None
+        self._payload: Payload | None = None
         self._stamped_at = 0.0
 
-    def fresh(self) -> dict[str, Any] | None:
+    def fresh(self) -> Payload | None:
         if self._payload is None or time.monotonic() - self._stamped_at > self._ttl:
             return None
         return self._payload
 
-    def store(self, payload: dict[str, Any]) -> None:
+    def store(self, payload: Payload) -> None:
         self._payload = payload
         self._stamped_at = time.monotonic()
 
@@ -64,22 +201,22 @@ class ReadCache:
         return self._lock
 
 
-class BarCache:
+class KeyedCache[Value]:
     def __init__(self, ttl_seconds: int, entries_max: int) -> None:
         self._ttl = ttl_seconds
         self._entries_max = entries_max
-        self._entries: OrderedDict[str, tuple[float, list[dict[str, Any]]]] = OrderedDict()
+        self._entries: OrderedDict[str, tuple[float, Value]] = OrderedDict()
         self._lock = asyncio.Lock()
 
-    def fresh(self, key: str) -> list[dict[str, Any]] | None:
+    def fresh(self, key: str) -> Value | None:
         entry = self._entries.get(key)
         if entry is None or time.monotonic() - entry[0] > self._ttl:
             return None
         self._entries.move_to_end(key)
         return entry[1]
 
-    def store(self, key: str, bars: list[dict[str, Any]]) -> None:
-        self._entries[key] = (time.monotonic(), bars)
+    def store(self, key: str, value: Value) -> None:
+        self._entries[key] = (time.monotonic(), value)
         self._entries.move_to_end(key)
         while len(self._entries) > self._entries_max:
             self._entries.popitem(last=False)
@@ -125,7 +262,7 @@ SIGNATURE_WINDOW_SECONDS = 30
 RUNTIME_BODY_BYTES_MAX = 65_536
 RUNTIME_SIGNATURE_ENVELOPE_BYTES = 51
 RUNTIME_REQUEST_BYTES_MAX = RUNTIME_BODY_BYTES_MAX + RUNTIME_SIGNATURE_ENVELOPE_BYTES
-CHART_TIMEFRAMES: dict[str, dict[str, Any]] = {
+CHART_TIMEFRAMES: dict[str, TimeframeRules] = {
     "5Min": {"bar": "5Min", "pad_days": 1, "span_max": 10, "warmup_days": 5},
     "1Hour": {"bar": "1Hour", "pad_days": 7, "span_max": 90, "warmup_days": 46},
     "1Day": {"bar": "1Day", "pad_days": 120, "span_max": 900, "warmup_days": 300},
@@ -147,15 +284,15 @@ DASHBOARD_HEADERS = {
 }
 
 
-def session_hour_bars(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def session_hour_bars(bars: list[Bar]) -> list[BarRow]:
     if not bars:
         return []
     frame = _bar_frame(bars)
     regular = regular_session(frame)
     if regular.empty:
         return []
-    index = cast(Any, cast(DatetimeIndex, regular.index))
-    starts = session_starts(cast(DatetimeIndex, regular.index))
+    index = cast(DatetimeIndex, regular.index)
+    starts = session_starts(index)
     elapsed = (index - starts) // Timedelta(hours=1)
     folded = (
         cast(Any, regular)
@@ -177,12 +314,12 @@ def session_hour_bars(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, datetime, datetime]:
     rules = CHART_TIMEFRAMES[timeframe]
-    pad = timedelta(days=int(rules["pad_days"]))
+    pad = timedelta(days=rules["pad_days"])
     display = opened - pad
     end = closed + pad
-    if (end - display).days > int(rules["span_max"]):
-        display = end - timedelta(days=int(rules["span_max"]))
-    data = display - timedelta(days=int(rules["warmup_days"]))
+    if (end - display).days > rules["span_max"]:
+        display = end - timedelta(days=rules["span_max"])
+    data = display - timedelta(days=rules["warmup_days"])
     return (
         datetime.combine(data, dtime(0, 0), TRADING_ZONE),
         datetime.combine(display, dtime(0, 0), TRADING_ZONE),
@@ -190,35 +327,33 @@ def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, 
     )
 
 
-def bars_atr(bars: list[dict[str, Any]]) -> float | None:
+def bars_atr(bars: list[Bar]) -> float | None:
     if len(bars) <= PERIOD:
         return None
     frame = _bar_frame(bars).rename(columns={"h": "high", "l": "low", "c": "close"})
     return latest_atr(frame)
 
 
-def opening_range(
-    bars: list[dict[str, Any]], opens: datetime, minutes: int
-) -> tuple[float, float] | None:
+def opening_range(bars: list[Bar], opens: datetime, minutes: int) -> tuple[float, float] | None:
     closes = opens + timedelta(minutes=minutes)
     inside = [bar for bar in bars if opens <= _bar_time(bar) < closes]
     if not inside:
         return None
-    return max(float(bar["h"]) for bar in inside), min(float(bar["l"]) for bar in inside)
+    return max(bar.high for bar in inside), min(bar.low for bar in inside)
 
 
 def orb_levels(
-    strategy: str, direction: int, entry: float, high: float, low: float
-) -> dict[str, Any]:
-    stop = range_stop(cast(Direction, direction), high, low)
+    strategy: StrategyName, direction: Direction, entry: float, high: float, low: float
+) -> OrbLevels:
+    stop = range_stop(direction, high, low)
     risk = abs(entry - stop)
-    multiples = ORB_TARGET_MULTIPLES[cast(Any, strategy)]
+    multiples = ORB_TARGET_MULTIPLES[strategy]
     targets = [entry + direction * risk * multiple for multiple in multiples]
-    return {
-        "range": {"high": round(high, 4), "low": round(low, 4)},
-        "stop": round(stop, 4),
-        "targets": [round(value, 4) for value in targets],
-    }
+    return OrbLevels(
+        range=OpeningRange(high=round(high, 4), low=round(low, 4)),
+        stop=round(stop, 4),
+        targets=[round(value, 4) for value in targets],
+    )
 
 
 def error_response(
@@ -243,29 +378,32 @@ async def build_ledger(
     fallback_configuration: TradingConfiguration,
     snapshot: RuntimeSnapshot | None,
     stale: bool,
-) -> dict[str, Any]:
-    account, positions, fills, orders, daily, intraday, clock = await asyncio.gather(
-        alpaca.account(),
-        alpaca.raw_positions(),
-        alpaca.raw_fills(),
-        alpaca.raw_closed_orders(),
-        alpaca.equity("1A", "1D"),
-        alpaca.equity("1D", "5Min"),
-        alpaca.clock(),
-    )
+) -> Ledger:
+    async with asyncio.TaskGroup() as reads:
+        account_read = reads.create_task(alpaca.account())
+        positions_read = reads.create_task(alpaca.raw_positions())
+        fills_read = reads.create_task(alpaca.raw_fills())
+        orders_read = reads.create_task(alpaca.raw_closed_orders())
+        daily_read = reads.create_task(alpaca.equity("1A", "1D"))
+        intraday_read = reads.create_task(alpaca.equity("1D", "5Min"))
+        clock_read = reads.create_task(alpaca.clock())
 
-    cycles, open_cycles = match_cycles(fills, orders)
-    equity_daily = _equity_series(daily)
-    intraday_points, intraday_date = _intraday_series(intraday)
+    account = account_read.result()
+    positions = positions_read.result()
+    clock = clock_read.result()
 
-    invested = equity_daily[0]["equity"] if equity_daily else float(account["equity"])
+    cycles, open_cycles = match_cycles(fills_read.result(), orders_read.result())
+    equity_daily = _equity_series(daily_read.result())
+    intraday_points, intraday_date = _intraday_series(intraday_read.result())
+
+    invested = equity_daily[0]["equity"] if equity_daily else account.equity
     funded = equity_daily[0]["date"] if equity_daily else ""
-    equity = round(float(account["equity"]), 2)
-    closes = {row["date"]: float(row["equity"]) for row in equity_daily}
+    equity = round(account.equity, 2)
+    closes = {row["date"]: row["equity"] for row in equity_daily}
 
     today = datetime.now(TRADING_ZONE).date().isoformat()
     if not equity_daily or equity_daily[-1]["date"] != today:
-        equity_daily.append({"date": today, "equity": equity})
+        equity_daily.append(EquityDay(date=today, equity=equity))
 
     rows = _position_rows(positions, equity, open_cycles)
     configuration = snapshot.configuration if snapshot else fallback_configuration
@@ -276,22 +414,22 @@ async def build_ledger(
     except httpx.HTTPError:
         bars = []
 
-    return {
-        "asOf": datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
-        "today": today,
-        "accountNumber": str(account["account_number"]),
-        "status": str(account["status"]),
-        "marketOpen": bool(clock["is_open"]),
-        "nextOpen": datetime.fromisoformat(str(clock["next_open"])).strftime("%H:%M ET"),
-        "invested": invested,
-        "funded": datetime.fromisoformat(funded).strftime("%-d %b %Y") if funded else "—",
-        "equity": equity,
-        "lastEquity": round(float(account["last_equity"]), 2),
-        "cash": round(float(account["cash"]), 2),
-        "buyingPower": round(float(account["buying_power"]), 2),
-        "marketValue": round(sum(float(row["value"]) for row in rows), 2),
-        "unrealised": round(sum(float(row["unreal"]) for row in rows), 2),
-        "positionCapPct": round(
+    return Ledger(
+        asOf=datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
+        today=today,
+        accountNumber=account.account_number,
+        status=account.status,
+        marketOpen=clock.is_open,
+        nextOpen=datetime.fromisoformat(clock.next_open).strftime("%H:%M ET"),
+        invested=invested,
+        funded=datetime.fromisoformat(funded).strftime("%-d %b %Y") if funded else "—",
+        equity=equity,
+        lastEquity=round(account.last_equity, 2),
+        cash=round(account.cash, 2),
+        buyingPower=round(account.buying_power, 2),
+        marketValue=round(sum(row["value"] for row in rows), 2),
+        unrealised=round(sum(row["unreal"] for row in rows), 2),
+        positionCapPct=round(
             100
             * min(
                 POSITION_FRACTION_CAP_MAX,
@@ -299,47 +437,52 @@ async def build_ledger(
             ),
             2,
         ),
-        "dailyLossLimitPct": round(100 * configuration.risk_per_day_max, 2),
-        "bot": bot_state(snapshot, stale),
-        "strategies": strategy_labels(),
-        "windows": entry_windows(),
-        "positions": rows,
-        "trades": cycles,
-        "days": sessions(cycles, closes, invested),
-        "totals": totals(cycles),
-        "equityDaily": equity_daily,
-        "intraday": intraday_points,
-        "intradayDate": intraday_date,
-        "spy": [{"date": str(bar["t"])[:10], "close": float(bar["c"])} for bar in bars],
-    }
+        dailyLossLimitPct=round(100 * configuration.risk_per_day_max, 2),
+        bot=bot_state(snapshot, stale),
+        strategies=strategy_labels(),
+        windows=entry_windows(),
+        positions=rows,
+        trades=cycles,
+        days=sessions(cycles, closes, invested),
+        totals=totals(cycles),
+        equityDaily=equity_daily,
+        intraday=intraday_points,
+        intradayDate=intraday_date,
+        spy=[BenchmarkClose(date=bar.at[:10], close=bar.close) for bar in bars],
+    )
 
 
-async def build_pulse(alpaca: AlpacaReadClient) -> dict[str, Any]:
-    account, positions = await asyncio.gather(alpaca.account(), alpaca.raw_positions())
-    equity = round(float(account["equity"]), 2)
+async def build_pulse(alpaca: AlpacaReadClient) -> Pulse:
+    async with asyncio.TaskGroup() as reads:
+        account_read = reads.create_task(alpaca.account())
+        positions_read = reads.create_task(alpaca.raw_positions())
+
+    account = account_read.result()
+    positions = positions_read.result()
+    equity = round(account.equity, 2)
     marks = _position_marks(positions, equity)
-    return {
-        "asOf": datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
-        "equity": equity,
-        "cash": round(float(account["cash"]), 2),
-        "buyingPower": round(float(account["buying_power"]), 2),
-        "marketValue": round(sum(float(mark["value"]) for mark in marks), 2),
-        "unrealised": round(sum(float(mark["unreal"]) for mark in marks), 2),
-        "positions": marks,
-    }
+    return Pulse(
+        asOf=datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
+        equity=equity,
+        cash=round(account.cash, 2),
+        buyingPower=round(account.buying_power, 2),
+        marketValue=round(sum(mark["value"] for mark in marks), 2),
+        unrealised=round(sum(mark["unreal"] for mark in marks), 2),
+        positions=marks,
+    )
 
 
-def bot_state(snapshot: RuntimeSnapshot | None, stale: bool) -> dict[str, Any]:
+def bot_state(snapshot: RuntimeSnapshot | None, stale: bool) -> BotState:
     running = snapshot is not None and snapshot.status == "running" and not stale
-    return {
-        "status": snapshot.status if snapshot else "unknown",
-        "stale": stale,
-        "running": running,
-        "reported": snapshot is not None,
-        "strategies": [strategy_id(name) for name in snapshot.strategies] if snapshot else [],
-        "paused": [strategy_id(name) for name in snapshot.paused] if snapshot else [],
-        "events": list(reversed(snapshot.events)) if snapshot else [],
-    }
+    return BotState(
+        status=snapshot.status if snapshot else "unknown",
+        stale=stale,
+        running=running,
+        reported=snapshot is not None,
+        strategies=[strategy_id(name) for name in snapshot.strategies] if snapshot else [],
+        paused=[strategy_id(name) for name in snapshot.paused] if snapshot else [],
+        events=list(reversed(snapshot.events)) if snapshot else [],
+    )
 
 
 def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeStore) -> APIRouter:
@@ -354,9 +497,10 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         digest_method=hashlib.sha256,
     )
 
-    ledger_cache = ReadCache(LEDGER_TTL_SECONDS)
-    pulse_cache = ReadCache(PULSE_TTL_SECONDS)
-    bar_cache = BarCache(CHART_TTL_SECONDS, CHART_CACHE_MAX)
+    ledger_cache = ReadCache[Ledger](LEDGER_TTL_SECONDS)
+    pulse_cache = ReadCache[Pulse](PULSE_TTL_SECONDS)
+    bar_cache = KeyedCache[list[BarRow]](CHART_TTL_SECONDS, CHART_CACHE_MAX)
+    levels_cache = KeyedCache[Levels](CHART_TTL_SECONDS, CHART_CACHE_MAX)
 
     def alpaca(request: Request) -> AlpacaReadClient:
         return request.state.alpaca
@@ -420,12 +564,15 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
                         )
                         cached = session_hour_bars(half)
                     else:
-                        cached = await market(request).bars(
-                            symbol,
-                            str(CHART_TIMEFRAMES[timeframe]["bar"]),
-                            start.isoformat(),
-                            end.isoformat(),
-                        )
+                        cached = [
+                            _bar_row(bar)
+                            for bar in await market(request).bars(
+                                symbol,
+                                CHART_TIMEFRAMES[timeframe]["bar"],
+                                start.isoformat(),
+                                end.isoformat(),
+                            )
+                        ]
                     bar_cache.store(key, cached)
         return read_response(
             {
@@ -433,17 +580,7 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
                 "timeframe": timeframe,
                 "displayFrom": display.isoformat(),
                 "smaLengths": list(SMA_LENGTHS),
-                "bars": [
-                    {
-                        "t": str(bar["t"]),
-                        "o": float(bar["o"]),
-                        "h": float(bar["h"]),
-                        "l": float(bar["l"]),
-                        "c": float(bar["c"]),
-                        "v": float(bar.get("v") or 0),
-                    }
-                    for bar in cached
-                ],
+                "bars": cached,
             },
             60,
         )
@@ -465,18 +602,19 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
             return error_response("The open date is invalid", 422)
 
         key = f"levels|{symbol}|{strategy}|{side}|{entry}|{opened}"
-        cached = bar_cache.fresh(key)
+        cached = levels_cache.fresh(key)
         if cached is not None:
-            return read_response(cached[0] if cached else {}, 300)
+            return read_response(cached, 300)
 
-        direction = 1 if side == "long" else -1
-        payload: dict[str, Any] = {"strategy": strategy, "reconstructed": True}
+        direction: Direction = 1 if side == "long" else -1
+        payload = Levels(strategy=strategy, reconstructed=True)
         bounds = session_bounds(opened_on)
+        name = strategy if is_strategy_name(strategy) else None
 
-        async with bar_cache.lock:
-            if strategy in ORB_OPENING_MINUTES and bounds is not None:
+        async with levels_cache.lock:
+            if name is not None and name in ORB_OPENING_MINUTES and bounds is not None:
                 opens = bounds[0]
-                minutes = ORB_OPENING_MINUTES[cast(Any, strategy)]
+                minutes = ORB_OPENING_MINUTES[name]
                 session = await market(request).bars(
                     symbol,
                     "5Min",
@@ -486,8 +624,11 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
                 )
                 found = opening_range(session, opens, minutes)
                 if found is not None:
-                    payload.update(orb_levels(strategy, direction, entry, *found))
-            elif strategy in DAILY_STOP_ATR_MULTIPLES:
+                    levels = orb_levels(name, direction, entry, *found)
+                    payload["range"] = levels["range"]
+                    payload["stop"] = levels["stop"]
+                    payload["targets"] = levels["targets"]
+            elif name is not None and name in DAILY_STOP_ATR_MULTIPLES:
                 history = await market(request).bars(
                     symbol,
                     "1Day",
@@ -497,10 +638,10 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
                 )
                 average_range = bars_atr(history)
                 if average_range is not None:
-                    distance = DAILY_STOP_ATR_MULTIPLES[cast(Any, strategy)] * average_range
+                    distance = DAILY_STOP_ATR_MULTIPLES[name] * average_range
                     payload["stop"] = round(entry - direction * distance, 4)
                     payload["atr"] = round(average_range, 4)
-            bar_cache.store(key, [payload])
+            levels_cache.store(key, payload)
         return read_response(payload, 300)
 
     @router.get("/api/strategies")
@@ -598,82 +739,93 @@ def _fingerprint_assets() -> tuple[dict[str, tuple[Path, str]], dict[bytes, byte
 ASSET_ROUTES, ASSET_REWRITES = _fingerprint_assets()
 
 
-def _bar_time(bar: dict[str, Any]) -> datetime:
-    return datetime.fromisoformat(str(bar["t"]).replace("Z", "+00:00")).astimezone(TRADING_ZONE)
+def _bar_time(bar: Bar) -> datetime:
+    return datetime.fromisoformat(bar.at.replace("Z", "+00:00")).astimezone(TRADING_ZONE)
 
 
-def _bar_frame(bars: list[dict[str, Any]]) -> DataFrame:
+def _bar_row(bar: Bar) -> BarRow:
+    return {
+        "t": bar.at,
+        "o": bar.open,
+        "h": bar.high,
+        "l": bar.low,
+        "c": bar.close,
+        "v": bar.volume,
+    }
+
+
+def _bar_frame(bars: list[Bar]) -> DataFrame:
     frame = DataFrame(
         {
-            "o": [float(bar["o"]) for bar in bars],
-            "h": [float(bar["h"]) for bar in bars],
-            "l": [float(bar["l"]) for bar in bars],
-            "c": [float(bar["c"]) for bar in bars],
-            "v": [float(bar.get("v") or 0) for bar in bars],
+            "o": [bar.open for bar in bars],
+            "h": [bar.high for bar in bars],
+            "l": [bar.low for bar in bars],
+            "c": [bar.close for bar in bars],
+            "v": [bar.volume for bar in bars],
         },
         index=DatetimeIndex([_bar_time(bar) for bar in bars], tz=TRADING_ZONE),
     )
     return frame.sort_index()
 
 
-def _funded_points(history: dict[str, Any]) -> list[tuple[datetime, float]]:
+def _funded_points(points: list[EquityPoint]) -> list[tuple[datetime, float]]:
     return [
-        (datetime.fromtimestamp(int(point["timestamp"]), TRADING_ZONE), float(point["equity"]))
-        for point in history["points"]
-        if point["equity"]
+        (datetime.fromtimestamp(point.timestamp, TRADING_ZONE), point.equity)
+        for point in points
+        if point.equity
     ]
 
 
-def _equity_series(history: dict[str, Any]) -> list[dict[str, Any]]:
+def _equity_series(points: list[EquityPoint]) -> list[EquityDay]:
     return [
-        {"date": when.date().isoformat(), "equity": round(value, 2)}
-        for when, value in _funded_points(history)
+        EquityDay(date=when.date().isoformat(), equity=round(value, 2))
+        for when, value in _funded_points(points)
     ]
 
 
-def _intraday_series(history: dict[str, Any]) -> tuple[list[dict[str, Any]], str]:
-    points = _funded_points(history)
-    rows = [{"t": when.strftime("%H:%M"), "equity": round(value, 2)} for when, value in points]
-    return rows, points[0][0].date().isoformat() if points else ""
+def _intraday_series(points: list[EquityPoint]) -> tuple[list[IntradayPoint], str]:
+    funded = _funded_points(points)
+    rows = [
+        IntradayPoint(t=when.strftime("%H:%M"), equity=round(value, 2)) for when, value in funded
+    ]
+    return rows, funded[0][0].date().isoformat() if funded else ""
 
 
-def _position_marks(raw: list[dict[str, Any]], equity: float) -> list[dict[str, Any]]:
-    marks: list[dict[str, Any]] = []
-    for item in raw:
-        value = float(item["market_value"])
-        marks.append(
-            {
-                "symbol": str(item["symbol"]),
-                "side": "long" if item["side"] == "long" else "short",
-                "qty": round(abs(float(item["qty"])), 4),
-                "entry": round(float(item["avg_entry_price"]), 4),
-                "last": round(float(item["current_price"]), 4),
-                "value": round(value, 2),
-                "unreal": round(float(item["unrealized_pl"]), 2),
-                "unrealPct": round(float(item["unrealized_plpc"]) * 100, 2),
-                "weight": round(value / equity * 100, 2) if equity else 0.0,
-            }
+def _position_marks(raw: list[Position], equity: float) -> list[PositionMark]:
+    marks = [
+        PositionMark(
+            symbol=item.symbol,
+            side="long" if item.side == "long" else "short",
+            qty=round(abs(item.qty), 4),
+            entry=round(item.avg_entry_price, 4),
+            last=round(item.current_price, 4),
+            value=round(item.market_value, 2),
+            unreal=round(item.unrealized_pl, 2),
+            unrealPct=round(item.unrealized_plpc * 100, 2),
+            weight=round(item.market_value / equity * 100, 2) if equity else 0.0,
         )
-    marks.sort(key=lambda mark: -float(mark["value"]))
+        for item in raw
+    ]
+    marks.sort(key=lambda mark: -mark["value"])
     return marks
 
 
 def _position_rows(
-    raw: list[dict[str, Any]],
+    raw: list[Position],
     equity: float,
-    open_cycles: dict[str, Any],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
+    open_cycles: dict[str, OpenCycle],
+) -> list[PositionRow]:
+    rows: list[PositionRow] = []
     for mark in _position_marks(raw, equity):
-        held = open_cycles.get(mark["symbol"], {})
+        held = open_cycles.get(mark["symbol"])
         rows.append(
-            {
+            PositionRow(
                 **mark,
-                "strategy": held.get("strategy", "unattributed"),
-                "opened": held.get("opened", "—"),
-                "inDate": held.get("inDate"),
-                "inMinute": held.get("inMinute"),
-                "fills": held.get("fills", []),
-            }
+                strategy=held["strategy"] if held else UNATTRIBUTED,
+                opened=held["opened"] if held else "—",
+                inDate=held["inDate"] if held else None,
+                inMinute=held["inMinute"] if held else None,
+                fills=held["fills"] if held else [],
+            )
         )
     return rows

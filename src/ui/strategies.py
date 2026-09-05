@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta
-from typing import Any, TypedDict
+from typing import TypedDict
 
 from bot.strategies.daily_base import (
     DAILY_EARNINGS_EXIT_LEAD_MINUTES,
@@ -56,6 +56,16 @@ class StrategyCard(TypedDict):
     rows: list[Row]
 
 
+class StrategySpec(TypedDict):
+    fields: list[str]
+    strategies: list[StrategyCard]
+    portfolio: list[Row]
+    configured: bool
+
+
+EntryWindow = TypedDict("EntryWindow", {"from": str, "to": str})
+
+
 FIELDS = [
     "Market",
     "Sentiment",
@@ -86,7 +96,7 @@ STRATEGY_KINDS: dict[StrategyName, str] = {
 }
 
 
-def entry_windows() -> dict[str, dict[str, str]]:
+def entry_windows() -> dict[str, EntryWindow]:
     opens, closes = upcoming_session_bounds(date.today())
     scan_end = opens + timedelta(minutes=ORB_SCAN_MINUTES)
     windows = {
@@ -95,12 +105,12 @@ def entry_windows() -> dict[str, dict[str, str]]:
     }
     windows.update({strategy: (opens, closes) for strategy in DAILY_STOP_ATR_MULTIPLES})
     return {
-        strategy: {"from": f"{window[0]:%H:%M}", "to": f"{window[1]:%H:%M}"}
+        strategy: EntryWindow({"from": f"{window[0]:%H:%M}", "to": f"{window[1]:%H:%M}"})
         for strategy, window in windows.items()
     }
 
 
-def strategy_spec(configuration: TradingConfiguration, *, configured: bool) -> dict[str, Any]:
+def strategy_spec(configuration: TradingConfiguration, *, configured: bool) -> StrategySpec:
     per_trade = configuration.risk_per_trade_max
     daily_loss = configuration.risk_per_day_max
     opens, closes = upcoming_session_bounds(date.today())
@@ -119,12 +129,12 @@ def strategy_spec(configuration: TradingConfiguration, *, configured: bool) -> d
         )
         for strategy in STRATEGY_SHORT_LABELS
     ]
-    return {
-        "fields": FIELDS,
-        "strategies": cards,
-        "portfolio": portfolio_rules(daily_loss),
-        "configured": configured,
-    }
+    return StrategySpec(
+        fields=FIELDS,
+        strategies=cards,
+        portfolio=portfolio_rules(daily_loss),
+        configured=configured,
+    )
 
 
 def portfolio_rules(daily_loss: float) -> list[Row]:

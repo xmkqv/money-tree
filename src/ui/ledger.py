@@ -2,11 +2,14 @@ from bisect import bisect_left
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, TypedDict
+from typing import TypedDict
 from zoneinfo import ZoneInfo
 
 from bot.order_tag import find_order_tag
 from bot.types import STRATEGY_LABELS, StrategyName
+
+from .alpaca import ClosedOrder
+from .alpaca import Fill as AlpacaFill
 
 
 class Fill(TypedDict):
@@ -39,6 +42,15 @@ class OpenCycle(TypedDict):
     inDate: str
     inMinute: int
     fills: list[Fill]
+
+
+class Totals(TypedDict):
+    n: int
+    wins: int
+    losses: int
+    net: float
+    gross: float
+    bleed: float
 
 
 class Session(TypedDict):
@@ -91,23 +103,22 @@ def strategy_labels() -> list[dict[str, str]]:
 
 
 def match_cycles(
-    fills: list[dict[str, Any]],
-    orders: list[dict[str, Any]],
+    fills: list[AlpacaFill],
+    orders: list[ClosedOrder],
 ) -> tuple[list[Cycle], dict[str, OpenCycle]]:
     strategies: dict[str, StrategyName | None] = {
-        str(order["id"]): _order_strategy(str(order.get("client_order_id") or ""))
-        for order in orders
+        order.id: _order_strategy(order.client_order_id or "") for order in orders
     }
     held: defaultdict[str, float] = defaultdict(float)
     live: dict[str, _LiveCycle] = {}
     cycles: list[Cycle] = []
 
-    for fill in sorted(fills, key=lambda row: str(row["transaction_time"])):
-        symbol = str(fill["symbol"])
-        quantity = float(fill["qty"])
-        price = float(fill["price"])
-        when = _trading_time(str(fill["transaction_time"]))
-        signed = quantity if fill["side"] == "buy" else -quantity
+    for fill in sorted(fills, key=lambda row: row.transaction_time):
+        symbol = fill.symbol
+        quantity = fill.qty
+        price = fill.price
+        when = _trading_time(fill.transaction_time)
+        signed = quantity if fill.side == "buy" else -quantity
         held[symbol] += signed
 
         cycle = live.get(symbol)
@@ -115,7 +126,7 @@ def match_cycles(
             cycle = live[symbol] = _LiveCycle(
                 direction=1 if signed > 0 else -1,
                 opened=when,
-                strategy=strategies.get(str(fill["order_id"])),
+                strategy=strategies.get(fill.order_id),
             )
 
         entering = (signed > 0) == (cycle.direction > 0)
@@ -132,7 +143,7 @@ def match_cycles(
             cycle.in_quantity += quantity
             cycle.in_value += quantity * price
             if cycle.strategy is None:
-                cycle.strategy = strategies.get(str(fill["order_id"]))
+                cycle.strategy = strategies.get(fill.order_id)
         else:
             cycle.out_quantity += quantity
             cycle.out_value += quantity * price
@@ -172,17 +183,17 @@ def match_cycles(
     return cycles, still_open
 
 
-def totals(cycles: list[Cycle]) -> dict[str, Any]:
+def totals(cycles: list[Cycle]) -> Totals:
     wins = [cycle for cycle in cycles if cycle["pnl"] > 0]
     losses = [cycle for cycle in cycles if cycle["pnl"] <= 0]
-    return {
-        "n": len(cycles),
-        "wins": len(wins),
-        "losses": len(losses),
-        "net": round(sum(cycle["pnl"] for cycle in cycles), 2),
-        "gross": round(sum(cycle["pnl"] for cycle in wins), 2),
-        "bleed": round(abs(sum(cycle["pnl"] for cycle in losses)), 2),
-    }
+    return Totals(
+        n=len(cycles),
+        wins=len(wins),
+        losses=len(losses),
+        net=round(sum(cycle["pnl"] for cycle in cycles), 2),
+        gross=round(sum(cycle["pnl"] for cycle in wins), 2),
+        bleed=round(abs(sum(cycle["pnl"] for cycle in losses)), 2),
+    )
 
 
 def sessions(cycles: list[Cycle], closes: dict[str, float], opening: float) -> list[Session]:
