@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Collection, Sequence
 from datetime import UTC, date, datetime
 from decimal import ROUND_DOWN, Decimal
@@ -25,12 +27,16 @@ type Direction = Literal[-1, 1]
 
 PERIOD = 14
 NOTIONAL_USD_MIN = 1.0
+MARKET_CAP_USD_MIN = 500_000_000.0
+PRICE_USD_MIN = 5.0
+TURNOVER_USD_MIN = 20_000_000.0
 MARKET_SESSIONS = 20
+TREND_SESSIONS = 50
 MOMENTUM_SESSIONS = 200
 MOMENTUM_RSI_MIN = 50.0
 MOMENTUM_ADX_MIN = 25.0
 TFB_ADX_MIN = 20.0
-TFB_AVERAGE_LAG_SESSIONS = 4
+TFB_AVERAGE_LAG_SESSIONS = 3
 EXIT_RSI_MAX = 50.0
 EARNINGS_BLOCK_DAYS = 5
 XNYS = exchange_calendars.get_calendar("XNYS")
@@ -172,7 +178,7 @@ def average_dollar_volume(frame: DataFrame, sessions: int) -> float:
     return traded if isfinite(traded) and traded > 0.0 else 0.0
 
 
-def market_is_rising(frame: DataFrame) -> bool:
+def is_market_rising(frame: DataFrame) -> bool:
     close = frame["close"]
     if close.count() < MARKET_SESSIONS:
         return False
@@ -191,7 +197,7 @@ def does_momentum_enter(frame: DataFrame) -> bool:
     if close.count() < MOMENTUM_SESSIONS:
         return False
     average_20 = ta_sma(close, length=MARKET_SESSIONS, talib=False)
-    average_50 = ta_sma(close, length=50, talib=False)
+    average_50 = ta_sma(close, length=TREND_SESSIONS, talib=False)
     average_200 = ta_sma(close, length=MOMENTUM_SESSIONS, talib=False)
     strength = _indicator_series(ta_rsi(close, length=PERIOD, talib=False), f"RSI_{PERIOD}", 1)
     directional = _indicator_column(_adx(frame), f"ADX_{PERIOD}", 1)
@@ -227,17 +233,18 @@ def does_momentum_enter(frame: DataFrame) -> bool:
 
 def does_tfb_enter(frame: DataFrame) -> bool:
     close = frame["close"]
-    average_50 = ta_sma(close, length=50, talib=False)
+    average_50 = ta_sma(close, length=TREND_SESSIONS, talib=False)
     directional = _indicator_column(_adx(frame), f"ADX_{PERIOD}", 1)
     if not isinstance(average_50, Series) or directional is None:
         return False
-    if average_50.tail(TFB_AVERAGE_LAG_SESSIONS).count() < TFB_AVERAGE_LAG_SESSIONS:
+    span = TFB_AVERAGE_LAG_SESSIONS + 1
+    if average_50.tail(span).count() < span:
         return False
     row = _finite_row(
         [
             _finite_value(close),
             _finite_value(average_50),
-            _finite_value(average_50, -TFB_AVERAGE_LAG_SESSIONS),
+            _finite_value(average_50, -span),
             _finite_value(directional),
             _finite_value(frame["high"], -2),
         ]

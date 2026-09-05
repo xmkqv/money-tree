@@ -30,8 +30,8 @@ from bot.strategies.shared import (
 from bot.types import (
     POSITION_FRACTION_CAP_MAX,
     STATE_SIGNATURE_SALT,
-    RuntimeEvent,
-    RuntimeSnapshot,
+    StateEvent,
+    StateSnapshot,
     StrategyName,
     TradingConfiguration,
     is_strategy_name,
@@ -42,7 +42,7 @@ from .config import WebSettings
 from .ledger import (
     UNATTRIBUTED,
     Cycle,
-    Fill,
+    FillRow,
     OpenCycle,
     Session,
     Totals,
@@ -99,7 +99,7 @@ class BotState(TypedDict):
     reported: bool
     strategies: list[str]
     paused: list[str]
-    events: list[RuntimeEvent]
+    events: list[StateEvent]
 
 
 class PositionMark(TypedDict):
@@ -119,7 +119,7 @@ class PositionRow(PositionMark):
     opened: str
     inDate: str | None
     inMinute: int | None
-    fills: list[Fill]
+    fills: list[FillRow]
 
 
 class EquityDay(TypedDict):
@@ -226,11 +226,11 @@ class KeyedCache[Value]:
         return self._lock
 
 
-class RuntimeStore:
+class StateStore:
     def __init__(self) -> None:
-        self._snapshot: RuntimeSnapshot | None = None
+        self._snapshot: StateSnapshot | None = None
 
-    def publish(self, snapshot: RuntimeSnapshot) -> bool:
+    def publish(self, snapshot: StateSnapshot) -> bool:
         current = self._snapshot
         if current is not None:
             if snapshot.run_id == current.run_id and snapshot.sequence <= current.sequence:
@@ -240,7 +240,7 @@ class RuntimeStore:
         self._snapshot = snapshot
         return True
 
-    def read(self) -> RuntimeSnapshot | None:
+    def read(self) -> StateSnapshot | None:
         return self._snapshot
 
 
@@ -259,9 +259,9 @@ NO_STORE = {"Cache-Control": "no-store"}
 IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
 HEARTBEAT_TIMEOUT = timedelta(seconds=15)
 SIGNATURE_WINDOW_SECONDS = 30
-RUNTIME_BODY_BYTES_MAX = 65_536
-RUNTIME_SIGNATURE_ENVELOPE_BYTES = 51
-RUNTIME_REQUEST_BYTES_MAX = RUNTIME_BODY_BYTES_MAX + RUNTIME_SIGNATURE_ENVELOPE_BYTES
+STATE_BODY_BYTES_MAX = 65_536
+STATE_SIGNATURE_ENVELOPE_BYTES = 51
+STATE_REQUEST_BYTES_MAX = STATE_BODY_BYTES_MAX + STATE_SIGNATURE_ENVELOPE_BYTES
 CHART_TIMEFRAMES: dict[str, TimeframeRules] = {
     "5Min": {"bar": "5Min", "pad_days": 1, "span_max": 10, "warmup_days": 5},
     "1Hour": {"bar": "1Hour", "pad_days": 7, "span_max": 90, "warmup_days": 46},
@@ -376,7 +376,7 @@ async def build_ledger(
     alpaca: AlpacaReadClient,
     market: AlpacaMarketDataClient,
     fallback_configuration: TradingConfiguration,
-    snapshot: RuntimeSnapshot | None,
+    snapshot: StateSnapshot | None,
     stale: bool,
 ) -> Ledger:
     async with asyncio.TaskGroup() as reads:
@@ -472,7 +472,7 @@ async def build_pulse(alpaca: AlpacaReadClient) -> Pulse:
     )
 
 
-def bot_state(snapshot: RuntimeSnapshot | None, stale: bool) -> BotState:
+def bot_state(snapshot: StateSnapshot | None, stale: bool) -> BotState:
     running = snapshot is not None and snapshot.status == "running" and not stale
     return BotState(
         status=snapshot.status if snapshot else "unknown",
@@ -485,7 +485,7 @@ def bot_state(snapshot: RuntimeSnapshot | None, stale: bool) -> BotState:
     )
 
 
-def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeStore) -> APIRouter:
+def dashboard_router(configuration: WebSettings, state_store: StateStore) -> APIRouter:
     router = APIRouter()
     mode = b"PAPER" if configuration.alpaca_is_paper else b"LIVE"
     dashboard_html = DASHBOARD_HTML.replace(b"{{ ALPACA_MODE }}", mode)
@@ -508,8 +508,8 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
     def market(request: Request) -> AlpacaMarketDataClient:
         return request.state.market
 
-    def runtime_state() -> tuple[RuntimeSnapshot | None, bool]:
-        snapshot = runtime_store.read()
+    def read_state() -> tuple[StateSnapshot | None, bool]:
+        snapshot = state_store.read()
         stale = snapshot is None or datetime.now(UTC) - snapshot.heartbeat_at > HEARTBEAT_TIMEOUT
         return snapshot, stale
 
@@ -646,7 +646,7 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
 
     @router.get("/api/strategies")
     async def strategies() -> JSONResponse:
-        snapshot, _ = runtime_state()
+        snapshot, _ = read_state()
         reported = snapshot is not None
         active_configuration = (
             snapshot.configuration if snapshot else configuration.trading_configuration
@@ -655,7 +655,7 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
 
     @router.get("/api/ledger")
     async def ledger(request: Request) -> JSONResponse:
-        snapshot, stale = runtime_state()
+        snapshot, stale = read_state()
         cached = ledger_cache.fresh()
         if cached is None:
             async with ledger_cache.lock:
@@ -690,13 +690,13 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         return read_response(cached, 0)
 
     @router.post("/internal/state", status_code=204)
-    async def publish_runtime(request: Request) -> Response:
+    async def publish_state(request: Request) -> Response:
         chunks: list[bytes] = []
         size = 0
         async for chunk in request.stream():
             size += len(chunk)
-            if size > RUNTIME_REQUEST_BYTES_MAX:
-                return error_response("Runtime snapshot is too large", 413)
+            if size > STATE_REQUEST_BYTES_MAX:
+                return error_response("State snapshot is too large", 413)
             chunks.append(chunk)
         try:
             body, signed_at = signer.unsign(
@@ -705,20 +705,20 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
                 return_timestamp=True,
             )
         except SignatureExpired:
-            return error_response("Runtime signature has expired", 401)
+            return error_response("State signature has expired", 401)
         except BadSignature:
-            return error_response("Runtime signature is invalid", 401)
-        if len(body) > RUNTIME_BODY_BYTES_MAX:
-            return error_response("Runtime snapshot is too large", 413)
+            return error_response("State signature is invalid", 401)
+        if len(body) > STATE_BODY_BYTES_MAX:
+            return error_response("State snapshot is too large", 413)
         try:
-            snapshot = RuntimeSnapshot.model_validate_json(body)
+            snapshot = StateSnapshot.model_validate_json(body)
         except ValidationError:
-            return error_response("Runtime snapshot is invalid", 422)
+            return error_response("State snapshot is invalid", 422)
         drift = abs((snapshot.heartbeat_at - signed_at).total_seconds())
         if snapshot.started_at > snapshot.heartbeat_at or drift > SIGNATURE_WINDOW_SECONDS:
-            return error_response("Runtime snapshot is invalid", 422)
-        if not runtime_store.publish(snapshot):
-            return error_response("Runtime snapshot is not new", 409)
+            return error_response("State snapshot is invalid", 422)
+        if not state_store.publish(snapshot):
+            return error_response("State snapshot is not new", 409)
         return Response(status_code=204, headers=NO_STORE)
 
     return router

@@ -1,6 +1,6 @@
 import signal
 
-from .broker import build_alpaca_broker
+from .broker import alpaca_broker
 from .config import settings
 from .export import StateExporter
 from .types import StrategyName, published_roster
@@ -24,7 +24,7 @@ def run(strategy_names: list[StrategyName]) -> None:
     exporter.publish("starting", "run", "info", "Trading run is starting")
     try:
         parameters = {**configuration.model_dump(), "strategies": strategy_names}
-        strategy = Strategy(broker=build_alpaca_broker(), parameters=parameters, name="Portfolio")
+        strategy = Strategy(broker=alpaca_broker(), parameters=parameters, name="Portfolio")
         strategy.exporter = exporter
         trader = Trader()
         trader.add_strategy(strategy)

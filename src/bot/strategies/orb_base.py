@@ -7,7 +7,7 @@ from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
 from bot.types import StrategyName
 
-from .shared import TRADING_ZONE, Direction, regular_session
+from .shared import PRICE_USD_MIN, TRADING_ZONE, TURNOVER_USD_MIN, Direction, regular_session
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,8 +16,6 @@ class SessionVolume:
     turnover: float
 
 
-ORB_TURNOVER_USD_MIN = 20_000_000.0
-ORB_PRICE_USD_MIN = 5.0
 ORB_RANGE_FRACTION_MIN = 0.004
 ORB_STOP_FRACTION_MIN = 0.01
 ORB_STOP_FRACTION_MAX = 0.05
@@ -51,7 +49,7 @@ def range_break(high: float, low: float, close: float) -> Direction | None:
 
 def is_orb_setup_ready(high: float, low: float, close: float) -> bool:
     direction = range_break(high, low, close)
-    if direction is None or close < ORB_PRICE_USD_MIN:
+    if direction is None or close < PRICE_USD_MIN:
         return False
     if high - low < ORB_RANGE_FRACTION_MIN * close:
         return False
@@ -118,4 +116,4 @@ def is_relative_volume_ready(
     volume = session_volume(frame, day, clock)
     if volume is None:
         return False
-    return volume.turnover >= ORB_TURNOVER_USD_MIN and volume.ratio >= multiple
+    return volume.turnover >= TURNOVER_USD_MIN and volume.ratio >= multiple

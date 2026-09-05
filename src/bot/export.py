@@ -11,11 +11,12 @@ import httpx
 from itsdangerous import TimestampSigner
 
 from .types import (
+    EVENTS_MAX,
     STATE_SIGNATURE_SALT,
     EventLevel,
     RunStatus,
-    RuntimeEvent,
-    RuntimeSnapshot,
+    StateEvent,
+    StateSnapshot,
     TradingConfiguration,
 )
 
@@ -45,9 +46,9 @@ class StateExporter:
         self.run_id = uuid4()
         self.started_at = datetime.now(UTC)
         self.status: RunStatus = "starting"
-        self.events: list[RuntimeEvent] = []
+        self.events: list[StateEvent] = []
         self.sequence = 0
-        self.pending: queue.Queue[RuntimeSnapshot] = queue.Queue(maxsize=1)
+        self.pending: queue.Queue[StateSnapshot] = queue.Queue(maxsize=1)
         self.stopping = threading.Event()
         self.lock = threading.Lock()
         self.thread = threading.Thread(target=self._export, name="state-exporter", daemon=True)
@@ -68,7 +69,7 @@ class StateExporter:
             self.status = status
             self.sequence += 1
             self.events.append(
-                RuntimeEvent(
+                StateEvent(
                     kind=kind,
                     occurred_at=datetime.now(UTC),
                     level=level,
@@ -76,7 +77,7 @@ class StateExporter:
                     strategy=strategy,
                 )
             )
-            self.events = self.events[-50:]
+            self.events = self.events[-EVENTS_MAX:]
             with contextlib.suppress(queue.Empty):
                 self.pending.get_nowait()
             self.pending.put_nowait(self._snapshot())
@@ -89,8 +90,8 @@ class StateExporter:
         self.stopping.set()
         self.thread.join(timeout=5)
 
-    def _snapshot(self) -> RuntimeSnapshot:
-        return RuntimeSnapshot(
+    def _snapshot(self) -> StateSnapshot:
+        return StateSnapshot(
             run_id=self.run_id,
             sequence=self.sequence,
             status=self.status,
@@ -117,7 +118,7 @@ class StateExporter:
                 if self.stopping.is_set() and self.pending.empty():
                     return
 
-    def _send(self, client: httpx.Client, snapshot: RuntimeSnapshot) -> None:
+    def _send(self, client: httpx.Client, snapshot: StateSnapshot) -> None:
         body = self.signer.sign(snapshot.model_dump_json().encode())
         try:
             response = client.post(

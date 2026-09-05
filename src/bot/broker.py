@@ -1,7 +1,7 @@
 from .config import settings
 
 
-def build_alpaca_broker() -> object:
+def alpaca_broker() -> object:
     from lumibot.brokers import Alpaca
 
     configuration: dict[str, str | bool] = {

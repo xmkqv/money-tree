@@ -32,7 +32,6 @@ from .strategies.orb_base import (
     ORB_ENTRY_EXTENSION_MAX,
     ORB_OPENING_MINUTES,
     ORB_POSITIONS_MAX,
-    ORB_PRICE_USD_MIN,
     ORB_RISK_MAX,
     ORB_SCAN_MINUTES,
     ORB_SIGNAL_CANDLES_MAX,
@@ -40,14 +39,16 @@ from .strategies.orb_base import (
     ORB_TARGET_MULTIPLES,
     ORB_TRAIL_ATR_MULTIPLE,
     ORB_TRAIL_BARS_MIN,
-    ORB_TURNOVER_USD_MIN,
     ORB_VOLUME_MULTIPLES,
     is_orb_setup_ready,
     is_relative_volume_ready,
     round_stop,
 )
 from .strategies.shared import (
+    MARKET_CAP_USD_MIN,
+    PRICE_USD_MIN,
     TRADING_ZONE,
+    TURNOVER_USD_MIN,
     Direction,
     does_momentum_enter,
     does_signal_exit,
@@ -59,10 +60,10 @@ from .strategies.shared import (
     is_earnings_blocked,
     is_earnings_exit_due,
     is_fractional_allowed,
+    is_market_rising,
     last_close,
     latest_atr,
     latest_dollar_volume,
-    market_is_rising,
     next_stop,
     normalize_ohlcv,
     quantity_value,
@@ -138,8 +139,6 @@ DATA_FEEDS: dict[str, DataFeed] = {
 DAILY_FEED = DataFeed.SIP
 SYMBOLS_PER_REQUEST = 200
 ORDERS_PER_REQUEST = 500
-UNIVERSE_CAP_USD_MIN = 500_000_000.0
-UNIVERSE_TURNOVER_USD_MIN = ORB_TURNOVER_USD_MIN
 UNIVERSE_HISTORY_DAYS = 390
 UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
 PREPARATION_ATTEMPTS_MAX = 2
@@ -499,7 +498,7 @@ class Strategy(StrategyBase):
             "and",
             [
                 Query("eq", ["region", "us"]),
-                Query("gte", ["intradaymarketcap", UNIVERSE_CAP_USD_MIN]),
+                Query("gte", ["intradaymarketcap", MARKET_CAP_USD_MIN]),
             ],
         )
         quotes: list[dict[str, Any]] = []
@@ -537,9 +536,9 @@ class Strategy(StrategyBase):
                 symbol
                 for symbol, cap, volume, price in rows
                 if symbol in assets
-                and cap >= UNIVERSE_CAP_USD_MIN
-                and price >= ORB_PRICE_USD_MIN
-                and volume * price >= UNIVERSE_TURNOVER_USD_MIN
+                and cap >= MARKET_CAP_USD_MIN
+                and price >= PRICE_USD_MIN
+                and volume * price >= TURNOVER_USD_MIN
             }
         )
 
@@ -616,7 +615,7 @@ class Strategy(StrategyBase):
         if market_frame is None:
             return
         market = self._completed(market_frame, now)
-        if not market_is_rising(market):
+        if not is_market_rising(market):
             self._record_event("market.stalled", "warning", "SPX is not above its 20-day average")
             self._daily_candidates = {}
             self._daily_scanned_on = now.date()

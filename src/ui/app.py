@@ -12,7 +12,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from .alpaca import DATA_API_URL, AlpacaMarketDataClient, AlpacaReadClient, alpaca_api_url
 from .auth import RailwayOAuthClient
 from .config import WebSettings
-from .dashboard import NO_STORE, RuntimeStore, create_dashboard_router, error_response
+from .dashboard import NO_STORE, StateStore, dashboard_router, error_response
 
 
 PUBLIC_PATHS = frozenset({"/healthz", "/login", "/auth/callback", "/internal/state"})
@@ -141,6 +141,6 @@ def create_app() -> FastAPI:
             status_code=204, headers={**NO_STORE, "Clear-Site-Data": '"cache", "storage"'}
         )
 
-    app.include_router(create_dashboard_router(configuration, RuntimeStore()))
+    app.include_router(dashboard_router(configuration, StateStore()))
 
     return app

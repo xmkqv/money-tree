@@ -12,7 +12,6 @@ from bot.strategies.orb_base import (
     ORB_HISTORY_SESSIONS,
     ORB_OPENING_MINUTES,
     ORB_POSITIONS_MAX,
-    ORB_PRICE_USD_MIN,
     ORB_RANGE_FRACTION_MIN,
     ORB_RISK_MAX,
     ORB_SCAN_MINUTES,
@@ -22,21 +21,22 @@ from bot.strategies.orb_base import (
     ORB_TARGET_MULTIPLES,
     ORB_TRAIL_ATR_MULTIPLE,
     ORB_TRAIL_BARS_MIN,
-    ORB_TURNOVER_USD_MIN,
     ORB_VOLUME_MULTIPLES,
 )
-from bot.strategies.shared import NOTIONAL_USD_MIN, PERIOD, upcoming_session_bounds
-from bot.strategies.tfb_50 import (
-    TFB_POSITIONS_MAX,
-    TFB_PRICE_USD_MIN,
-    TFB_RISK_MAX,
-    TFB_TURNOVER_SESSIONS,
-    TFB_TURNOVER_USD_MIN,
+from bot.strategies.shared import (
+    MARKET_CAP_USD_MIN,
+    NOTIONAL_USD_MIN,
+    PERIOD,
+    PRICE_USD_MIN,
+    TURNOVER_USD_MIN,
+    upcoming_session_bounds,
 )
+from bot.strategies.tfb_50 import TFB_POSITIONS_MAX, TFB_RISK_MAX, TFB_TURNOVER_SESSIONS
 from bot.types import (
     POSITION_FRACTION_CAP_MAX,
     POSITIONS_MAX,
     STRATEGY_LABELS,
+    STRATEGY_SHORT_LABELS,
     StrategyName,
     TradingConfiguration,
 )
@@ -81,13 +81,6 @@ FIELDS = [
     "Exit Rule",
     "Emergency Exit",
 ]
-UNIVERSE_CAP_USD_MIN = 500_000_000.0
-STRATEGY_SHORT_LABELS: dict[StrategyName, str] = {
-    "orb": "ORB5",
-    "orb_momentum": "ORB10",
-    "sma": "Momentum SMA",
-    "tfb_50": "TFB-50",
-}
 STRATEGY_KINDS: dict[StrategyName, str] = {
     "orb": "Intraday breakout",
     "orb_momentum": "Intraday breakout",
@@ -183,15 +176,15 @@ def _pct(fraction: float) -> str:
 
 
 UNIVERSE = (
-    f"US equities screened daily: market cap {_millions(UNIVERSE_CAP_USD_MIN)} or more, share "
-    f"price ${ORB_PRICE_USD_MIN:.0f} or more, 3-month average daily turnover "
-    f"{_millions(ORB_TURNOVER_USD_MIN)} or more, and tradable and fractionable at Alpaca."
+    f"US equities screened daily: market cap {_millions(MARKET_CAP_USD_MIN)} or more, share "
+    f"price ${PRICE_USD_MIN:.0f} or more, 3-month average daily turnover "
+    f"{_millions(TURNOVER_USD_MIN)} or more, and tradable and fractionable at Alpaca."
 )
 
 TFB_UNIVERSE = (
     f"{UNIVERSE} This strategy then screens that list again on its own floors: share price "
-    f"${TFB_PRICE_USD_MIN:.0f} or more, and turnover averaging "
-    f"{_millions(TFB_TURNOVER_USD_MIN)} or "
+    f"${PRICE_USD_MIN:.0f} or more, and turnover averaging "
+    f"{_millions(TURNOVER_USD_MIN)} or "
     f"more across the last {TFB_TURNOVER_SESSIONS} completed sessions — the value actually "
     "traded, not a share count against today's price. A symbol whose sessions cannot be read "
     "does not pass."
@@ -213,7 +206,7 @@ def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: date
     confirmation = (
         f"Volume traded up to the signal candle's close is at least {volume_multiple:g}x the "
         f"{ORB_HISTORY_SESSIONS}-session average at the same time of day, and that average "
-        f"session turns over at least {_millions(ORB_TURNOVER_USD_MIN)}. "
+        f"session turns over at least {_millions(TURNOVER_USD_MIN)}. "
         f"All {ORB_HISTORY_SESSIONS} earlier sessions "
         "must be there to compare against — a shorter history is not a weaker signal, it is "
         "no confirmation at all, and the breakout is passed over. The reading is taken as the "
@@ -332,7 +325,7 @@ def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: date
             field="Max Risk",
             value=f"{_pct(risk_cap)} of account equity per trade"
             + (
-                f" — this strategy states its own {_pct(ORB_RISK_MAX)} in the register, so "
+                f" — this strategy states its own {_pct(ORB_RISK_MAX)} in the spec, so "
                 f"that governs instead of the configured {_pct(per_trade)}."
                 if strategy == "orb"
                 else " (the configured per-trade limit; this strategy states none of its own)."
@@ -404,7 +397,7 @@ def _daily(strategy: StrategyName, per_trade: float, closes: datetime) -> list[R
         )
         risk = (
             f"{_pct(TFB_RISK_MAX)} of account equity per trade — this strategy states its "
-            f"own {_pct(TFB_RISK_MAX)} in the register, so that governs instead of the "
+            f"own {_pct(TFB_RISK_MAX)} in the spec, so that governs instead of the "
             f"configured {_pct(per_trade)}. A single position is never worth more than "
             f"{_pct(POSITION_FRACTION_CAP_MAX)} of equity, and this strategy holds at most "
             f"{TFB_POSITIONS_MAX} positions at once."

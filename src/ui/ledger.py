@@ -3,16 +3,15 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import TypedDict
-from zoneinfo import ZoneInfo
 
 from bot.order_tag import find_order_tag
-from bot.types import STRATEGY_LABELS, StrategyName
+from bot.strategies.shared import TRADING_ZONE
+from bot.types import STRATEGY_LABELS, STRATEGY_SHORT_LABELS, StrategyName
 
-from .alpaca import ClosedOrder
-from .alpaca import Fill as AlpacaFill
+from .alpaca import ClosedOrder, Fill
 
 
-class Fill(TypedDict):
+class FillRow(TypedDict):
     d: str
     m: int
     p: float
@@ -33,7 +32,7 @@ class Cycle(TypedDict):
     inDate: str
     inMinute: int
     heldMin: int
-    fills: list[Fill]
+    fills: list[FillRow]
 
 
 class OpenCycle(TypedDict):
@@ -41,7 +40,7 @@ class OpenCycle(TypedDict):
     opened: str
     inDate: str
     inMinute: int
-    fills: list[Fill]
+    fills: list[FillRow]
 
 
 class Totals(TypedDict):
@@ -70,20 +69,12 @@ class _LiveCycle:
     in_value: float = 0.0
     out_quantity: float = 0.0
     out_value: float = 0.0
-    fills: list[Fill] = field(default_factory=list[Fill])
+    fills: list[FillRow] = field(default_factory=list[FillRow])
 
 
-TRADING_ZONE = ZoneInfo("America/New_York")
 UNATTRIBUTED = "unattributed"
 EPSILON = 1e-9
 STRATEGY_IDS_BY_LABEL = {label: name for name, label in STRATEGY_LABELS.items()}
-SHORT_LABELS: dict[str, str] = {
-    "orb": "ORB5",
-    "orb_momentum": "ORB10",
-    "sma": "Momentum SMA",
-    "tfb_50": "TFB-50",
-    UNATTRIBUTED: "Untagged",
-}
 
 
 def strategy_id(published: str) -> str:
@@ -94,16 +85,15 @@ def strategy_id(published: str) -> str:
 
 def strategy_labels() -> list[dict[str, str]]:
     labels = [
-        {"id": name, "short": SHORT_LABELS[name], "label": STRATEGY_LABELS[name]}
-        for name in STRATEGY_LABELS
-        if name != "noop"
+        {"id": name, "short": short, "label": STRATEGY_LABELS[name]}
+        for name, short in STRATEGY_SHORT_LABELS.items()
     ]
     labels.append({"id": UNATTRIBUTED, "short": "Untagged", "label": "No mt- order tag"})
     return labels
 
 
 def match_cycles(
-    fills: list[AlpacaFill],
+    fills: list[Fill],
     orders: list[ClosedOrder],
 ) -> tuple[list[Cycle], dict[str, OpenCycle]]:
     strategies: dict[str, StrategyName | None] = {
@@ -131,7 +121,7 @@ def match_cycles(
 
         entering = (signed > 0) == (cycle.direction > 0)
         cycle.fills.append(
-            Fill(
+            FillRow(
                 d=when.date().isoformat(),
                 m=_clock_minute(when),
                 p=round(price, 4),
