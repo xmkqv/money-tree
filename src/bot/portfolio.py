@@ -17,6 +17,7 @@ from alpaca.trading.requests import GetOrdersRequest
 from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
 from .config import settings
+from .export import log_event
 from .order_tag import find_order_tag, order_tag
 from .strategies.base import StrategyBase
 from .strategies.daily_base import (
@@ -264,9 +265,12 @@ class Strategy(StrategyBase):
         if key in self._events:
             return
         self._events.add(key)
-        if self.exporter is not None:
-            label = None if strategy is None else STRATEGY_LABELS[strategy]
-            self.exporter.publish("running", key, level, message, strategy=label)
+        label = None if strategy is None else STRATEGY_LABELS[strategy]
+        if self.exporter is None:
+            # A backtest has no dashboard to report to. The log still wants it.
+            log_event(key, level, message, label)
+            return
+        self.exporter.publish("running", key, level, message, strategy=label)
 
     def _begin_day(self, day: date) -> None:
         if day == self._day:

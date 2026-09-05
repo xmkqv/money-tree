@@ -58,6 +58,20 @@ mt report --strategy {name} --symbols {symbols} --start {date} --end {date}
     → runs/{name}-{start}-{end}/{stats.csv,trades.csv,settings.json,backtest.log,plot.html,indicators.html,tearsheet.html,tearsheet_metrics.json}
 ```
 
+# events
+
+every event the bot raises goes to both places
+
+```sh
+_record_event ─┬─▶ publish ─▶ snapshot ─▶ dashboard
+               └─▶ log_event ─────────▶ stdout
+```
+
+| destination | holds                | until                              |
+|-------------|----------------------|------------------------------------|
+| stdout      | every event          | the host drops the log             |
+| snapshot    | the last 50          | the bot or the web service restarts |
+
 # dashboard
 
 | response                                     | browser lifetime |
