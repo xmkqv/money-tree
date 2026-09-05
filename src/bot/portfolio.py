@@ -141,7 +141,7 @@ UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
 PREPARATION_ATTEMPTS_MAX = 2
 STOP_COVERAGE_DRIFT_MAX = 1e-6
 PENDING_TTL_MINUTES = 5
-STRATEGY_RISK_MAX: dict[StrategyName, float | None] = {"orb": ORB_RISK_MAX, **DAILY_RISK_MAX}
+STRATEGY_RISK_MAX: dict[StrategyName, float | None] = {"orb5": ORB_RISK_MAX, **DAILY_RISK_MAX}
 
 
 class Strategy(StrategyBase):

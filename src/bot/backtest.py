@@ -43,7 +43,7 @@ def run(
     datasource = YahooDataBacktesting
     datasource_configuration: dict[str, str | bool] | None = None
     datasource_options: dict[str, object] = {}
-    if strategy_name in {"orb", "orb_momentum"}:
+    if strategy_name in {"orb5", "orb10"}:
         datasource = AlpacaBacktesting
         datasource_configuration = {
             "API_KEY": settings.alpaca_api_key.get_secret_value(),
