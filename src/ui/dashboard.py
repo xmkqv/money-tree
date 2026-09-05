@@ -133,6 +133,7 @@ CHART_TIMEFRAMES: dict[str, dict[str, Any]] = {
 SMA_LENGTHS = (20, 50, 200)
 CHART_TTL_SECONDS = 120
 CHART_CACHE_MAX = 64
+CHART_PAGES_MAX = 8
 SESSION_SOURCE = "30Min"
 SESSION_SOURCE_BARS_MAX = 1000
 LEVELS_HISTORY_DAYS = 90
@@ -178,10 +179,16 @@ def session_hour_bars(bars: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, datetime, datetime]:
     rules = CHART_TIMEFRAMES[timeframe]
     pad = timedelta(days=int(rules["pad_days"]))
+    span = timedelta(days=int(rules["span_max"]))
+    today = datetime.now(TRADING_ZONE).date()
     display = opened - pad
-    end = closed + pad
-    if (end - display).days > int(rules["span_max"]):
-        display = end - timedelta(days=int(rules["span_max"]))
+    end = max(closed + pad, today)
+    if end - display > span:
+        if (closed + pad) - display <= span:
+            end = display + span
+        else:
+            end = min(end, closed - pad + span)
+            display = end - span
     data = display - timedelta(days=int(rules["warmup_days"]))
     return (
         datetime.combine(data, dtime(0, 0), TRADING_ZONE),
@@ -417,14 +424,16 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
                             start.isoformat(),
                             end.isoformat(),
                             limit=SESSION_SOURCE_BARS_MAX,
+                            pages_max=CHART_PAGES_MAX,
                         )
                         cached = session_hour_bars(half)
                     else:
-                        cached = await market(request).bars(
+                        cached = await market(request).bars_paged(
                             symbol,
                             str(CHART_TIMEFRAMES[timeframe]["bar"]),
                             start.isoformat(),
                             end.isoformat(),
+                            pages_max=CHART_PAGES_MAX,
                         )
                     bar_cache.store(key, cached)
         return read_response(
