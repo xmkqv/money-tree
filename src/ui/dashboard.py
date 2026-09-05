@@ -615,19 +615,19 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
             if name is not None and name in ORB_OPENING_MINUTES and bounds is not None:
                 opens = bounds[0]
                 minutes = ORB_OPENING_MINUTES[name]
-                session = await market(request).bars(
+                opening_bars = await market(request).bars(
                     symbol,
                     "5Min",
                     opens.isoformat(),
                     (opens + timedelta(minutes=3 * minutes)).isoformat(),
                     limit=10,
                 )
-                found = opening_range(session, opens, minutes)
+                found = opening_range(opening_bars, opens, minutes)
                 if found is not None:
-                    levels = orb_levels(name, direction, entry, *found)
-                    payload["range"] = levels["range"]
-                    payload["stop"] = levels["stop"]
-                    payload["targets"] = levels["targets"]
+                    marks = orb_levels(name, direction, entry, *found)
+                    payload["range"] = marks["range"]
+                    payload["stop"] = marks["stop"]
+                    payload["targets"] = marks["targets"]
             elif name is not None and name in DAILY_STOP_ATR_MULTIPLES:
                 history = await market(request).bars(
                     symbol,
