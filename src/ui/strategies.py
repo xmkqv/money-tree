@@ -141,8 +141,8 @@ def portfolio_rules(daily_loss: float) -> list[Row]:
         Row(
             field="Breakout cap",
             value=f"At most {ORB_POSITIONS_MAX} breakout positions open at once across both "
-            "intraday strategies. Every breakout is the same bet on the same half hour, so "
-            "the two strategies share one allowance rather than each taking their own.",
+            "intraday strategies. The two strategies share one allowance, because every "
+            "breakout is the same bet on the same half hour.",
             source="portfolio.py · _orb_position_count",
         ),
         Row(
@@ -182,12 +182,11 @@ UNIVERSE = (
 )
 
 TFB_UNIVERSE = (
-    f"{UNIVERSE} This strategy then screens that list again on its own floors: share price "
-    f"${PRICE_USD_MIN:.0f} or more, and turnover averaging "
-    f"{_millions(TURNOVER_USD_MIN)} or "
-    f"more across the last {TFB_TURNOVER_SESSIONS} completed sessions — the value actually "
-    "traded, not a share count against today's price. A symbol whose sessions cannot be read "
-    "does not pass."
+    f"{UNIVERSE} This strategy screens that list again on its own floors: share price "
+    f"${PRICE_USD_MIN:.0f} or more, and turnover of {_millions(TURNOVER_USD_MIN)} or more "
+    f"averaged across the last {TFB_TURNOVER_SESSIONS} completed sessions. Turnover here is "
+    "the value traded in each session, which is that session's close times its share volume. "
+    "A symbol whose sessions cannot be read does not pass."
 )
 
 
@@ -207,31 +206,29 @@ def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: date
         f"Volume traded up to the signal candle's close is at least {volume_multiple:g}x the "
         f"{ORB_HISTORY_SESSIONS}-session average at the same time of day, and that average "
         f"session turns over at least {_millions(TURNOVER_USD_MIN)}. "
-        f"All {ORB_HISTORY_SESSIONS} earlier sessions "
-        "must be there to compare against — a shorter history is not a weaker signal, it is "
-        "no confirmation at all, and the breakout is passed over. The reading is taken as the "
-        "signal candle closed rather than as the scan runs, so a breakout read a pass late is "
-        "still confirmed on the moment that made it. Each session is measured between its own "
-        "opening and closing bell, so a half day is compared as a half day."
+        f"All {ORB_HISTORY_SESSIONS} earlier sessions must be available to compare against. "
+        "If fewer are available there is no confirmation, and the breakout is passed over. "
+        "The reading is taken at the signal candle's close rather than at the moment the scan "
+        "runs, so a breakout found a pass late is still confirmed on the volume that made it. "
+        "Each session is measured between its own opening and closing bell, so a half day is "
+        "compared as a half day."
     )
 
     first, second, third = target_multiples
     multiples = f"{first:g}x, {second:g}x and {third:g}x"
     reward = f"{first:g}:1 at the first target, then {second:g}:1 and {third:g}:1."
     targets = (
-        f"Targets are re-cut from the filled price: {multiples} the risk actually taken, so a "
-        "fill away from the signal price carries them with it. Cut from the opening range "
-        "instead, a breakout candle closing well past the level filled above targets already "
-        "counted as reached and scaled the trade out on the spot."
+        f"Targets are re-cut from the filled price: {multiples} the risk actually taken. A "
+        "fill away from the signal price moves the targets with it."
     )
 
     extension = (
         ""
         if entry_extension_max is None
         else f" It is also passed over if that live quote sits more than "
-        f"{_pct(entry_extension_max)} of the opening range beyond the breakout level: the stop "
-        "is a fixed distance inside the range, so a price further past it risks more for the "
-        "same setup while leaving less of the move to collect."
+        f"{_pct(entry_extension_max)} of the opening range beyond the breakout level. The stop "
+        "is a fixed distance inside the range, so a price further past the level risks more "
+        "and leaves less of the move to collect."
     )
 
     return [
@@ -427,9 +424,9 @@ def _daily(strategy: StrategyName, per_trade: float, closes: datetime) -> list[R
         Row(field="Confirmation", value=confirmation, source=setup_source),
         Row(
             field="Sorting",
-            value="Ranked by the value traded in the last completed session — its close times "
-            "its share volume — highest first. When more symbols qualify on the same "
-            "morning than there is room to hold, the busiest take the slots. A symbol "
+            value="Ranked by the value traded in the last completed session, which is its "
+            "close times its share volume, highest first. When more symbols qualify on the "
+            "same morning than there is room to hold, the busiest take the slots. A symbol "
             "whose session cannot be read ranks last but still trades.",
             source="portfolio.py · _ranked",
         ),
@@ -471,7 +468,7 @@ def _daily(strategy: StrategyName, per_trade: float, closes: datetime) -> list[R
                 "new entries for the rest of the day."
                 if DAILY_EXITS_BEFORE_EARNINGS[strategy]
                 else "The daily loss limit closes all positions and stops new entries for "
-                "the rest of the day. Earnings do not close a position for this strategy — it "
+                "the rest of the day. Earnings do not close a position for this strategy. It "
                 "holds through the report and leaves on its threshold or its exit rule."
             ),
             source="portfolio.py · _manage_daily, _is_daily_loss_reached",
