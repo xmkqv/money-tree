@@ -157,6 +157,7 @@ body {
 .pos { color: var(--gain-ink); }
 .neg { color: var(--loss-ink); }
 .flat { color: var(--flat-ink); }
+.warn { color: var(--hold-ink); }
 
 :is(button, [tabindex]):focus-visible {
   outline: 2px solid var(--gain-mark);
@@ -1267,6 +1268,67 @@ table.trades.log td { font-size: 12.5px; }
   border-radius: 4px;
   padding: 1px 4px;
 }
+/* The bot's own account of itself: run state, the limits it is running, and the
+   events it raises. All text and tables, so it stacks onto a phone without the
+   phone layer having to hide any of it. */
+.roster { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 12px; }
+.roster .engine {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.roster .engine .chip { flex: none; }
+.roster .engine .st {
+  font-family: var(--font-data);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.roster .engine.is-online .st { color: var(--gain-ink); }
+.roster .engine.is-paused .st { color: var(--hold-ink); }
+.roster .engine.is-offline .st,
+.roster .engine.is-unknown .st { color: var(--flat-ink); }
+
+/* A level is the first thing read on a row, so it is a shape as well as a
+   colour: colour alone would not survive a monochrome screen or a reader who
+   cannot separate amber from grey. */
+.lvl {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-data);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.lvl::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: currentColor;
+}
+.lvl-info { color: var(--flat-ink); }
+.lvl-warning { color: var(--hold-ink); }
+.lvl-error { color: var(--loss-ink); }
+.lvl-error::before { border-radius: 1px; }
+.lvl-warning::before { border-radius: 1px 1px 6px 6px; }
+
+/* The message is the column that matters, so it takes the width the four short
+   ones do not need, and it is the one cell allowed to wrap. */
+#in-events { table-layout: auto; }
+#in-events td.msg, #in-events th:first-child { width: 55%; }
+#in-events tbody td.msg { white-space: normal; line-height: 1.45; }
+#in-events tbody td:not(.msg) { white-space: nowrap; }
+#in-events tbody tr.attention { background: color-mix(in oklab, var(--hold-mark) 6%, transparent); }
+#in-events tbody tr.failure { background: color-mix(in oklab, var(--loss-mark) 7%, transparent); }
+
 .rules-grid {
   display: grid;
   gap: 14px;
@@ -1765,6 +1827,14 @@ body[data-view="chart"] .chart-panel { min-height: 74vh; }
   .trades.log tbody tr.band { background: var(--surface-2); border-radius: 9px; }
   .trades.log tbody tr.week-edge { border-top: 2px solid var(--week-rule); }
   table.trades.log td { font-size: 12.5px; }
+
+  /* The message shares a card with nothing, so the width it was given beside
+     four short columns would only squeeze it against an empty half. */
+  #in-events td.msg,
+  #in-events th:first-child { width: auto; }
+  /* A card is shaded end to end, with the trade log's rounded corners. */
+  #in-events tbody tr.attention,
+  #in-events tbody tr.failure { border-radius: 9px; padding-left: 8px; padding-right: 8px; }
 
   .tstrat { white-space: normal; }
 

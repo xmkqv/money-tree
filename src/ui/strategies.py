@@ -75,15 +75,15 @@ FIELDS = [
 ]
 UNIVERSE_CAP_USD_MIN = 500_000_000.0
 STRATEGY_SHORT_LABELS: dict[StrategyName, str] = {
-    "orb": "ORB5",
-    "orb_momentum": "ORB10",
+    "orb5": "ORB5",
+    "orb10": "ORB10",
     "orb15": "ORB15",
     "sma": "Momentum SMA",
     "tfb_50": "TFB-50",
 }
 STRATEGY_KINDS: dict[StrategyName, str] = {
-    "orb": "Intraday breakout",
-    "orb_momentum": "Intraday breakout",
+    "orb5": "Intraday breakout",
+    "orb10": "Intraday breakout",
     "orb15": "Intraday breakout",
     "sma": "Daily trend",
     "tfb_50": "Daily trend",

@@ -19,7 +19,7 @@ type RequiredSecret = Annotated[SecretStr, Field(min_length=1)]
 type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
 type EventLevel = Literal["info", "warning", "error"]
-type StrategyName = Literal["noop", "orb", "sma", "tfb_50", "orb_momentum", "orb15"]
+type StrategyName = Literal["noop", "orb5", "sma", "tfb_50", "orb10", "orb15"]
 type DataFeedName = Literal["sip", "delayed_sip", "iex"]
 
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
@@ -27,13 +27,13 @@ POSITIONS_MAX = 10
 POSITION_FRACTION_CAP_MAX = 0.10
 STRATEGY_LABELS: dict[StrategyName, str] = {
     "noop": "No-op",
-    "orb": "ORB (5-minute)",
+    "orb5": "ORB (5-minute)",
     "sma": "Momentum (SMA)",
     "tfb_50": "TFB-50",
-    "orb_momentum": "ORB (10-minute)",
+    "orb10": "ORB (10-minute)",
     "orb15": "ORB (15-minute)",
 }
-PAUSED_STRATEGIES: frozenset[StrategyName] = frozenset({"orb_momentum"})
+PAUSED_STRATEGIES: frozenset[StrategyName] = frozenset({"orb10"})
 
 
 def active_strategies(selected: Iterable[StrategyName]) -> list[StrategyName]:

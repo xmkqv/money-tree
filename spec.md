@@ -84,5 +84,6 @@ _record_event ─┬─▶ publish ─▶ snapshot ─▶ dashboard
 # claims
 
 - the bot runs multiple strategies
-- the ui renders a modern dashboard that includes an overview, strategy details, analysis, and logs
+- the ui renders a modern dashboard that includes an overview, strategy details, analysis,
+  a trade log, and the bot's own run state, limits and events (The Insides)
 - the selected mise mode supplies every deployed service variable

@@ -46,18 +46,18 @@ mise exec -- uv run mt report --strategy sma --symbols SPY --start 2023-01-01 --
 The run directory holds `trades.csv`, `stats.csv`, `indicators.csv`, their parquet
 equivalents, `tearsheet.html`, and `backtest.log`.
 
-Intraday strategies (`orb`, `orb_momentum`, `orb15`) resolve minute bars through Alpaca.
+Intraday strategies (`orb5`, `orb10`, `orb15`) resolve minute bars through Alpaca.
 
 ```sh
-mise exec -- uv run mt backtest --strategy orb --symbols SPY --start 2023-01-01 --end 2024-01-01
+mise exec -- uv run mt backtest --strategy orb5 --symbols SPY --start 2023-01-01 --end 2024-01-01
 ```
 
 Run against the broker. The mode decides paper or live: development sets
 `ALPACA_IS_PAPER=true`, production sets it false.
 
 ```sh
-mise exec -- uv run mt trade --strategies orb
-mise --env production exec -- uv run mt trade --strategies orb
+mise exec -- uv run mt trade --strategies orb5
+mise --env production exec -- uv run mt trade --strategies orb5
 ```
 
 The dashboard is a FastAPI app under `src/ui/`, deployed to Railway from

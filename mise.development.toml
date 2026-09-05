@@ -1,5 +1,5 @@
 [env]
-STRATEGIES = "orb,orb15,sma,tfb_50,orb_momentum"
+STRATEGIES = "orb5,orb15,sma,tfb_50,orb10"
 ALPACA_IS_PAPER = "true"
 ALPACA_DATA_FEED = "iex"
 FRACTIONAL_ORDERS = "true"

@@ -32,26 +32,22 @@ ORB_CLOSE_LEAD_MINUTES = 6
 # One row per breakout strategy. The opening-range length is what separates
 # them; every other column is read from these tables rather than from a test
 # against the name, so another length is a row here and nothing else.
-ORB_OPENING_MINUTES: dict[StrategyName, int] = {"orb": 5, "orb_momentum": 10, "orb15": 15}
+ORB_OPENING_MINUTES: dict[StrategyName, int] = {"orb5": 5, "orb10": 10, "orb15": 15}
 ORB_STRATEGIES: frozenset[StrategyName] = frozenset(ORB_OPENING_MINUTES)
-ORB_VOLUME_MULTIPLES: dict[StrategyName, float] = {
-    "orb": 1.3,
-    "orb_momentum": 1.5,
-    "orb15": 1.3,
-}
+ORB_VOLUME_MULTIPLES: dict[StrategyName, float] = {"orb5": 1.3, "orb10": 1.5, "orb15": 1.3}
 ORB_TARGET_MULTIPLES: dict[StrategyName, tuple[float, float, float]] = {
-    "orb": (1.5, 2.5, 4.0),
-    "orb_momentum": (2.0, 3.0, 5.0),
+    "orb5": (1.5, 2.5, 4.0),
+    "orb10": (2.0, 3.0, 5.0),
     "orb15": (1.5, 2.5, 4.0),
 }
 ORB_ENTRY_EXTENSION_MAX: dict[StrategyName, float | None] = {
-    "orb": None,
-    "orb_momentum": 0.25,
+    "orb5": None,
+    "orb10": 0.25,
     "orb15": None,
 }
 # A strategy named here is sized by its own ceiling. One left out — ORB10 — is
 # sized by the configured per-trade limit instead.
-ORB_RISK_MAXES: dict[StrategyName, float] = {"orb": ORB_RISK_MAX, "orb15": ORB_RISK_MAX}
+ORB_RISK_MAXES: dict[StrategyName, float] = {"orb5": ORB_RISK_MAX, "orb15": ORB_RISK_MAX}
 
 
 def range_stop(direction: Direction, high: float, low: float) -> float:
