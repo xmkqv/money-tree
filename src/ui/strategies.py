@@ -41,6 +41,8 @@ from bot.types import (
     TradingConfiguration,
 )
 
+from .ledger import label_order
+
 
 class Row(TypedDict):
     field: str
@@ -118,7 +120,9 @@ def strategy_spec(configuration: TradingConfiguration, *, configured: bool) -> d
             ),
         )
         # Listed by the short label, the same order the rest of the site uses.
-        for strategy in sorted(STRATEGY_SHORT_LABELS, key=STRATEGY_SHORT_LABELS.__getitem__)
+        for strategy in sorted(
+            STRATEGY_SHORT_LABELS, key=lambda name: label_order(STRATEGY_SHORT_LABELS[name])
+        )
     ]
     return {
         "fields": FIELDS,
