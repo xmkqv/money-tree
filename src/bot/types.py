@@ -1,5 +1,5 @@
 from collections.abc import Iterable
-from typing import Annotated, Literal, Self, cast
+from typing import Annotated, Literal, Self, TypeIs
 
 from pydantic import (
     UUID4,
@@ -33,6 +33,10 @@ STRATEGY_LABELS: dict[StrategyName, str] = {
     "orb_momentum": "ORB (10-minute)",
 }
 PAUSED_STRATEGIES: frozenset[StrategyName] = frozenset({"orb_momentum"})
+
+
+def is_strategy_name(value: str) -> TypeIs[StrategyName]:
+    return value in STRATEGY_LABELS
 
 
 def active_strategies(selected: Iterable[StrategyName]) -> list[StrategyName]:
@@ -90,7 +94,7 @@ class Settings(BaseSettings):
     @property
     def strategy_names(self) -> list[StrategyName]:
         values = [item.strip() for item in self.strategies.split(",")]
-        return cast(list[StrategyName], [value for value in values if value in STRATEGY_LABELS])
+        return [value for value in values if is_strategy_name(value)]
 
     @property
     def trading_configuration(self) -> TradingConfiguration:

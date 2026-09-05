@@ -14,7 +14,7 @@ from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.enums import QueryOrderStatus
 from alpaca.trading.requests import GetOrdersRequest
-from pandas import DataFrame, DatetimeIndex, Series, Timestamp
+from pandas import DataFrame, DatetimeIndex, Timestamp
 
 from .config import settings
 from .order_tag import find_order_tag, order_tag
@@ -53,9 +53,13 @@ from .strategies.shared import (
     does_signal_exit,
     does_tfb_enter,
     entry_quantity,
+    frame_between,
+    frame_since,
+    frame_until,
     is_earnings_blocked,
     is_earnings_exit_due,
     is_fractional_allowed,
+    last_close,
     latest_atr,
     latest_dollar_volume,
     market_is_rising,
@@ -73,6 +77,7 @@ from .types import (
     EventLevel,
     StrategyName,
     active_strategies,
+    is_strategy_name,
 )
 
 
@@ -147,7 +152,10 @@ class Strategy(StrategyBase):
     def initialize(self) -> None:
         self.sleeptime = "1M"
         self.minutes_before_opening = 30
-        selected = cast(list[StrategyName], self.parameters["strategies"])
+        supplied = cast(list[str], self.parameters["strategies"])
+        selected: list[StrategyName] = [value for value in supplied if is_strategy_name(value)]
+        if len(selected) != len(supplied):
+            raise ValueError("strategies parameter contains unknown strategy names")
         self._selected = selected
         self._enabled = set(active_strategies(selected))
         self._exit_only: set[StrategyName] = set(selected).difference(self._enabled)
@@ -588,6 +596,8 @@ class Strategy(StrategyBase):
             for symbol_value in symbols_index:
                 symbol = str(symbol_value)
                 frame = values.xs(symbol_value, level="symbol")
+                if not isinstance(frame, DataFrame):
+                    raise TypeError(f"stock bars for {symbol} are not a frame")
                 frames[symbol] = normalize_ohlcv(
                     frame,
                     {"high", "low", "close", "volume"},
@@ -599,7 +609,7 @@ class Strategy(StrategyBase):
         if minutes:
             mask = cast(Any, index) + timedelta(minutes=minutes) <= now
             return cast(DataFrame, frame[mask])
-        return cast(DataFrame, frame[cast(Any, index).date < now.date()])
+        return frame[index.date < now.date()]
 
     def _run_daily(self, now: datetime) -> None:
         market_frame = self._daily_frames.get("^GSPC")
@@ -652,7 +662,7 @@ class Strategy(StrategyBase):
                 continue
             if blocked:
                 continue
-            last = float(cast(Any, frame["close"]).iloc[-1])
+            last = last_close(frame)
             stop = last - DAILY_STOP_ATR_MULTIPLES["sma"] * latest_atr(frame)
             candidates.append(DailyCandidate(symbol, last, stop))
         return candidates
@@ -668,7 +678,7 @@ class Strategy(StrategyBase):
         for symbol, frame in self._ranked(now):
             if not is_tfb_market_ready(frame) or not does_tfb_enter(frame):
                 continue
-            last = float(cast(Any, frame["close"]).iloc[-1])
+            last = last_close(frame)
             stop = last - DAILY_STOP_ATR_MULTIPLES["tfb_50"] * latest_atr(frame)
             candidates.append(DailyCandidate(symbol, last, stop))
         if not candidates:
@@ -757,7 +767,7 @@ class Strategy(StrategyBase):
                 continue
             completed = self._completed(frame, now, minutes)
             if candidate.at is not None:
-                completed = cast(DataFrame, completed[cast(Any, completed.index) <= candidate.at])
+                completed = frame_until(completed, candidate.at)
             if not self._orb_confirm(completed, now, ORB_VOLUME_MULTIPLES[strategy]):
                 continue
             span = candidate.high - candidate.low
@@ -787,9 +797,8 @@ class Strategy(StrategyBase):
         for symbol, frame in frames.items():
             if frame.empty:
                 continue
-            index = cast(Any, cast(DatetimeIndex, frame.index))
-            opening = cast(DataFrame, frame[(index >= opens) & (index < opening_end)])
-            after = cast(DataFrame, frame[index >= opening_end])
+            opening = frame_between(frame, opens, opening_end)
+            after = frame_since(frame, opening_end)
             if opening.empty or after.empty:
                 continue
             high = float(cast(Any, opening["high"]).max())
@@ -860,8 +869,8 @@ class Strategy(StrategyBase):
     def _orb_signal(
         self, candles: DataFrame, high: float, low: float
     ) -> tuple[int, Direction, float] | None:
-        closes = cast(Series, candles["close"])
-        for position, value in enumerate(cast(list[Any], closes.tolist())):
+        closes = candles["close"]
+        for position, value in enumerate(closes.tolist()):
             close = float(value)
             if not isfinite(close):
                 continue
@@ -928,11 +937,8 @@ class Strategy(StrategyBase):
         frame = self._completed(daily_frame, now)
         if len(frame) < DAILY_HISTORY_SESSIONS:
             return
-        since = cast(
-            DataFrame,
-            frame[cast(Any, frame.index) >= holding.entered_at.astimezone(TRADING_ZONE)],
-        )
-        last = float(cast(Any, frame["close"]).iloc[-1])
+        since = frame_since(frame, holding.entered_at.astimezone(TRADING_ZONE))
+        last = last_close(frame)
         if len(since):
             holding.highest = max(holding.highest, float(cast(Any, since["close"]).max()))
         multiple = DAILY_STOP_ATR_MULTIPLES[holding.strategy]

@@ -1,11 +1,11 @@
 from datetime import datetime
-from typing import Annotated, cast
+from typing import Annotated
 
 import typer
 
 from bot import backtest, report, trade
 from bot.config import settings
-from bot.types import STRATEGY_LABELS, StrategyName
+from bot.types import STRATEGY_LABELS, StrategyName, is_strategy_name
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -22,7 +22,7 @@ def _parse_strategies(value: str) -> list[StrategyName]:
     if not selected or unknown or len(selected) != len(set(selected)):
         names = ", ".join(sorted(allowed))
         raise typer.BadParameter(f"strategies must be unique names from: {names}")
-    return cast(list[StrategyName], selected)
+    return [item for item in selected if is_strategy_name(item)]
 
 
 def _parse_strategy(value: str) -> StrategyName:

@@ -70,11 +70,11 @@ def session_volume(frame: DataFrame, day: date, clock: time) -> SessionVolume | 
     pandas_index = cast(Any, index)
     session_dates = cast(DatetimeIndex, pandas_index.normalize())
     current_session = Timestamp(day, tz=TRADING_ZONE)
-    volume = cast(Series, regular["volume"])
+    volume = regular["volume"]
     aggregates = DataFrame(
         {
             "session_date": session_dates,
-            "daily_turnover": volume * cast(Series, regular["close"]),
+            "daily_turnover": volume * regular["close"],
             "cumulative_volume": cast(
                 Series,
                 cast(Any, volume).where(pandas_index.time <= clock, 0.0),

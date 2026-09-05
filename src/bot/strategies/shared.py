@@ -55,7 +55,9 @@ def session_ends(index: DatetimeIndex) -> DatetimeIndex:
 
 def regular_session(frame: DataFrame) -> DataFrame:
     index = cast(DatetimeIndex, frame.index)
-    inside = (cast(Any, index) >= session_starts(index)) & (cast(Any, index) < session_ends(index))
+    inside = (time_index(frame) >= session_starts(index)) & (
+        time_index(frame) < session_ends(index)
+    )
     return cast(DataFrame, frame[inside])
 
 
@@ -81,11 +83,32 @@ def normalize_ohlcv(frame: DataFrame, required: Collection[str]) -> DataFrame:
     return values.sort_index()
 
 
+def time_index(frame: DataFrame) -> Any:
+    return cast(Any, cast(DatetimeIndex, frame.index))
+
+
+def last_close(frame: DataFrame) -> float:
+    return float(frame["close"].iloc[-1])
+
+
+def frame_since(frame: DataFrame, start: datetime) -> DataFrame:
+    return cast(DataFrame, frame[time_index(frame) >= start])
+
+
+def frame_until(frame: DataFrame, cutoff: datetime) -> DataFrame:
+    return cast(DataFrame, frame[time_index(frame) <= cutoff])
+
+
+def frame_between(frame: DataFrame, start: datetime, end: datetime) -> DataFrame:
+    index = time_index(frame)
+    return cast(DataFrame, frame[(index >= start) & (index < end)])
+
+
 def latest_atr(frame: DataFrame, period: int = PERIOD) -> float:
     values = ta_atr(
-        cast(Series, frame["high"]),
-        cast(Series, frame["low"]),
-        cast(Series, frame["close"]),
+        frame["high"],
+        frame["low"],
+        frame["close"],
         length=period,
         talib=False,
     )
@@ -131,8 +154,8 @@ def is_fractional_allowed(direction: Direction, fractional_orders: bool) -> bool
 def latest_dollar_volume(frame: DataFrame) -> float:
     if frame.empty or not {"close", "volume"}.issubset(frame.columns):
         return 0.0
-    volume = float(cast(float, cast(Series, frame["volume"]).iloc[-1]))
-    close = float(cast(float, cast(Series, frame["close"]).iloc[-1]))
+    volume = float(frame["volume"].iloc[-1])
+    close = last_close(frame)
     if not isfinite(volume) or not isfinite(close) or volume < 0.0 or close < 0.0:
         return 0.0
     return volume * close
@@ -141,16 +164,16 @@ def latest_dollar_volume(frame: DataFrame) -> float:
 def average_dollar_volume(frame: DataFrame, sessions: int) -> float:
     if sessions < 1 or not {"close", "volume"}.issubset(frame.columns):
         return 0.0
-    closes = cast(Series, frame["close"]).tail(sessions)
-    volumes = cast(Series, frame["volume"]).tail(sessions)
+    closes = frame["close"].tail(sessions)
+    volumes = frame["volume"].tail(sessions)
     if len(closes) < sessions or closes.count() < sessions or volumes.count() < sessions:
         return 0.0
-    traded = float(cast(float, (closes * volumes).mean()))
+    traded = float((closes * volumes).mean())
     return traded if isfinite(traded) and traded > 0.0 else 0.0
 
 
 def market_is_rising(frame: DataFrame) -> bool:
-    close = cast(Series, frame["close"])
+    close = frame["close"]
     if close.count() < MARKET_SESSIONS:
         return False
     average = ta_sma(close, length=MARKET_SESSIONS, talib=False)
@@ -164,7 +187,7 @@ def market_is_rising(frame: DataFrame) -> bool:
 
 
 def does_momentum_enter(frame: DataFrame) -> bool:
-    close = cast(Series, frame["close"])
+    close = frame["close"]
     if close.count() < MOMENTUM_SESSIONS:
         return False
     average_20 = ta_sma(close, length=MARKET_SESSIONS, talib=False)
@@ -203,7 +226,7 @@ def does_momentum_enter(frame: DataFrame) -> bool:
 
 
 def does_tfb_enter(frame: DataFrame) -> bool:
-    close = cast(Series, frame["close"])
+    close = frame["close"]
     average_50 = ta_sma(close, length=50, talib=False)
     directional = _indicator_column(_adx(frame), f"ADX_{PERIOD}", 1)
     if not isinstance(average_50, Series) or directional is None:
@@ -216,7 +239,7 @@ def does_tfb_enter(frame: DataFrame) -> bool:
             _finite_value(average_50),
             _finite_value(average_50, -TFB_AVERAGE_LAG_SESSIONS),
             _finite_value(directional),
-            _finite_value(cast(Series, frame["high"]), -2),
+            _finite_value(frame["high"], -2),
         ]
     )
     if row is None:
@@ -231,7 +254,7 @@ def does_tfb_enter(frame: DataFrame) -> bool:
 
 
 def does_signal_exit(frame: DataFrame) -> bool:
-    close = cast(Series, frame["close"])
+    close = frame["close"]
     if close.count() < MARKET_SESSIONS:
         return False
     average = ta_sma(close, length=MARKET_SESSIONS, talib=False)
@@ -288,15 +311,15 @@ def _session_stamps(index: DatetimeIndex, table: Any) -> DatetimeIndex:
 
 def _adx(frame: DataFrame) -> object:
     return ta_adx(
-        cast(Series, frame["high"]),
-        cast(Series, frame["low"]),
-        cast(Series, frame["close"]),
+        frame["high"],
+        frame["low"],
+        frame["close"],
         length=PERIOD,
         talib=False,
     )
 
 
-def _finite_value(values: Series, offset: int = -1) -> float | None:
+def _finite_value(values: Series[Any], offset: int = -1) -> float | None:
     if len(values) < abs(offset):
         return None
     value = float(cast(float, values.iloc[offset]))
@@ -307,14 +330,17 @@ def _finite_row(values: Sequence[float | None]) -> list[float] | None:
     return None if any(value is None for value in values) else cast(list[float], list(values))
 
 
-def _indicator_series(values: object, name: str, non_null_min: int) -> Series | None:
-    if not isinstance(values, Series) or values.name != name or values.count() < non_null_min:
+def _indicator_series(values: object, name: str, non_null_min: int) -> Series[Any] | None:
+    if not isinstance(values, Series):
         return None
-    return values
+    series = cast("Series[Any]", values)
+    if series.name != name or series.count() < non_null_min:
+        return None
+    return series
 
 
-def _indicator_column(values: object, name: str, non_null_min: int) -> Series | None:
+def _indicator_column(values: object, name: str, non_null_min: int) -> Series[Any] | None:
     if not isinstance(values, DataFrame) or name not in values.columns:
         return None
-    column = cast(Series, values[name])
+    column = values[name]
     return column if column.count() >= non_null_min else None
