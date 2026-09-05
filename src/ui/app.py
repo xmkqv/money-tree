@@ -2,6 +2,7 @@ import hmac
 import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import assert_never
 
 import httpx
 from fastapi import FastAPI, Request
@@ -11,7 +12,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .alpaca import DATA_API_URL, AlpacaMarketDataClient, AlpacaReadClient, alpaca_api_url
 from .auth import RailwayOAuthClient
-from .config import WebSettings
+from .config import RailwayOAuthSettings, WebSettings
 from .dashboard import NO_STORE, StateStore, dashboard_router, error_response
 
 
@@ -49,9 +50,14 @@ class SessionGuardMiddleware:
         await self._app(scope, receive, send)
 
 
+def _start_session(request: Request, subject: str) -> None:
+    request.session.clear()
+    request.session["user_sub"] = subject
+    request.session["csrf_token"] = secrets.token_urlsafe(32)
+
+
 def create_app() -> FastAPI:
     configuration = WebSettings()  # pyright: ignore[reportCallIssue]
-    oauth_client = RailwayOAuthClient(configuration)
 
     credentials = {
         "APCA-API-KEY-ID": configuration.alpaca_api_key.get_secret_value(),
@@ -87,7 +93,7 @@ def create_app() -> FastAPI:
         session_cookie="money_tree_session",
         max_age=configuration.session_ttl_seconds,
         same_site="lax",
-        https_only=True,
+        https_only=configuration.mode == "production",
     )
 
     @app.exception_handler(httpx.HTTPError)
@@ -101,38 +107,56 @@ def create_app() -> FastAPI:
     async def health() -> JSONResponse:
         return JSONResponse({"status": "ok"}, headers=NO_STORE)
 
-    @app.get("/login")
-    async def login(request: Request) -> RedirectResponse:
-        authorization = await oauth_client.authorization_request()
-        request.session.clear()
-        request.session["oauth_state"] = authorization.state
-        request.session["oauth_verifier"] = authorization.verifier
-        return RedirectResponse(authorization.url, status_code=303, headers=NO_STORE)
+    match configuration.mode:
+        case "development":
 
-    @app.get("/auth/callback")
-    async def callback(
-        request: Request,
-        code: str | None = None,
-        state: str | None = None,
-        error: str | None = None,
-    ) -> Response:
-        expected_state = request.session.pop("oauth_state", None)
-        verifier = request.session.pop("oauth_verifier", None)
-        request.session.clear()
-        if error is not None:
-            return error_response("Railway login was denied", 401)
-        if not isinstance(expected_state, str) or not isinstance(verifier, str) or state is None:
-            return error_response("OAuth state is invalid", 400)
-        if not hmac.compare_digest(expected_state.encode(), state.encode()):
-            return error_response("OAuth state is invalid", 400)
-        if not code:
-            return error_response("OAuth code is missing", 400)
-        identity = await oauth_client.identify(code, verifier)
-        if identity.email.strip().casefold() not in configuration.allowed_railway_emails:
-            return error_response("Railway user is not allowed", 403)
-        request.session["user_sub"] = identity.subject
-        request.session["csrf_token"] = secrets.token_urlsafe(32)
-        return RedirectResponse("/", status_code=303, headers=NO_STORE)
+            @app.get("/login")
+            async def login_locally(request: Request) -> RedirectResponse:
+                _start_session(request, configuration.mode)
+                return RedirectResponse("/", status_code=303, headers=NO_STORE)
+
+        case "production":
+            oauth = RailwayOAuthSettings()  # pyright: ignore[reportCallIssue]
+            oauth_client = RailwayOAuthClient(oauth, configuration.railway_oauth_redirect_uri)
+
+            @app.get("/login")
+            async def login(request: Request) -> RedirectResponse:
+                authorization = await oauth_client.authorization_request()
+                request.session.clear()
+                request.session["oauth_state"] = authorization.state
+                request.session["oauth_verifier"] = authorization.verifier
+                return RedirectResponse(authorization.url, status_code=303, headers=NO_STORE)
+
+            @app.get("/auth/callback")
+            async def callback(
+                request: Request,
+                code: str | None = None,
+                state: str | None = None,
+                error: str | None = None,
+            ) -> Response:
+                expected_state = request.session.pop("oauth_state", None)
+                verifier = request.session.pop("oauth_verifier", None)
+                request.session.clear()
+                if error is not None:
+                    return error_response("Railway login was denied", 401)
+                if (
+                    not isinstance(expected_state, str)
+                    or not isinstance(verifier, str)
+                    or state is None
+                ):
+                    return error_response("OAuth state is invalid", 400)
+                if not hmac.compare_digest(expected_state.encode(), state.encode()):
+                    return error_response("OAuth state is invalid", 400)
+                if not code:
+                    return error_response("OAuth code is missing", 400)
+                identity = await oauth_client.identify(code, verifier)
+                if identity.email.strip().casefold() not in oauth.allowed_railway_emails:
+                    return error_response("Railway user is not allowed", 403)
+                _start_session(request, identity.subject)
+                return RedirectResponse("/", status_code=303, headers=NO_STORE)
+
+        case _:
+            assert_never(configuration.mode)
 
     @app.post("/logout", status_code=204)
     async def logout(request: Request) -> Response:

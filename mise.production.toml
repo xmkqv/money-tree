@@ -10,18 +10,16 @@ SESSION_TTL_SECONDS = "28800"
 PORT = "8080"
 APP_BASE_URL = "https://money-tree-web-production.up.railway.app"
 RAILWAY_OAUTH_CLIENT_ID = "rlwy_oaci_29D1XXdSqj23u2HgdYlbq8ch"
-RAILWAY_OAUTH_REDIRECT_URI = "https://money-tree-web-production.up.railway.app/auth/callback"
 STATE_EXPORT_URL = "http://money-tree-web.railway.internal:8080/internal/state"
 
-## access
+## login
 ALLOWED_RAILWAY_EMAILS = ""
+RAILWAY_OAUTH_CLIENT_SECRET = ""
 ## broker
 ALPACA_API_KEY = ""
 ALPACA_API_SECRET = ""
 ## session
 SESSION_SECRET = ""
 STATE_EXPORT_SECRET = ""
-## oauth
-RAILWAY_OAUTH_CLIENT_SECRET = ""
 
 _.file = { path = ".env.production", redact = true }
