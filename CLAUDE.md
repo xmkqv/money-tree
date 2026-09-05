@@ -1,4 +1,5 @@
 @mise.toml
+@./.claude/AGENTS.md
 
 # voice
 
