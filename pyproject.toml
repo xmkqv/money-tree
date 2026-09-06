@@ -23,7 +23,7 @@ dependencies = [
     "yfinance>=1.7",
 ]
 [project.scripts]
-mt = "cli.__main__:app"
+mt = "mt.cli.__main__:app"
 
 [build-system]
 requires = ["hatchling>=1.32"]
@@ -52,9 +52,10 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
+known-first-party = ["mt"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/bot", "src/cli", "src/ui", "LICENSE", "README.md", "pyproject.toml"]
+include = ["src/mt", "LICENSE", "README.md", "pyproject.toml"]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/bot", "src/cli", "src/ui"]
+packages = ["src/mt"]

@@ -7,8 +7,7 @@ from typing import Literal
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 
-from bot.config import BotSettings
-from ui.config import LoginSettings, WebSettings
+from .settings import BotSettings, LoginSettings, WebSettings
 
 
 type ServiceName = Literal["web", "bot"]
