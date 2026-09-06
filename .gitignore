@@ -13,8 +13,8 @@ wheels/
 mise.local.toml
 mise.*.local.toml
 .run/
-data/
-logs/
+/data/
+/logs/
 node_modules/
-runs/
+/runs/
 gen.*.*

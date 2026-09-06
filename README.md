@@ -42,7 +42,7 @@ mise exec -- uv run mt trade --strategies breakout_5m
 mise --env production exec -- uv run mt trade --strategies breakout_5m
 ```
 
-Serve the dashboard and stop it. A push to main deploys.
+Serve the dashboard and stop it. `mise run deploy` ships both services at one revision.
 
 ```sh
 mise run serve
