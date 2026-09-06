@@ -4,10 +4,10 @@ import httpx
 from alpaca.common.enums import BaseURL
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from bot.types import BrokerMode
+from mt.config.values import BrokerMode, DataFeedName
 
 
-DATA_API_URL = "https://data.alpaca.markets"
+PAST_API_URL = "https://data.alpaca.markets"
 
 
 class _Payload(BaseModel):
@@ -89,7 +89,7 @@ def alpaca_api_url(broker_mode: BrokerMode) -> str:
     return target.value
 
 
-class AlpacaReadClient:
+class AlpacaLiveClient:
     def __init__(self, client: httpx.AsyncClient, page_rows_max: int, pages_max: int) -> None:
         self._client = client
         self._page_rows_max = page_rows_max
@@ -175,9 +175,10 @@ class AlpacaReadClient:
         return response.json()
 
 
-class AlpacaMarketDataClient:
-    def __init__(self, client: httpx.AsyncClient) -> None:
+class AlpacaPastClient:
+    def __init__(self, client: httpx.AsyncClient, feed: DataFeedName) -> None:
         self._client = client
+        self._feed = feed
 
     async def daily_bars(self, symbol: str, start: str) -> list[Bar]:
         return await self.bars(symbol, "1Day", start)
@@ -195,7 +196,7 @@ class AlpacaMarketDataClient:
             "timeframe": timeframe,
             "start": start,
             "limit": str(limit),
-            "feed": "iex",
+            "feed": self._feed,
         }
         if end is not None:
             params["end"] = end

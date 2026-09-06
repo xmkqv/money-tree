@@ -3,8 +3,9 @@ from functools import lru_cache
 from importlib import import_module
 from typing import Any, cast
 
-from .config import settings
-from .exchange import XNYS
+from mt.config.settings import settings
+
+from mt.exchange import XNYS
 
 
 yfinance = cast(Any, import_module("yfinance"))
