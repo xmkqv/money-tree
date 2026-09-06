@@ -19,7 +19,7 @@ type RequiredSecret = Annotated[SecretStr, Field(min_length=1)]
 type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
 type EventLevel = Literal["info", "warning", "error"]
-type StrategyName = Literal["noop", "orb5", "sma", "tfb_50", "orb10", "orb15"]
+type StrategyName = Literal["noop", "orb5", "sma", "tfb_50", "orb10", "orb15", "sma20"]
 type DataFeedName = Literal["sip", "delayed_sip", "iex"]
 
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
@@ -32,6 +32,7 @@ STRATEGY_LABELS: dict[StrategyName, str] = {
     "tfb_50": "TFB-50",
     "orb10": "ORB (10-minute)",
     "orb15": "ORB (15-minute)",
+    "sma20": "20SMA",
 }
 # Nothing is paused. A strategy named here is loaded and manages whatever it
 # already holds, but opens nothing new.

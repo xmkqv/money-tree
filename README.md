@@ -1,6 +1,6 @@
 # money-tree
 
-Five US-equity trading strategies, written down first and then run: backtesting,
+Six US-equity trading strategies, written down first and then run: backtesting,
 multi-strategy portfolio composition, and Alpaca execution.
 
 The register below is the specification. `src/bot/strategies/` implements it,
@@ -412,6 +412,74 @@ exit
     earnings exit = none
     deadline = none
     shared rules = Stop Loss and Emergency Exit
+```
+
+#### 20SMA
+
+```text:surface
+status
+    state = enabled
+
+market
+    asset = US stocks
+    market cap >= $2 billion
+    share price >= $5
+    average daily turnover >= $20 million
+    market state = none
+    direction = long
+
+setup
+    timeframe = daily candles for the setup, the confirmation, the entry signal
+        and the emergency exit; 4-hour candles for the trailing stop only
+    opening range = none
+    marks = none
+    price = price > SMA(50) > SMA(200)
+    momentum = 50 <= RSI(14) <= 70 and ADX >= 25
+
+sorting
+    rank = latest session volume * latest price, highest first
+    applies when more symbols qualify than there is room to hold
+
+entry
+    window = day 3 market open to market close, rescan
+    day 1 = close < SMA(20)
+    day 2 = close > SMA(20)
+    long signal = day 1 and day 2 rules pass
+    order = day 3 market open, or the first later iteration at which a position
+        slot and the money for it are free
+    earnings block = none
+    max positions = 5
+    one entry per symbol per session
+
+risk
+    position size = $1000, and never more than 10% of account
+    risk per trade = not set
+    risk-to-reward ratio = not set
+    R = not set
+    initial stop = entry price - 10%
+    at +10% set stop = breakeven
+    at +10% enable trailing stop = 1.5 * ATR(14) on 4-hour candles
+    ATR(14) window = 4-hour candles across sessions
+    ATR(14) needs 15 completed 4-hour candles
+    trailing stop = highest price since entry - 1.5 * ATR(14)
+    stop update = recalculated on every iteration once activated
+    stop can only move up
+    active stop cannot fall below entry price
+    stop order = good-till-cancelled, resting at the broker, whole shares only
+    stop order replaced = whenever the level moves
+    stop order from an earlier run = cancelled when the bot starts
+    stop exit = the resting order fires, or the bot closes at market when the
+        last price is at or below the level
+
+exit
+    at +15% close = 50% of original position
+    at +25% close = 25% of original position
+    remaining 25% = trailing stop only
+    signal exit = daily close < SMA(20) or RSI(14) < 50,
+        then exit at next market open
+    earnings exit = none
+    deadline = none
+    shared rules = Emergency Exit
 ```
 
 

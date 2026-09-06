@@ -54,6 +54,7 @@ const STRATEGY_COLOURS = {
   orb15: "var(--s-orb15)",
   sma: "var(--s-momentum)",
   tfb_50: "var(--s-tfb50)",
+  sma20: "var(--s-sma20)",
   unattributed: "var(--ink-3)",
 };
 

@@ -72,6 +72,7 @@ SHORT_LABELS: dict[str, str] = {
     "orb15": "ORB15",
     "sma": "Momentum SMA",
     "tfb_50": "TFB-50",
+    "sma20": "20SMA",
     UNATTRIBUTED: "Untagged",
 }
 

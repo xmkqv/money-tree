@@ -31,6 +31,9 @@ MOMENTUM_RSI_MIN = 50.0
 MOMENTUM_ADX_MIN = 25.0
 TFB_ADX_MIN = 20.0
 TFB_AVERAGE_LAG_SESSIONS = 4
+SMA20_RSI_MIN = 50.0
+SMA20_RSI_MAX = 70.0
+SMA20_ADX_MIN = 25.0
 EXIT_RSI_MAX = 50.0
 EARNINGS_BLOCK_DAYS = 5
 XNYS = exchange_calendars.get_calendar("XNYS")
@@ -199,6 +202,53 @@ def does_momentum_enter(frame: DataFrame) -> bool:
         and latest > latest_50 > latest_200
         and strength_now >= MOMENTUM_RSI_MIN
         and directional_now >= MOMENTUM_ADX_MIN
+    )
+
+
+def does_sma20_enter(frame: DataFrame) -> bool:
+    """The close reclaims its 20-day average with the longer averages already stacked."""
+    close = cast(Series, frame["close"])
+    if close.count() < MOMENTUM_SESSIONS:
+        return False
+    average_20 = ta_sma(close, length=MARKET_SESSIONS, talib=False)
+    average_50 = ta_sma(close, length=50, talib=False)
+    average_200 = ta_sma(close, length=MOMENTUM_SESSIONS, talib=False)
+    strength = _indicator_series(ta_rsi(close, length=PERIOD, talib=False), f"RSI_{PERIOD}", 1)
+    directional = _indicator_column(_adx(frame), f"ADX_{PERIOD}", 1)
+    if not all(isinstance(value, Series) for value in (average_20, average_50, average_200)):
+        return False
+    if strength is None or directional is None:
+        return False
+    row = _finite_row(
+        [
+            _finite_value(close),
+            _finite_value(close, -2),
+            _finite_value(cast(Series, average_20)),
+            _finite_value(cast(Series, average_20), -2),
+            _finite_value(cast(Series, average_50)),
+            _finite_value(cast(Series, average_200)),
+            _finite_value(strength),
+            _finite_value(directional),
+        ]
+    )
+    if row is None:
+        return False
+    (
+        latest,
+        previous,
+        average_now,
+        average_before,
+        latest_50,
+        latest_200,
+        strength_now,
+        directional_now,
+    ) = row
+    return (
+        previous < average_before
+        and latest > average_now
+        and latest > latest_50 > latest_200
+        and SMA20_RSI_MIN <= strength_now <= SMA20_RSI_MAX
+        and directional_now >= SMA20_ADX_MIN
     )
 
 
