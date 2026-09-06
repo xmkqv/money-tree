@@ -15,13 +15,10 @@ RAILWAY_OAUTH_CLIENT_ID = "rlwy_oaci_29D1XXdSqj23u2HgdYlbq8ch"
 STATE_EXPORT_URL = "http://money-tree-web.railway.internal:8080/internal/state"
 
 ## login
-ALLOWED_RAILWAY_EMAILS = ""
-RAILWAY_OAUTH_CLIENT_SECRET = ""
+##   ALLOWED_RAILWAY_EMAILS, RAILWAY_OAUTH_CLIENT_SECRET
 ## broker
-ALPACA_API_KEY = ""
-ALPACA_API_SECRET = ""
+##   ALPACA_API_KEY, ALPACA_API_SECRET
 ## session
-SESSION_SECRET = ""
-STATE_EXPORT_SECRET = ""
+##   SESSION_SECRET, STATE_EXPORT_SECRET
 
 _.file = { path = ".env.production", redact = true }
