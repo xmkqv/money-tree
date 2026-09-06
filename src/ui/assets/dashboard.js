@@ -188,6 +188,7 @@ function derive(live) {
     buyingPower: live.buyingPower,
     openPositions: live.positions.length,
     positionCapPct: live.positionCapPct,
+    positionCapUsd: live.positionCapUsd,
     dailyLossLimitPct: live.dailyLossLimitPct,
   };
   ACCOUNT.totalReturn = Math.round((ACCOUNT.portfolio - ACCOUNT.invested) * 100) / 100;
@@ -487,7 +488,8 @@ function renderAccount() {
   dll.style.background = "var(--loss-mark)";
 
   document.getElementById("v-cap").innerHTML =
-    "<b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "%";
+    "<b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "%"
+    + " · " + usd0.format(ACCOUNT.positionCapUsd);
   const cap = document.getElementById("m-cap");
   cap.style.width = clamp(ACCOUNT.largestPositionPct / ACCOUNT.positionCapPct, 0, 1) * 100 + "%";
   cap.style.background = "var(--ink-3)";
@@ -1192,7 +1194,8 @@ function renderPortfolio() {
   document.getElementById("pf-risk").textContent = money(ACCOUNT.buyingPower);
 
   document.getElementById("pf-cap").innerHTML =
-    "<b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "%";
+    "<b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "%"
+    + " · " + usd0.format(ACCOUNT.positionCapUsd);
   const cm = document.getElementById("pf-cap-meter");
   cm.style.width = clamp(ACCOUNT.largestPositionPct / ACCOUNT.positionCapPct, 0, 1) * 100 + "%";
   cm.style.background = "var(--ink-3)";
@@ -2345,6 +2348,8 @@ function paintInsidesLimits() {
     tile("Risk per trade", limitPct(limits.risk_per_trade_max), "", "of equity, per position"),
     tile("Risk per day", limitPct(limits.risk_per_day_max), "", "then everything is closed"),
     tile("Position cap", limitPct(limits.position_fraction_max), "", "of equity in one name"),
+    tile("Position ceiling", usd0.format(limits.position_notional_max), "",
+      "the most a new position may cost"),
     tile("Fractional", limits.fractional_orders ? "Yes" : "No", "", "part shares allowed"),
   );
 }

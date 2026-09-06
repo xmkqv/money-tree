@@ -85,6 +85,8 @@ mise --env production run deploy HEAD
 ET = US Eastern Time
 account = account value when the position opens
 position value = money allocated to one position
+position cap = the most a new position may be worth; it sizes entries only, so a
+    position already open keeps the size it was opened at
 breakeven = entry price
 opening range size = opening range high - opening range low
 opening range level(p) = opening range low + p * opening range size
@@ -145,7 +147,7 @@ entry
     open positions may remain after the entry window
 
 risk
-    position size = 10% of account
+    position size = 10% of account, capped at $1,000 per position
     short position size = whole shares only
     risk per trade = 0.15% of account equity
     concurrent breakout positions = 3, shared across all intraday engines
@@ -212,7 +214,7 @@ entry
     open positions may remain after the entry window
 
 risk
-    position size = 10% of account
+    position size = 10% of account, capped at $1,000 per position
     short position size = whole shares only
     risk per trade = not set
     concurrent breakout positions = 3, shared across all intraday engines
@@ -280,7 +282,7 @@ entry
     open positions may remain after the entry window
 
 risk
-    position size = 10% of account
+    position size = 10% of account, capped at $1,000 per position
     short position size = whole shares only
     risk per trade = 0.15% of account equity
     concurrent breakout positions = 3, shared across all intraday engines
@@ -343,7 +345,7 @@ entry
         ignored when no earnings date is known
 
 risk
-    position size = 10% of account
+    position size = 10% of account, capped at $1,000 per position
     risk per trade = not set
     risk-to-reward ratio = not set
     R = not set
@@ -397,7 +399,7 @@ entry
     one entry per symbol per session
 
 risk
-    position size = 10% of account
+    position size = 10% of account, capped at $1,000 per position
     risk per trade = 0.5% of account
     risk-to-reward ratio = none
     R = not set

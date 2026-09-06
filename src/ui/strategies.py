@@ -35,6 +35,7 @@ from bot.strategies.tfb_50 import (
 )
 from bot.types import (
     POSITION_FRACTION_CAP_MAX,
+    POSITION_NOTIONAL_USD_MAX,
     POSITIONS_MAX,
     STRATEGY_LABELS,
     StrategyName,
@@ -150,6 +151,14 @@ def portfolio_rules(daily_loss: float) -> list[Row]:
             source="portfolio.py · _orb_position_count",
         ),
         Row(
+            field="Position ceiling",
+            value=f"A new position is never worth more than {_usd(POSITION_NOTIONAL_USD_MAX)} "
+            "at entry, however large the account grows. It is a limit on entries alone: a "
+            "position already open keeps the size it was opened at, and is managed and exited "
+            "on its own rules.",
+            source="strategies/shared.py · entry_quantity",
+        ),
+        Row(
             field="Exposure",
             value="The total value held never exceeds account equity, so the account never "
             "trades on borrowed money.",
@@ -177,6 +186,10 @@ def _millions(value: float) -> str:
 def _pct(fraction: float) -> str:
     text = f"{fraction * 100:.2f}".rstrip("0").rstrip(".")
     return f"{text}%"
+
+
+def _usd(amount: float) -> str:
+    return f"${amount:,.0f}"
 
 
 UNIVERSE = (
@@ -335,7 +348,8 @@ def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: date
                 else " (the configured per-trade limit; this strategy states none of its own)."
             )
             + f" A single position is never worth more than {_pct(POSITION_FRACTION_CAP_MAX)} "
-            "of equity.",
+            f"of equity, and never more than {_usd(POSITION_NOTIONAL_USD_MAX)} whatever that "
+            "equity comes to.",
             source="portfolio.py · _enter",
         ),
         Row(field="Min. R:R", value=f"{reward} {targets}", source="portfolio.py · on_filled_order"),
@@ -382,7 +396,8 @@ def _daily(strategy: StrategyName, per_trade: float, closes: datetime) -> list[R
         )
         risk = (
             "No per-trade risk limit is set for this strategy, so the size comes from the "
-            f"position cap alone: never more than {_pct(POSITION_FRACTION_CAP_MAX)} of equity."
+            f"position cap alone: never more than {_pct(POSITION_FRACTION_CAP_MAX)} of equity, "
+            f"and never more than {_usd(POSITION_NOTIONAL_USD_MAX)}."
         )
         setup_source = "strategies/shared.py · does_momentum_enter"
         entry_source = "strategies/shared.py · does_momentum_enter, portfolio.py · _run_sma"
@@ -403,7 +418,8 @@ def _daily(strategy: StrategyName, per_trade: float, closes: datetime) -> list[R
             f"{_pct(TFB_RISK_MAX)} of account equity per trade — this strategy states its "
             f"own {_pct(TFB_RISK_MAX)} in the register, so that governs instead of the "
             f"configured {_pct(per_trade)}. A single position is never worth more than "
-            f"{_pct(POSITION_FRACTION_CAP_MAX)} of equity, and this strategy holds at most "
+            f"{_pct(POSITION_FRACTION_CAP_MAX)} of equity or "
+            f"{_usd(POSITION_NOTIONAL_USD_MAX)} in money, and this strategy holds at most "
             f"{TFB_POSITIONS_MAX} positions at once."
         )
         setup_source = "strategies/shared.py · does_tfb_enter"
