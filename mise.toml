@@ -145,7 +145,8 @@ revision="$(git rev-parse --short HEAD)"
 
 for service in web bot; do
   for key in $(uv run mt env list --service "$service"); do
-    printf '%s' "${!key}" \
+    eval "value=\${$key:?}"
+    printf '%s' "$value" \
       | railway variable set "$key" --stdin --service "money-tree-$service" \
         --skip-deploys --json >/dev/null
   done
