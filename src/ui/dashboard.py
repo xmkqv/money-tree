@@ -27,6 +27,7 @@ from bot.strategies.shared import (
     session_bounds,
     session_starts,
 )
+from bot.strategies.sma20 import SMA20_STOP_FRACTION, SMA20_TARGET_GAINS
 from bot.types import (
     POSITION_FRACTION_CAP_MAX,
     STATE_SIGNATURE_SALT,
@@ -229,6 +230,14 @@ def orb_levels(
         "range": {"high": round(high, 4), "low": round(low, 4)},
         "stop": round(stop, 4),
         "targets": [round(value, 4) for value in targets],
+    }
+
+
+def sma20_levels(entry: float) -> dict[str, Any]:
+    """20SMA cuts its stop and both targets from the entry price and nothing else."""
+    return {
+        "stop": round(entry * (1.0 - SMA20_STOP_FRACTION), 4),
+        "targets": [round(entry * (1.0 + gain), 4) for gain in SMA20_TARGET_GAINS],
     }
 
 
@@ -466,7 +475,7 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         request: Request,
         symbol: Annotated[str, Query(min_length=1, max_length=12, pattern=r"^[A-Z][A-Z.]*$")],
         strategy: Annotated[
-            Literal["orb5", "orb10", "orb15", "sma", "tfb_50", "unattributed"], Query()
+            Literal["orb5", "orb10", "orb15", "sma", "tfb_50", "sma20", "unattributed"], Query()
         ],
         side: Annotated[Literal["long", "short"], Query()],
         entry: Annotated[float, Query(gt=0)],
@@ -500,6 +509,8 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
                 found = opening_range(session, opens, minutes)
                 if found is not None:
                     payload.update(orb_levels(strategy, direction, entry, *found))
+            elif strategy == "sma20":
+                payload.update(sma20_levels(entry))
             elif strategy in DAILY_STOP_ATR_MULTIPLES:
                 history = await market(request).bars(
                     symbol,
