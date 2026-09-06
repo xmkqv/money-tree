@@ -37,11 +37,6 @@ const MON3 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov",
 const DAY3 = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
 
-const REFRESH_MS = 30000;
-
-const PULSE_MS = 2000;
-
-
 const PHONE = window.matchMedia("(max-width: 720px)");
 const onPhone = () => PHONE.matches;
 
@@ -2564,8 +2559,13 @@ syncThemeButtons();
 initChartInteraction();
 wireTradeChart();
 refresh();
-setInterval(() => { if (!document.hidden) refresh(); }, REFRESH_MS);
-setInterval(() => { if (!document.hidden) pulse(); }, PULSE_MS);
+(async () => {
+  const session = await fetch("/api/session", { cache: "no-store" });
+  if (!session.ok) return;
+  const cadence = await session.json();
+  setInterval(() => { if (!document.hidden) refresh(); }, cadence.refresh_seconds * 1000);
+  setInterval(() => { if (!document.hidden) pulse(); }, cadence.pulse_seconds * 1000);
+})();
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;

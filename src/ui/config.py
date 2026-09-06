@@ -16,6 +16,7 @@ from bot.types import (
 
 type Mode = Literal["development", "production"]
 type Count = Annotated[int, Field(gt=0)]
+type MaxAge = Annotated[int, Field(ge=0)]
 
 
 class WebSection(SettingsSection):
@@ -38,6 +39,12 @@ class DashboardSection(SettingsSection):
     page_rows_max: Count
     pages_max: Count
     sma_lengths: tuple[int, ...] = Field(min_length=1)
+    ledger_max_age_seconds: MaxAge
+    chart_max_age_seconds: MaxAge
+    levels_max_age_seconds: MaxAge
+    strategies_max_age_seconds: MaxAge
+    refresh_poll_seconds: Count
+    pulse_poll_seconds: Count
 
 
 class LoginSection(SettingsSection):
@@ -52,6 +59,7 @@ class WebSettings(BaseSettings):
     model_config = SettingsConfigDict(env_nested_delimiter="__", extra="ignore", frozen=True)
 
     mode: Annotated[Mode, Field(validation_alias="MISE_ENV")]
+    benchmark_symbol: Symbol
     broker: BrokerSection
     risk: RiskSection
     export: ExportSection
@@ -59,7 +67,6 @@ class WebSettings(BaseSettings):
     dashboard: DashboardSection
 
     @property
-    benchmark_symbol: Symbol
     def railway_oauth_redirect_uri(self) -> str:
         return f"{str(self.web.base_url).rstrip('/')}/auth/callback"
 

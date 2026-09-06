@@ -520,7 +520,14 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         token = request.session.get("csrf_token")
         if not isinstance(token, str):
             return error_response("Session is invalid", 401)
-        return JSONResponse({"csrf_token": token}, headers=NO_STORE)
+        return JSONResponse(
+            {
+                "csrf_token": token,
+                "refresh_seconds": dashboard_section.refresh_poll_seconds,
+                "pulse_seconds": dashboard_section.pulse_poll_seconds,
+            },
+            headers=NO_STORE,
+        )
 
     @router.get("/api/bars")
     async def bars(
@@ -573,7 +580,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 "smaLengths": list(dashboard_section.sma_lengths),
                 "bars": cached,
             },
-            60,
+            dashboard_section.chart_max_age_seconds,
         )
 
     @router.get("/api/levels")
@@ -593,7 +600,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         key = f"levels|{symbol}|{strategy}|{side}|{entry}|{opened}"
         cached = levels_cache.fresh(key)
         if cached is not None:
-            return read_response(cached, 300)
+            return read_response(cached, dashboard_section.levels_max_age_seconds)
 
         direction: Direction = 1 if side == "long" else -1
         payload = Levels(strategy=strategy, reconstructed=True)
@@ -632,7 +639,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                     payload["stop"] = round(entry - direction * distance, 4)
                     payload["atr"] = round(average_range, 4)
             levels_cache.store(key, payload)
-        return read_response(payload, 300)
+        return read_response(payload, dashboard_section.levels_max_age_seconds)
 
     @router.get("/api/strategies")
     async def strategies() -> JSONResponse:
@@ -641,7 +648,10 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         active_configuration = (
             snapshot.configuration if snapshot else configuration.risk
         )
-        return read_response(strategy_rules(active_configuration, configured=reported), 60)
+        return read_response(
+            strategy_rules(active_configuration, configured=reported),
+            dashboard_section.strategies_max_age_seconds,
+        )
 
     @router.get("/api/ledger")
     async def ledger(request: Request) -> JSONResponse:
@@ -654,17 +664,20 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                     cached = await build_ledger(
                         alpaca(request),
                         market(request),
+                        benchmark_symbol,
                         configuration.risk,
                         snapshot,
                         stale,
                     )
                     ledger_cache.store(cached)
-        return read_response({**cached, "bot": bot_state(snapshot, stale)}, 10)
+        return read_response(
+            {**cached, "bot": bot_state(snapshot, stale)},
+            dashboard_section.ledger_max_age_seconds,
+        )
 
     @router.get("/api/pulse")
     async def pulse(request: Request) -> JSONResponse:
         cached = pulse_cache.fresh()
-                        benchmark_symbol,
         if cached is None:
             async with pulse_cache.lock:
                 cached = pulse_cache.fresh()
