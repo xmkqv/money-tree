@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from pydantic import AnyHttpUrl, Field
+from pydantic import AfterValidator, AnyHttpUrl, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from bot.types import (
@@ -42,7 +42,9 @@ class DashboardSection(SettingsSection):
 class LoginSection(SettingsSection):
     railway_oauth_client_id: str = Field(min_length=1)
     railway_oauth_client_secret: RequiredSecret
-    allowed_railway_emails: frozenset[str] = Field(min_length=1)
+    allowed_railway_emails: frozenset[Annotated[str, AfterValidator(str.casefold)]] = Field(
+        min_length=1
+    )
 
 
 class WebSettings(BaseSettings):
