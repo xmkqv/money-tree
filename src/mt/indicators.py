@@ -6,8 +6,8 @@ from pandas import DataFrame, Series
 from pandas_ta_classic.trend.adx import adx as ta_adx
 from pandas_ta_classic.volatility.atr import atr as ta_atr
 
-from .config import settings
-from .frames import last_close
+from mt.config.settings import settings
+from mt.frames import last_close
 
 
 def latest_atr(frame: DataFrame, period: int = settings.indicators.period) -> float:

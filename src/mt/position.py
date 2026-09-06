@@ -1,8 +1,11 @@
 from decimal import ROUND_DOWN, Decimal
 from math import ceil, floor, isfinite
+from typing import Literal
 
-from .config import settings
-from .types import Direction
+from mt.config.settings import settings
+
+
+type Direction = Literal[-1, 1]
 
 
 def entry_quantity(
