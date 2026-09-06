@@ -8,5 +8,6 @@ def alpaca_broker() -> object:
         "API_KEY": settings.alpaca_api_key.get_secret_value(),
         "API_SECRET": settings.alpaca_api_secret.get_secret_value(),
         "PAPER": settings.alpaca_is_paper,
+        "MARKET": "NYSE",
     }
     return Alpaca(configuration)
