@@ -10,6 +10,7 @@ MISE_PROJECT_ROOT = "{{ config_root }}"
 UV_PYTHON = "python3.13"
 UV_PYTHON_PREFERENCE = "only-system"
 STRATEGIES = "breakout_5m,daily_sma,daily_tfb,breakout_10m"
+BENCHMARK_SYMBOL = "SPY"
 
 ## broker
 BROKER__MODE = "paper"
@@ -39,6 +40,10 @@ PORTFOLIO__PENDING_TTL_MINUTES = "5"
 
 ## export
 EXPORT__INTERVAL_SECONDS = "5"
+
+## backtest
+BACKTEST__WARM_UP_DAYS = "60"
+BACKTEST__BUDGET_USD = "100000.0"
 
 ## earnings
 EARNINGS__BLOCK_DAYS = "5"

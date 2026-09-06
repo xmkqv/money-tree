@@ -18,6 +18,7 @@ def parse_none(value: object) -> object:
 
 
 type RiskLimit = Annotated[float, Field(gt=0, le=1)]
+type Symbol = Annotated[str, Field(min_length=1, max_length=12, pattern=r"^[A-Z][A-Z.]*$")]
 type RequiredSecret = Annotated[SecretStr, Field(min_length=1)]
 type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
@@ -29,7 +30,6 @@ type Direction = Literal[-1, 1]
 type OptionalRiskLimit = Annotated[RiskLimit | None, BeforeValidator(parse_none)]
 
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
-BENCHMARK_SYMBOL = "SPY"
 EVENTS_MAX = 50
 STRATEGY_KEYS: tuple[StrategyName, ...] = (
     "breakout_5m",

@@ -12,6 +12,7 @@ from .types import (
     RiskSection,
     SettingsSection,
     StrategyName,
+    Symbol,
     is_strategy_name,
 )
 
@@ -39,6 +40,11 @@ class PortfolioSection(SettingsSection):
 class EarningsSection(SettingsSection):
     block_days: Count
     exit_lead_minutes: Count
+
+
+class BacktestSection(SettingsSection):
+    warm_up_days: Count
+    budget_usd: Amount
 
 
 class IndicatorSection(SettingsSection):
@@ -105,12 +111,14 @@ class BotSettings(BaseSettings):
     model_config = SettingsConfigDict(env_nested_delimiter="__", extra="ignore", frozen=True)
 
     strategies: str
+    benchmark_symbol: Symbol
     broker: BrokerSection
     risk: RiskSection
     export: ExportSection
     universe: UniverseSection
     portfolio: PortfolioSection
     earnings: EarningsSection
+    backtest: BacktestSection
     indicators: IndicatorSection
     breakout: BreakoutSection
     breakout_5m: BreakoutVariationSection

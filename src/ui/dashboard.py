@@ -24,13 +24,13 @@ from bot.strategies.breakout import Breakout, range_marks, range_stop
 from bot.strategies.daily import Daily
 from bot.strategies.registry import strategy_class
 from bot.types import (
-    BENCHMARK_SYMBOL,
     STATE_SIGNATURE_SALT,
     Direction,
     RiskSection,
     StateEvent,
     StateSnapshot,
     StrategyName,
+    Symbol,
     is_strategy_name,
 )
 
@@ -362,6 +362,7 @@ def read_response(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
 async def build_ledger(
     alpaca: AlpacaReadClient,
     market: AlpacaMarketDataClient,
+    benchmark: Symbol,
     fallback_configuration: RiskSection,
     snapshot: StateSnapshot | None,
     stale: bool,
@@ -397,7 +398,7 @@ async def build_ledger(
     benchmark_start = funded or today
 
     try:
-        bars = await market.daily_bars(BENCHMARK_SYMBOL, benchmark_start)
+        bars = await market.daily_bars(benchmark, benchmark_start)
     except httpx.HTTPError:
         bars = []
 
@@ -485,6 +486,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
 
     ledger_cache = ReadCache[Ledger](dashboard_section.ledger_ttl_seconds)
     pulse_cache = ReadCache[Pulse](dashboard_section.pulse_ttl_seconds)
+    benchmark_symbol = configuration.benchmark_symbol
     chart_ttl = dashboard_section.chart_ttl_seconds
     chart_cache_max = dashboard_section.chart_cache_max
     bar_cache = KeyedCache[list[BarRow]](chart_ttl, chart_cache_max)
@@ -662,6 +664,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
     @router.get("/api/pulse")
     async def pulse(request: Request) -> JSONResponse:
         cached = pulse_cache.fresh()
+                        benchmark_symbol,
         if cached is None:
             async with pulse_cache.lock:
                 cached = pulse_cache.fresh()

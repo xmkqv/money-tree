@@ -10,6 +10,7 @@ from bot.types import (
     RiskSection,
     SettingsSection,
     SigningSecret,
+    Symbol,
 )
 
 
@@ -58,6 +59,7 @@ class WebSettings(BaseSettings):
     dashboard: DashboardSection
 
     @property
+    benchmark_symbol: Symbol
     def railway_oauth_redirect_uri(self) -> str:
         return f"{str(self.web.base_url).rstrip('/')}/auth/callback"
 

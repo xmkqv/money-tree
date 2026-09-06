@@ -25,7 +25,6 @@ from .sizing import entry_quantity, is_fractional_allowed, quantity_value, round
 from .strategies.base import Candidate, Holding, Session, Strategy
 from .strategies.registry import STRATEGIES
 from .types import (
-    BENCHMARK_SYMBOL,
     Direction,
     EventLevel,
     StrategyName,
@@ -376,7 +375,7 @@ class Portfolio(LumibotStrategy):
         try:
             eligible = self._universe()
             held = set(self._holdings)
-            symbols = sorted(set(eligible).union({BENCHMARK_SYMBOL}, held))
+            symbols = sorted(set(eligible).union({settings.benchmark_symbol}, held))
             daily_frames = self._frames(
                 symbols,
                 datetime.combine(day - history, time(), TRADING_ZONE),

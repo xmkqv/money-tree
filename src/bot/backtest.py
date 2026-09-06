@@ -6,7 +6,7 @@ from typing import cast
 from .config import settings
 from .strategies.breakout import Breakout
 from .strategies.registry import strategy_class
-from .types import BENCHMARK_SYMBOL, StrategyName
+from .types import StrategyName
 
 
 ARTIFACT_NAMES = {
@@ -51,7 +51,10 @@ def run(
             "API_SECRET": settings.broker.api_secret.get_secret_value(),
             "PAPER": True,
         }
-        datasource_options = {"timestep": "minute", "warm_up_trading_days": 60}
+        datasource_options = {
+            "timestep": "minute",
+            "warm_up_trading_days": settings.backtest.warm_up_days,
+        }
     report_mode = output_dir is not None
     previous_disable_ui = os.environ.get(LUMIBOT_DISABLE_UI)
     if report_mode:
@@ -63,8 +66,8 @@ def run(
             end,
             config=datasource_configuration,
             parameters=parameters,
-            benchmark_asset=BENCHMARK_SYMBOL,
-            budget=100_000.0,
+            benchmark_asset=settings.benchmark_symbol,
+            budget=settings.backtest.budget_usd,
             show_plot=report_mode,
             show_tearsheet=False,
             show_indicators=report_mode,
