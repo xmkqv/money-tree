@@ -311,14 +311,8 @@ async def build_ledger(
         "buyingPower": round(float(account["buying_power"]), 2),
         "marketValue": round(sum(float(row["value"]) for row in rows), 2),
         "unrealised": round(sum(float(row["unreal"]) for row in rows), 2),
-        "positionCapPct": round(
-            100
-            * min(
-                POSITION_FRACTION_CAP_MAX,
-                configuration.position_fraction_max,
-            ),
-            2,
-        ),
+        "positionCapPct": round(100 * _position_cap_fraction(configuration, equity), 2),
+        "positionCapUsd": round(configuration.position_notional_max, 2),
         "dailyLossLimitPct": round(100 * configuration.risk_per_day_max, 2),
         "bot": bot_state(snapshot, stale),
         "strategies": strategy_labels(),
@@ -670,6 +664,20 @@ def _intraday_series(history: dict[str, Any]) -> tuple[list[dict[str, Any]], str
     points = _funded_points(history)
     rows = [{"t": when.strftime("%H:%M"), "equity": round(value, 2)} for when, value in points]
     return rows, points[0][0].date().isoformat() if points else ""
+
+
+def _position_cap_fraction(configuration: TradingConfiguration, equity: float) -> float:
+    """The tightest cap on one name, as a share of equity.
+
+    Two limits sit on a new position: a share of the account, and a fixed amount
+    of money. The dollar one is the tighter of the two once the account is large
+    enough, so the figure the dashboard quotes has to be worked out against the
+    equity of the day rather than read straight off the configuration.
+    """
+    fraction = min(POSITION_FRACTION_CAP_MAX, configuration.position_fraction_max)
+    if equity <= 0:
+        return fraction
+    return min(fraction, configuration.position_notional_max / equity)
 
 
 def _position_marks(raw: list[dict[str, Any]], equity: float) -> list[dict[str, Any]]:

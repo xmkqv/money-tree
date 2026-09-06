@@ -17,6 +17,8 @@ from pandas_ta_classic.trend.adx import adx as ta_adx
 from pandas_ta_classic.utils import cross as ta_cross
 from pandas_ta_classic.volatility.atr import atr as ta_atr
 
+from bot.types import POSITION_NOTIONAL_USD_MAX
+
 
 yfinance = cast(Any, import_module("yfinance"))
 
@@ -117,6 +119,9 @@ def entry_quantity(
     quantity = equity * position_fraction_max / price
     if risk_per_trade_max is not None:
         quantity = min(quantity, equity * risk_per_trade_max / stop_distance)
+    # The dollar ceiling is the last word on the size, so however large the
+    # account grows a single entry stops at the same amount of money.
+    quantity = min(quantity, POSITION_NOTIONAL_USD_MAX / price)
     if quantity * price < NOTIONAL_USD_MIN:
         return Decimal(0)
     return quantity_value(quantity, fractional_orders)
