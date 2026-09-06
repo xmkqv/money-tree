@@ -4,9 +4,10 @@ description: only-if-asked
 disable-model-invocation: true
 ---
 
-checkpoint()
+checkpoint(spec?)
   bundle the changes below the current working directory into coherent layers
   commit each layer
+  if ¬spec, commit everything except spec changes; keep the spec changes just do not commit them
 
 # rules
 
