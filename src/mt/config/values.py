@@ -1,4 +1,4 @@
-from typing import Annotated, Literal
+from typing import Annotated, Literal, get_args
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
 
@@ -18,6 +18,10 @@ type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
 type Mode = Literal["development", "production"]
 type BrokerMode = Literal["live", "paper"]
 type DataFeedName = Literal["sip", "delayed_sip", "iex"]
+type Timeframe = Annotated[str, Field(pattern=r"^\d+(Min|Hour|Day)$")]
+type ChartTimeframe = Literal["5Min", "1Hour", "1Day"]
+
+CHART_TIMEFRAMES: tuple[ChartTimeframe, ...] = get_args(ChartTimeframe.__value__)
 
 
 class SettingsSection(BaseModel):

@@ -1,11 +1,13 @@
-from pathlib import Path
+from datetime import datetime
 from typing import Annotated, Self
 
 from pydantic import AfterValidator, AnyHttpUrl, Field, model_validator
 
 from .values import (
+    CHART_TIMEFRAMES,
     Amount,
     BrokerMode,
+    ChartTimeframe,
     Count,
     DataFeedName,
     Fraction,
@@ -14,24 +16,39 @@ from .values import (
     RequiredSecret,
     SettingsSection,
     SigningSecret,
+    Timeframe,
 )
+
+
+class TimeoutSection(SettingsSection):
+    connect_seconds: Amount
+    read_seconds: Amount
+    write_seconds: Amount
+    pool_seconds: Amount
 
 
 class BrokerSection(SettingsSection):
     mode: BrokerMode
     api_key: RequiredSecret
     api_secret: RequiredSecret
+    timeout: TimeoutSection
+
+
+class FinnhubSection(SettingsSection):
+    api_key: RequiredSecret
+    timeout: TimeoutSection
 
 
 class PastSection(SettingsSection):
     intraday_feed: DataFeedName
     daily_feed: DataFeedName
+    timeout: TimeoutSection
 
 
 class RiskSection(SettingsSection):
     per_day_max: Fraction
     per_trade_max: Fraction
-    position_fraction_max: Annotated[float, Field(gt=0, le=0.10)]
+    position_fraction_max: Fraction
     positions_max: Count
     notional_usd_min: Amount
     fractional_orders: bool
@@ -47,31 +64,45 @@ class ExportSection(SettingsSection):
     url: AnyHttpUrl
     secret: SigningSecret
     interval_seconds: Count
+    events_max: Count
+    timeout_seconds: Amount
+    close_timeout_seconds: Amount
 
 
-class UniverseSection(SettingsSection):
-    cache: Path
-    market_cap_usd_min: Amount
+class ScreenSection(SettingsSection):
     price_usd_min: Amount
     turnover_usd_min: Amount
+    turnover_sessions: Count
     past_days: Count
 
 
 class PortfolioSection(SettingsSection):
     symbols_per_request: Count
     orders_per_request: Count
+    past_days: Count
     preparation_attempts_max: Count
     pending_ttl_minutes: Count
+    opening_lead_minutes: Count
+    iteration_minutes: Count
 
 
 class EarningsSection(SettingsSection):
     block_days: Count
     exit_lead_minutes: Count
+    calendar_cache_max: Count
 
 
 class BacktestSection(SettingsSection):
     warm_up_days: Count
     budget_usd: Amount
+    start_at: datetime
+    end_at: datetime
+
+    @model_validator(mode="after")
+    def validate_span(self) -> Self:
+        if self.end_at <= self.start_at:
+            raise ValueError("backtest end must follow its start")
+        return self
 
 
 class IndicatorsSection(SettingsSection):
@@ -134,10 +165,16 @@ class DailyTfbSection(DailyVariationSection):
 class WebSection(SettingsSection):
     base_url: AnyHttpUrl
     session_secret: SigningSecret
-    session_ttl_seconds: Annotated[int, Field(gt=0, le=86_400)]
+    session_ttl_seconds: Count
     heartbeat_timeout_seconds: Count
     signature_window_seconds: Count
     state_body_bytes_max: Count
+
+
+class ChartTimeframeSection(SettingsSection):
+    pad_days: Count
+    span_max: Count
+    warm_up_days: Count
 
 
 class DashboardSection(SettingsSection):
@@ -146,6 +183,12 @@ class DashboardSection(SettingsSection):
     chart_ttl_seconds: Count
     chart_cache_max: Count
     levels_past_days: Count
+    levels_source: Timeframe
+    levels_source_bars_max: Count
+    levels_range_multiple: Count
+    bars_max: Count
+    chart_timeframes: dict[ChartTimeframe, ChartTimeframeSection]
+    session_source: Timeframe
     session_source_bars_max: Count
     session_source_pages_max: Count
     page_rows_max: Count
@@ -157,6 +200,12 @@ class DashboardSection(SettingsSection):
     strategies_max_age_seconds: MaxAge
     refresh_poll_seconds: Count
     pulse_poll_seconds: Count
+
+    @model_validator(mode="after")
+    def validate_chart_timeframes(self) -> Self:
+        if set(self.chart_timeframes) != set(CHART_TIMEFRAMES):
+            raise ValueError(f"chart timeframes must be {', '.join(CHART_TIMEFRAMES)}")
+        return self
 
 
 class LoginSection(SettingsSection):

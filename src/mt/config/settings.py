@@ -1,9 +1,9 @@
-from typing import Annotated, Self
+from typing import Annotated
 
-from pydantic import Field, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from mt.strategies.keys import STRATEGY_KEYS, StrategyName, is_strategy_name
+from mt.strategies.keys import StrategySelection
 
 from .sections import (
     BacktestSection,
@@ -16,12 +16,13 @@ from .sections import (
     DashboardSection,
     EarningsSection,
     ExportSection,
+    FinnhubSection,
     IndicatorsSection,
     LoginSection,
     PastSection,
     PortfolioSection,
     RiskSection,
-    UniverseSection,
+    ScreenSection,
     WebSection,
 )
 from .values import Mode, Symbol
@@ -30,13 +31,14 @@ from .values import Mode, Symbol
 class BotSettings(BaseSettings):
     model_config = SettingsConfigDict(env_nested_delimiter="__", extra="ignore", frozen=True)
 
-    strategies: str
+    strategies: Annotated[StrategySelection, NoDecode]
     benchmark_symbol: Symbol
     broker: BrokerSection
+    finnhub: FinnhubSection
     past: PastSection
     risk: RiskSection
     export: ExportSection
-    universe: UniverseSection
+    screen: ScreenSection
     portfolio: PortfolioSection
     earnings: EarningsSection
     backtest: BacktestSection
@@ -48,23 +50,6 @@ class BotSettings(BaseSettings):
     daily_sma: DailySmaSection
     daily_tfb: DailyTfbSection
 
-    @model_validator(mode="after")
-    def validate_strategies(self) -> Self:
-        values = [value.strip() for value in self.strategies.split(",") if value.strip()]
-        if not values:
-            raise ValueError("STRATEGIES must select at least one strategy")
-        if len(values) != len(set(values)):
-            raise ValueError("STRATEGIES must not contain duplicates")
-        unknown = set(values).difference(STRATEGY_KEYS)
-        if unknown:
-            raise ValueError(f"unknown strategies: {', '.join(sorted(unknown))}")
-        return self
-
-    @property
-    def strategy_names(self) -> list[StrategyName]:
-        values = [item.strip() for item in self.strategies.split(",")]
-        return [value for value in values if is_strategy_name(value)]
-
 
 class WebSettings(BaseSettings):
     model_config = SettingsConfigDict(env_nested_delimiter="__", extra="ignore", frozen=True)
@@ -72,6 +57,7 @@ class WebSettings(BaseSettings):
     mode: Annotated[Mode, Field(validation_alias="MISE_ENV")]
     benchmark_symbol: Symbol
     broker: BrokerSection
+    finnhub: FinnhubSection
     past: PastSection
     risk: RiskSection
     export: ExportSection

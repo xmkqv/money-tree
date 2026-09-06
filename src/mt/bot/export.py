@@ -13,14 +13,13 @@ from itsdangerous import TimestampSigner
 from mt.config.sections import RiskSection
 from mt.config.settings import settings
 from mt.snapshot import (
-    EVENTS_MAX,
     STATE_SIGNATURE_SALT,
     EventLevel,
     RunStatus,
     StateEvent,
     StateSnapshot,
 )
-from mt.strategies.keys import StrategyName
+from mt.strategies.keys import StrategyKey
 
 
 logger = logging.getLogger(__name__)
@@ -31,8 +30,8 @@ class StateExporter:
         self,
         url: str,
         secret: str,
-        strategies: list[StrategyName],
-        paused: list[StrategyName],
+        strategies: list[StrategyKey],
+        paused: list[StrategyKey],
         configuration: RiskSection,
     ) -> None:
         self.url = url
@@ -64,7 +63,7 @@ class StateExporter:
         level: EventLevel,
         message: str,
         *,
-        strategy: StrategyName | None = None,
+        strategy: StrategyKey | None = None,
     ) -> None:
         with self.lock:
             self.status = status
@@ -78,7 +77,7 @@ class StateExporter:
                     strategy=strategy,
                 )
             )
-            self.events = self.events[-EVENTS_MAX:]
+            self.events = self.events[-settings.export.events_max :]
             with contextlib.suppress(queue.Empty):
                 self.pending.get_nowait()
             self.pending.put_nowait(self._snapshot())
@@ -89,7 +88,7 @@ class StateExporter:
         level: EventLevel = "info" if status == "stopped" else "error"
         self.publish(status, status, level, message)
         self.stopping.set()
-        self.thread.join(timeout=5)
+        self.thread.join(timeout=settings.export.close_timeout_seconds)
 
     def _snapshot(self) -> StateSnapshot:
         return StateSnapshot(
@@ -105,7 +104,7 @@ class StateExporter:
         )
 
     def _export(self) -> None:
-        with httpx.Client(timeout=1.0) as client:
+        with httpx.Client(timeout=settings.export.timeout_seconds) as client:
             while True:
                 try:
                     snapshot = self.pending.get(timeout=settings.export.interval_seconds)

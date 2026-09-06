@@ -176,9 +176,10 @@ class AlpacaLiveClient:
 
 
 class AlpacaPastClient:
-    def __init__(self, client: httpx.AsyncClient, feed: DataFeedName) -> None:
+    def __init__(self, client: httpx.AsyncClient, feed: DataFeedName, bars_max: int) -> None:
         self._client = client
         self._feed = feed
+        self._bars_max = bars_max
 
     async def daily_bars(self, symbol: str, start: str) -> list[Bar]:
         return await self.bars(symbol, "1Day", start)
@@ -189,13 +190,13 @@ class AlpacaPastClient:
         timeframe: str,
         start: str,
         end: str | None = None,
-        limit: int = 1000,
+        limit: int | None = None,
         pages_max: int = 1,
     ) -> list[Bar]:
         params = {
             "timeframe": timeframe,
             "start": start,
-            "limit": str(limit),
+            "limit": str(self._bars_max if limit is None else limit),
             "feed": self._feed,
         }
         if end is not None:

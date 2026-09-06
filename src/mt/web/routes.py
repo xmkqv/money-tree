@@ -12,25 +12,17 @@ from pydantic import ValidationError
 from starlette.responses import FileResponse
 
 from mt.config.settings import WebSettings
-from mt.config.values import Symbol
+from mt.config.values import ChartTimeframe, Symbol
 from mt.data.alpaca import AlpacaLiveClient, AlpacaPastClient
 from mt.exchange import TRADING_ZONE, session_bounds
 from mt.position import Direction
 from mt.snapshot import STATE_SIGNATURE_SALT, StateSnapshot
 from mt.strategies.breakout import Breakout
 from mt.strategies.daily import Daily
-from mt.strategies.keys import StrategyName, Unattributed, is_strategy_name
+from mt.strategies.keys import StrategyKey, Unattributed, is_strategy_key
 from mt.strategies.registry import strategy_class
 
-from .bars import (
-    CHART_TIMEFRAMES,
-    SESSION_SOURCE,
-    BarRow,
-    bar_row,
-    bars_atr,
-    chart_window,
-    session_hour_bars,
-)
+from .bars import BarRow, bar_row, bars_atr, chart_window, session_hour_bars
 from .cache import Cache
 from .ledger import Ledger, build_ledger
 from .levels import Levels, add_breakout_levels, opening_range
@@ -151,7 +143,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
     async def bars(
         request: Request,
         symbol: Annotated[Symbol, Query()],
-        timeframe: Annotated[Literal["5Min", "1Hour", "1Day"], Query()],
+        timeframe: Annotated[ChartTimeframe, Query()],
         opened: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
         closed: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
     ) -> JSONResponse:
@@ -163,7 +155,8 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         if closed_on < opened_on:
             return error_response("The close cannot precede the open", 422)
 
-        start, display, end = chart_window(timeframe, opened_on, closed_on)
+        rules = dashboard_section.chart_timeframes[timeframe]
+        start, display, end = chart_window(rules, opened_on, closed_on)
         key = f"{symbol}|{timeframe}|{start.isoformat()}|{end.isoformat()}"
         cached = bar_cache.fresh(key)
         if cached is None:
@@ -173,7 +166,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                     if timeframe == "1Hour":
                         half = await past(request).bars(
                             symbol,
-                            SESSION_SOURCE,
+                            dashboard_section.session_source,
                             start.isoformat(),
                             end.isoformat(),
                             limit=dashboard_section.session_source_bars_max,
@@ -185,7 +178,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                             bar_row(bar)
                             for bar in await past(request).bars(
                                 symbol,
-                                CHART_TIMEFRAMES[timeframe]["bar"],
+                                timeframe,
                                 start.isoformat(),
                                 end.isoformat(),
                             )
@@ -206,7 +199,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
     async def levels(
         request: Request,
         symbol: Annotated[Symbol, Query()],
-        strategy: Annotated[StrategyName | Unattributed, Query()],
+        strategy: Annotated[StrategyKey | Unattributed, Query()],
         side: Annotated[Literal["long", "short"], Query()],
         entry: Annotated[float, Query(gt=0)],
         opened: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
@@ -224,19 +217,20 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         direction: Direction = 1 if side == "long" else -1
         payload = Levels(strategy=strategy, reconstructed=True)
         bounds = session_bounds(opened_on)
-        found_class = strategy_class(strategy) if is_strategy_name(strategy) else None
+        found_class = strategy_class(strategy) if is_strategy_key(strategy) else None
 
         async with levels_cache.lock:
             if found_class is not None and issubclass(found_class, Breakout) and bounds:
                 breakout = found_class
                 opens = bounds[0]
                 minutes = breakout.opening_minutes
+                span = dashboard_section.levels_range_multiple * minutes
                 opening_bars = await past(request).bars(
                     symbol,
-                    "5Min",
+                    dashboard_section.levels_source,
                     opens.isoformat(),
-                    (opens + timedelta(minutes=3 * minutes)).isoformat(),
-                    limit=10,
+                    (opens + timedelta(minutes=span)).isoformat(),
+                    limit=dashboard_section.levels_source_bars_max,
                 )
                 found = opening_range(opening_bars, opens, minutes)
                 if found is not None:

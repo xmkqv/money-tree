@@ -4,6 +4,7 @@ from typing import Any, TypedDict, cast
 
 from pandas import DataFrame, DatetimeIndex, Timedelta
 
+from mt.config.sections import ChartTimeframeSection
 from mt.config.settings import settings
 from mt.data.alpaca import Bar
 from mt.exchange import TRADING_ZONE, session_starts
@@ -18,21 +19,6 @@ class BarRow(TypedDict):
     l: float  # noqa: E741
     c: float
     v: float
-
-
-class TimeframeRules(TypedDict):
-    bar: str
-    pad_days: int
-    span_max: int
-    warmup_days: int
-
-
-CHART_TIMEFRAMES: dict[str, TimeframeRules] = {
-    "5Min": {"bar": "5Min", "pad_days": 1, "span_max": 10, "warmup_days": 5},
-    "1Hour": {"bar": "1Hour", "pad_days": 7, "span_max": 90, "warmup_days": 46},
-    "1Day": {"bar": "1Day", "pad_days": 120, "span_max": 900, "warmup_days": 300},
-}
-SESSION_SOURCE = "30Min"
 
 
 def session_hour_bars(bars: list[Bar]) -> list[BarRow]:
@@ -69,14 +55,15 @@ def session_hour_bars(bars: list[Bar]) -> list[BarRow]:
     ]
 
 
-def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, datetime, datetime]:
-    rules = CHART_TIMEFRAMES[timeframe]
-    pad = timedelta(days=rules["pad_days"])
+def chart_window(
+    rules: ChartTimeframeSection, opened: date, closed: date
+) -> tuple[datetime, datetime, datetime]:
+    pad = timedelta(days=rules.pad_days)
     display = opened - pad
     end = closed + pad
-    if (end - display).days > rules["span_max"]:
-        display = end - timedelta(days=rules["span_max"])
-    data = display - timedelta(days=rules["warmup_days"])
+    if (end - display).days > rules.span_max:
+        display = end - timedelta(days=rules.span_max)
+    data = display - timedelta(days=rules.warm_up_days)
     return (
         datetime.combine(data, dtime(0, 0), TRADING_ZONE),
         datetime.combine(display, dtime(0, 0), TRADING_ZONE),

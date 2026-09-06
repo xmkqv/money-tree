@@ -3,14 +3,14 @@ from typing import Literal
 from pydantic import UUID4, AwareDatetime, BaseModel, ConfigDict, Field
 
 from mt.config.sections import RiskSection
-from mt.strategies.keys import STRATEGY_KEYS, StrategyName
+from mt.config.settings import settings
+from mt.strategies.keys import STRATEGY_KEYS, StrategyKey
 
 
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
 type EventLevel = Literal["info", "warning", "error"]
 
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
-EVENTS_MAX = 50
 
 
 class _StrictModel(BaseModel):
@@ -22,18 +22,18 @@ class StateEvent(_StrictModel):
     occurred_at: AwareDatetime
     level: EventLevel
     message: str = Field(min_length=1, max_length=500)
-    strategy: StrategyName | None = None
+    strategy: StrategyKey | None = None
 
 
 class StateSnapshot(_StrictModel):
     run_id: UUID4
     sequence: int = Field(ge=1)
     status: RunStatus
-    strategies: list[StrategyName] = Field(min_length=1, max_length=len(STRATEGY_KEYS))
-    paused: list[StrategyName] = Field(
-        default_factory=list[StrategyName], max_length=len(STRATEGY_KEYS)
+    strategies: list[StrategyKey] = Field(min_length=1, max_length=len(STRATEGY_KEYS))
+    paused: list[StrategyKey] = Field(
+        default_factory=list[StrategyKey], max_length=len(STRATEGY_KEYS)
     )
     started_at: AwareDatetime
     heartbeat_at: AwareDatetime
     configuration: RiskSection
-    events: list[StateEvent] = Field(max_length=EVENTS_MAX)
+    events: list[StateEvent] = Field(max_length=settings.export.events_max)

@@ -2,10 +2,11 @@ from datetime import datetime
 from typing import Annotated
 
 import typer
+from pydantic import ValidationError
 
 from mt.config.services import SERVICE_SETTINGS, ServiceName, service_keys
 from mt.config.settings import settings
-from mt.strategies.keys import STRATEGY_KEYS, StrategyName, is_strategy_name
+from mt.strategies.keys import STRATEGY_KEYS, StrategyKey, strategy_selection
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -31,17 +32,15 @@ def _parse_symbols(value: str) -> list[str]:
     return [symbol for item in value.split(",") if (symbol := item.strip())]
 
 
-def _parse_strategies(value: str) -> list[StrategyName]:
-    selected = [item.strip() for item in value.split(",") if item.strip()]
-    allowed = STRATEGY_KEYS
-    unknown = set(selected).difference(allowed)
-    if not selected or unknown or len(selected) != len(set(selected)):
-        names = ", ".join(sorted(allowed))
-        raise typer.BadParameter(f"strategies must be unique names from: {names}")
-    return [item for item in selected if is_strategy_name(item)]
+def _parse_strategies(value: str) -> list[StrategyKey]:
+    try:
+        return list(strategy_selection.validate_python(value))
+    except ValidationError as error:
+        names = ", ".join(sorted(STRATEGY_KEYS))
+        raise typer.BadParameter(f"strategies must be unique keys from: {names}") from error
 
 
-def _parse_strategy(value: str) -> StrategyName:
+def _parse_strategy(value: str) -> StrategyKey:
     selected = _parse_strategies(value)
     if len(selected) != 1:
         raise typer.BadParameter("strategy must select exactly one strategy")
@@ -51,9 +50,9 @@ def _parse_strategy(value: str) -> StrategyName:
 @app.command("backtest")
 def run_backtest(
     symbols: Annotated[str, typer.Option()],
-    strategy: Annotated[str, typer.Option()] = settings.strategy_names[0],
-    start: Annotated[datetime, typer.Option()] = datetime(2023, 1, 1),
-    end: Annotated[datetime, typer.Option()] = datetime(2024, 1, 1),
+    strategy: Annotated[str, typer.Option()] = settings.strategies[0],
+    start: Annotated[datetime, typer.Option()] = settings.backtest.start_at,
+    end: Annotated[datetime, typer.Option()] = settings.backtest.end_at,
 ) -> None:
     from mt.bot import backtest
 
@@ -62,10 +61,10 @@ def run_backtest(
 
 @app.command("report")
 def run_report(
-    strategy: Annotated[str, typer.Option()] = settings.strategy_names[0],
+    strategy: Annotated[str, typer.Option()] = settings.strategies[0],
     symbols: Annotated[str, typer.Option()] = settings.benchmark_symbol,
-    start: Annotated[datetime, typer.Option()] = datetime(2023, 1, 1),
-    end: Annotated[datetime, typer.Option()] = datetime(2024, 1, 1),
+    start: Annotated[datetime, typer.Option()] = settings.backtest.start_at,
+    end: Annotated[datetime, typer.Option()] = settings.backtest.end_at,
 ) -> None:
     from mt.bot.backtest import report
 
@@ -73,7 +72,9 @@ def run_report(
 
 
 @app.command("trade")
-def run_trade(strategies: Annotated[str, typer.Option()] = settings.strategies) -> None:
+def run_trade(
+    strategies: Annotated[str, typer.Option()] = ",".join(settings.strategies),
+) -> None:
     from mt.bot import trade
 
     trade.run(_parse_strategies(strategies))

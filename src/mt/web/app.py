@@ -12,6 +12,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from mt.config.settings import LoginSettings, WebSettings
 from mt.data.alpaca import PAST_API_URL, AlpacaLiveClient, AlpacaPastClient, alpaca_api_url
+from mt.data.http import http_timeout
 
 from .auth import RailwayOAuthClient
 from .routes import NO_STORE, dashboard_router, error_response
@@ -72,12 +73,12 @@ def create_app() -> FastAPI:
             httpx.AsyncClient(
                 base_url=alpaca_api_url(configuration.broker.mode),
                 headers=credentials,
-                timeout=httpx.Timeout(connect=2, read=10, write=5, pool=5),
+                timeout=http_timeout(configuration.broker.timeout),
             ) as live,
             httpx.AsyncClient(
                 base_url=PAST_API_URL,
                 headers=credentials,
-                timeout=httpx.Timeout(connect=2, read=8, write=5, pool=5),
+                timeout=http_timeout(configuration.past.timeout),
             ) as past,
         ):
             yield {
@@ -86,7 +87,11 @@ def create_app() -> FastAPI:
                     configuration.dashboard.page_rows_max,
                     configuration.dashboard.pages_max,
                 ),
-                "past": AlpacaPastClient(past, configuration.past.intraday_feed),
+                "past": AlpacaPastClient(
+                    past,
+                    configuration.past.intraday_feed,
+                    configuration.dashboard.bars_max,
+                ),
             }
 
     app = FastAPI(
