@@ -68,7 +68,7 @@ def create_app() -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, object]]:
         async with (
             httpx.AsyncClient(
-                base_url=alpaca_api_url(configuration.alpaca_is_paper),
+                base_url=alpaca_api_url(configuration.broker_mode),
                 headers=credentials,
                 timeout=httpx.Timeout(connect=2, read=10, write=5, pool=5),
             ) as trading,

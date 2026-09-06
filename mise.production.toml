@@ -1,7 +1,9 @@
 [env]
 STRATEGIES = "breakout_5m,daily_sma,daily_tfb,breakout_10m"
-ALPACA_IS_PAPER = "true"
+BROKER_MODE = "paper"
 ALPACA_DATA_FEED = "iex"
+ALPACA_DAILY_FEED = "sip"
+UNIVERSE_CACHE = "/tmp/money-tree-universe.json"
 FRACTIONAL_ORDERS = "true"
 RISK_PER_DAY_MAX = "0.02"
 RISK_PER_TRADE_MAX = "0.005"

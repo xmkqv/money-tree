@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Self
 
 from pydantic import AnyHttpUrl, model_validator
@@ -5,6 +6,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .types import (
     STRATEGY_KEYS,
+    BrokerMode,
     DataFeedName,
     RequiredSecret,
     RiskLimit,
@@ -21,8 +23,10 @@ class BotSettings(BaseSettings):
     strategies: str
     alpaca_api_key: RequiredSecret
     alpaca_api_secret: RequiredSecret
-    alpaca_is_paper: bool
+    broker_mode: BrokerMode
     alpaca_data_feed: DataFeedName
+    alpaca_daily_feed: DataFeedName
+    universe_cache: Path
     state_export_url: AnyHttpUrl
     state_export_secret: SigningSecret
     fractional_orders: bool

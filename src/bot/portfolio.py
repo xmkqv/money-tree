@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from importlib import import_module
 from math import isfinite
-from pathlib import Path
 from typing import Any, cast
 from uuid import uuid4
 
@@ -57,15 +56,14 @@ DATA_FEEDS: dict[str, DataFeed] = {
     "delayed_sip": DataFeed.DELAYED_SIP,
     "iex": DataFeed.IEX,
 }
-DAILY_FEED = DataFeed.SIP
 SYMBOLS_PER_REQUEST = 200
 ORDERS_PER_REQUEST = 500
 UNIVERSE_HISTORY_DAYS = 390
-UNIVERSE_CACHE = Path("/tmp/money-tree-universe.json")
 PREPARATION_ATTEMPTS_MAX = 2
 STOP_COVERAGE_DRIFT_MAX = 1e-6
 PENDING_TTL_MINUTES = 5
 MARKET_SYMBOL = "^GSPC"
+BENCHMARK_SYMBOL = "SPY"
 
 
 class Portfolio(LumibotStrategy):
@@ -97,9 +95,7 @@ class Portfolio(LumibotStrategy):
         self._stops: dict[str, tuple[float, float]] = {}
         self._closing: set[str] = set()
         self._events: set[str] = set()
-        self._traded: dict[str, set[tuple[date, str]]] = {
-            cls.family: set() for cls in STRATEGIES
-        }
+        self._traded: dict[str, set[tuple[date, str]]] = {cls.family: set() for cls in STRATEGIES}
         self._day: date | None = None
         self._baseline_equity = 0.0
         self._locked_on: date | None = None
@@ -386,22 +382,20 @@ class Portfolio(LumibotStrategy):
         try:
             eligible = self._universe()
             held = set(self._holdings)
-            symbols = sorted(set(eligible).union({"SPY", "QQQ"}, held))
+            symbols = sorted(set(eligible).union({BENCHMARK_SYMBOL}, held))
             daily_frames = self._frames(
                 symbols,
                 datetime.combine(day - timedelta(days=UNIVERSE_HISTORY_DAYS), time(), TRADING_ZONE),
                 cast(TimeFrame, TimeFrame.Day),
-                feed=DAILY_FEED,
+                feed=DATA_FEEDS[settings.alpaca_daily_feed],
             )
             spx = self._spx(day)
             if spx is not None:
-                daily_frames["^GSPC"] = spx
+                daily_frames[MARKET_SYMBOL] = spx
         except Exception as error:
             self._daily_frames = {}
             self._eligible_symbols = []
-            self._record(
-                "universe.unavailable", "error", f"Stock universe unavailable: {error}"
-            )
+            self._record("universe.unavailable", "error", f"Stock universe unavailable: {error}")
             return
         self._daily_frames = daily_frames
         self._eligible_symbols = eligible
@@ -409,7 +403,7 @@ class Portfolio(LumibotStrategy):
 
     def _spx(self, day: date) -> DataFrame | None:
         try:
-            frame = yfinance.Ticker("^GSPC").history(
+            frame = yfinance.Ticker(MARKET_SYMBOL).history(
                 start=day - timedelta(days=UNIVERSE_HISTORY_DAYS),
                 end=day + timedelta(days=1),
                 auto_adjust=True,
@@ -439,7 +433,7 @@ class Portfolio(LumibotStrategy):
             except Exception as cache_error:
                 message = (
                     f"live discovery failed with {type(discovery_error).__name__}; "
-                    f"cache {UNIVERSE_CACHE} failed with {type(cache_error).__name__}"
+                    f"cache {settings.universe_cache} failed with {type(cache_error).__name__}"
                 )
                 raise LoadUniverseError(message) from ExceptionGroup(
                     "universe loading failed",
@@ -497,7 +491,7 @@ class Portfolio(LumibotStrategy):
         )
 
     def _load_universe_cache(self) -> list[str]:
-        cached: object = json.loads(UNIVERSE_CACHE.read_text())
+        cached: object = json.loads(settings.universe_cache.read_text())
         if not isinstance(cached, dict):
             raise ValueError("universe cache must be an eligible-symbol object")
         payload = cast(dict[str, object], cached)
@@ -514,10 +508,12 @@ class Portfolio(LumibotStrategy):
         return sorted(loaded)
 
     def _write_universe_cache(self, symbols: list[str]) -> None:
-        temporary = UNIVERSE_CACHE.with_name(f".{UNIVERSE_CACHE.name}.{uuid4().hex}.tmp")
+        cache = settings.universe_cache
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        temporary = cache.with_name(f".{cache.name}.{uuid4().hex}.tmp")
         try:
             temporary.write_text(json.dumps({"eligible": symbols}))
-            temporary.replace(UNIVERSE_CACHE)
+            temporary.replace(cache)
         finally:
             temporary.unlink(missing_ok=True)
 

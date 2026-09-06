@@ -10,6 +10,7 @@ type RunStatus = Literal["starting", "running", "stopped", "failed"]
 type EventLevel = Literal["info", "warning", "error"]
 type StrategyName = Literal["breakout_5m", "breakout_10m", "daily_sma", "daily_tfb"]
 type DataFeedName = Literal["sip", "delayed_sip", "iex"]
+type BrokerMode = Literal["live", "paper"]
 type Direction = Literal[-1, 1]
 
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"

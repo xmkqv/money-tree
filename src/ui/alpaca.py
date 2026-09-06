@@ -4,6 +4,8 @@ import httpx
 from alpaca.common.enums import BaseURL
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from bot.types import BrokerMode
+
 
 DATA_API_URL = "https://data.alpaca.markets"
 PAGE_ROWS_MAX = 100
@@ -84,8 +86,8 @@ fills_adapter = TypeAdapter(list[Fill])
 closed_orders_adapter = TypeAdapter(list[ClosedOrder])
 
 
-def alpaca_api_url(is_paper: bool) -> str:
-    target = BaseURL.TRADING_PAPER if is_paper else BaseURL.TRADING_LIVE
+def alpaca_api_url(broker_mode: BrokerMode) -> str:
+    target = BaseURL.TRADING_PAPER if broker_mode == "paper" else BaseURL.TRADING_LIVE
     return target.value
 
 

@@ -4,11 +4,8 @@ min_version = "2026.8.11"
 python = "3.13.15"
 uv = "0.12.9"
 
-[vars]
-mode = "{% if mise_env %}{{ mise_env | join(sep='') }}{% else %}{{ throw(message='no environment selected: rerun with --env development or --env production') }}{% endif %}"
-
 [env]
-MODE = "{{ vars.mode }}"
+MISE_ENV = "{% if mise_env %}{{ mise_env | join(sep='') }}{% else %}{{ throw(message='no environment selected: rerun with --env development or --env production') }}{% endif %}"
 UV_PYTHON = "python3.13"
 UV_PYTHON_PREFERENCE = "only-system"
 

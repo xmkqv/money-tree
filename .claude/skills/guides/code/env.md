@@ -5,15 +5,15 @@
 - the environment is the sole declaration of variables
 
 ```invs
-configuration = mise.{mode}.toml
-secrets = .env.{mode}
+configuration = mise.{mise_env}.toml
+secrets = .env.{mise_env}
 ```
 
-## mode = development | production
+## MISE_ENV = development | production
 
-- the development mode is the shell default
-- the production mode is activated per invocation
-- the root checks that a mode is selected, before any consumer runs
+- the development environment is the shell default
+- the production environment is activated per invocation
+- the root checks that an environment is selected, before any consumer runs
 
 ```sh:rc
 export MISE_ENV=development
@@ -24,8 +24,8 @@ mise --env production run //:deploy HEAD
 ```
 
 ```toml:root
-[vars]
-mode = "{% if mise_env %}{{ mise_env | join(sep='') }}{% else %}{{ throw(message='no environment selected: rerun with --env development or --env production') }}{% endif %}"
+[env]
+MISE_ENV = "{% if mise_env %}{{ mise_env | join(sep='') }}{% else %}{{ throw(message='no environment selected: rerun with --env development or --env production') }}{% endif %}"
 ```
 
 ## tools
@@ -71,7 +71,7 @@ run = "bun run test"
 
 ## configuration
 
-- a mode file is complete, i.e. no mode file is a base for another
+- an environment file is complete, i.e. no environment file is a base for another
 - a variable is assigned exactly once
 
 ```toml:development
@@ -89,8 +89,8 @@ CLOUDFLARE_ACCOUNT_ID = "…"
 
 ## secrets
 
-- a mode file declares each secret it consumes with an empty value, grouped by concern
-- a mode file loads its secrets last, i.e. the secrets file overrides the declarations
+- an environment file declares each secret it consumes with an empty value, grouped by concern
+- an environment file loads its secrets last, i.e. the secrets file overrides the declarations
 - production secrets extend development secrets
 - no tracked file is named `.env*`
 - [secrets](https://mise.jdx.dev/environments/secrets/)

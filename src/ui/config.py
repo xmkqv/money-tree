@@ -3,7 +3,7 @@ from typing import Annotated, Literal, Self
 from pydantic import AnyHttpUrl, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from bot.types import RequiredSecret, RiskLimit, SigningSecret, TradingConfiguration
+from bot.types import BrokerMode, RequiredSecret, RiskLimit, SigningSecret, TradingConfiguration
 
 
 type Mode = Literal["development", "production"]
@@ -12,11 +12,11 @@ type Mode = Literal["development", "production"]
 class WebSettings(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore", frozen=True)
 
-    mode: Mode
+    mode: Annotated[Mode, Field(validation_alias="MISE_ENV")]
     app_base_url: AnyHttpUrl
     session_secret: SigningSecret
     session_ttl_seconds: int = Field(gt=0, le=86_400)
-    alpaca_is_paper: bool
+    broker_mode: BrokerMode
     alpaca_api_key: RequiredSecret
     alpaca_api_secret: RequiredSecret
     fractional_orders: bool

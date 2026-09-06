@@ -7,7 +7,7 @@ def alpaca_broker() -> object:
     configuration: dict[str, str | bool] = {
         "API_KEY": settings.alpaca_api_key.get_secret_value(),
         "API_SECRET": settings.alpaca_api_secret.get_secret_value(),
-        "PAPER": settings.alpaca_is_paper,
+        "PAPER": settings.broker_mode == "paper",
         "MARKET": "NYSE",
     }
     return Alpaca(configuration)

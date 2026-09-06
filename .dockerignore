@@ -6,8 +6,5 @@
 .venv
 dist
 logs
-mise.lock
-mise.toml
-mise.*.toml
 node_modules
 runs

@@ -13,8 +13,8 @@ multi-strategy portfolio composition, and Alpaca execution.
 
 ## quickstart
 
-Every command runs in a mode. Make development the shell default. Select
-production per invocation.
+Every command runs in an environment. Make development the shell default.
+Select production per invocation.
 
 ```sh
 export MISE_ENV=development
@@ -35,7 +35,7 @@ Backtest an intraday strategy.
 mise exec -- uv run mt backtest --strategy breakout_5m --symbols SPY --start 2023-01-01 --end 2024-01-01
 ```
 
-Trade. The mode selects paper or live.
+Trade. The environment picks the settings; `BROKER_MODE` picks paper or live.
 
 ```sh
 mise exec -- uv run mt trade --strategies breakout_5m
