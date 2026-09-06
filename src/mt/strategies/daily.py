@@ -87,7 +87,8 @@ class Daily(Strategy):
                 self,
                 "market.stalled",
                 "warning",
-                f"SPX is not above its {settings.daily.average_sessions}-day average",
+                f"{settings.benchmark_symbol} is not above its "
+                f"{settings.daily.average_sessions}-day average",
             )
             return
         if self._scanned_on != now.date():

@@ -6,6 +6,7 @@ EXPORT__URL = "http://127.0.0.1:8000/internal/state"
 ## broker
 BROKER__API_KEY = ""
 BROKER__API_SECRET = ""
+FINNHUB__API_KEY = ""
 
 ## web
 WEB__SESSION_SECRET = ""

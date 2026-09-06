@@ -2,9 +2,9 @@ from typing import Any, Protocol, cast
 
 from alpaca.common.enums import Sort
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import QueryOrderStatus
+from alpaca.trading.enums import AssetClass, AssetStatus, QueryOrderStatus
 from alpaca.trading.models import Order, Position
-from alpaca.trading.requests import GetOrdersRequest
+from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest
 
 from mt.config.settings import settings
 
@@ -31,9 +31,10 @@ class BrokerLive:
         return bool(cast(Any, self._api.get_asset(symbol)).shortable)
 
     def listing(self) -> frozenset[str]:
+        request = GetAssetsRequest(asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE)
         return frozenset(
             str(asset.symbol)
-            for asset in cast(list[Any], self._api.get_all_assets())
+            for asset in cast(list[Any], self._api.get_all_assets(request))
             if bool(asset.tradable) and bool(asset.fractionable)
         )
 

@@ -28,10 +28,10 @@ class DailyTfb(Daily):
     def is_eligible(cls, frame: DataFrame) -> bool:
         if frame.empty:
             return False
-        if last_close(frame) < settings.universe.price_usd_min:
+        if last_close(frame) < settings.screen.price_usd_min:
             return False
         sessions = settings.daily_tfb.turnover_sessions
-        return average_dollar_volume(frame, sessions) >= settings.universe.turnover_usd_min
+        return average_dollar_volume(frame, sessions) >= settings.screen.turnover_usd_min
 
     @classmethod
     def does_enter(cls, frame: DataFrame) -> bool:

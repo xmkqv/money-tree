@@ -8,14 +8,16 @@ from lumibot.strategies import Strategy as LumibotStrategy
 from pandas import DataFrame, DatetimeIndex
 
 from mt.config.settings import settings
+from mt.data.finnhub import stocks
 from mt.data.live import BrokerLive, EngineLive, Live
-from mt.data.past import MARKET_SYMBOL, Past
-from mt.data.universe import eligible
+from mt.data.past import Past
 from mt.exchange import TRADING_ZONE, session_bounds
+from mt.frames import last_close
+from mt.indicators import average_dollar_volume
 from mt.position import Direction, entry_quantity, is_fractional_allowed, quantity_value, round_stop
 from mt.snapshot import EventLevel
 from mt.strategies.base import Candidate, Holding, Session, Strategy
-from mt.strategies.keys import StrategyName, is_strategy_name
+from mt.strategies.keys import StrategyKey, is_strategy_key
 from mt.strategies.order_tag import find_order_tag, order_tag
 from mt.strategies.registry import STRATEGIES
 
@@ -47,12 +49,12 @@ class Portfolio(LumibotStrategy):
         self.on_abrupt_closing()
 
     def initialize(self) -> None:
-        self.sleeptime = "1M"
-        self.minutes_before_opening = 30
+        self.sleeptime = f"{settings.portfolio.iteration_minutes}M"
+        self.minutes_before_opening = settings.portfolio.opening_lead_minutes
         supplied = cast(list[str], self.parameters["strategies"])
-        selected: list[StrategyName] = [value for value in supplied if is_strategy_name(value)]
+        selected: list[StrategyKey] = [value for value in supplied if is_strategy_key(value)]
         if len(selected) != len(supplied):
-            raise ValueError("strategies parameter contains unknown strategy names")
+            raise ValueError("strategies parameter contains unknown strategy keys")
         given = cast(list[str] | None, self.parameters.get("symbols"))
         if self.is_backtesting and not given:
             raise ValueError("a replay needs its symbols")
@@ -63,7 +65,7 @@ class Portfolio(LumibotStrategy):
         self._strategies = {cls.key: cls(self) for cls in STRATEGIES}
         self._holdings: dict[str, Holding] = {}
         self._pending: dict[str, Pending] = {}
-        self._claims: dict[str, StrategyName | None] = {}
+        self._claims: dict[str, StrategyKey | None] = {}
         self._stops: dict[str, tuple[float, float]] = {}
         self._closing: set[str] = set()
         self._events: set[str] = set()
@@ -150,7 +152,7 @@ class Portfolio(LumibotStrategy):
         return None if frame is None else self._completed(frame, now)
 
     def market_frame(self, now: datetime) -> DataFrame | None:
-        return self.daily_frame(MARKET_SYMBOL, now)
+        return self.daily_frame(settings.benchmark_symbol, now)
 
     def minute_frames(
         self, symbols: list[str], start: datetime, now: datetime, minutes: int
@@ -162,7 +164,7 @@ class Portfolio(LumibotStrategy):
     def last_price(self, symbol: str) -> float:
         return float(self.get_last_price(symbol))
 
-    def position_count(self, keys: frozenset[StrategyName]) -> int:
+    def position_count(self, keys: frozenset[StrategyKey]) -> int:
         held = sum(1 for holding in self._holdings.values() if holding.strategy.key in keys)
         ordered = sum(
             1
@@ -190,7 +192,7 @@ class Portfolio(LumibotStrategy):
         key: str,
         level: EventLevel,
         message: str,
-        strategy: StrategyName | None = None,
+        strategy: StrategyKey | None = None,
     ) -> None:
         if key in self._events:
             return
@@ -345,10 +347,10 @@ class Portfolio(LumibotStrategy):
         if self._preparation_attempts >= settings.portfolio.preparation_attempts_max:
             return
         self._preparation_attempts += 1
-        first = day - timedelta(days=settings.universe.past_days)
+        first = day - timedelta(days=settings.portfolio.past_days)
         start = datetime.combine(first, time(), TRADING_ZONE)
         try:
-            symbols = self._given or eligible(self.live.listing())
+            symbols = self._given or self._screen(now)
             held = set(self._holdings)
             requested = sorted(set(symbols).union({settings.benchmark_symbol}, held))
             daily_frames = self.past.bars(
@@ -358,28 +360,37 @@ class Portfolio(LumibotStrategy):
                 now,
                 settings.past.daily_feed,
             )
-            market = self._market(start, now)
-            if market is not None:
-                daily_frames[MARKET_SYMBOL] = market
         except Exception as error:
             self._daily_frames = {}
             self._eligible_symbols = []
-            self._record("universe.unavailable", "error", f"Stock universe unavailable: {error}")
+            self._record("screen.unavailable", "error", f"Stock screen unavailable: {error}")
             return
         self._daily_frames = daily_frames
         self._eligible_symbols = list(symbols)
         self._prepared_on = day
 
-    def _market(self, start: datetime, end: datetime) -> DataFrame | None:
-        try:
-            return self.past.market(start, end)
-        except Exception as error:
-            self._record(
-                "market.unavailable",
-                "error",
-                f"SPX market state unavailable: {type(error).__name__}",
-            )
-            return None
+    def _screen(self, now: datetime) -> list[str]:
+        symbols = sorted(self.live.listing() & stocks())
+        first = now.date() - timedelta(days=settings.screen.past_days)
+        start = datetime.combine(first, time(), TRADING_ZONE)
+        frames = self.past.bars(
+            symbols,
+            cast(TimeFrame, TimeFrame.Day),
+            start,
+            now,
+            settings.past.daily_feed,
+        )
+        return sorted(symbol for symbol, frame in frames.items() if self._does_clear(frame, now))
+
+    def _does_clear(self, frame: DataFrame, now: datetime) -> bool:
+        completed = self._completed(frame, now)
+        if completed.empty:
+            return False
+        return (
+            last_close(completed) >= settings.screen.price_usd_min
+            and average_dollar_volume(completed, settings.screen.turnover_sessions)
+            >= settings.screen.turnover_usd_min
+        )
 
     def _completed(self, frame: DataFrame, now: datetime, minutes: int = 0) -> DataFrame:
         index = cast(DatetimeIndex, frame.index)

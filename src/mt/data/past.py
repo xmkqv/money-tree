@@ -1,5 +1,4 @@
-from datetime import UTC, datetime, timedelta
-from importlib import import_module
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from alpaca.data.enums import Adjustment, DataFeed
@@ -10,13 +9,7 @@ from pandas import DataFrame
 
 from mt.config.settings import settings
 from mt.config.values import DataFeedName
-
 from mt.frames import normalize_ohlcv
-
-
-yfinance = cast(Any, import_module("yfinance"))
-
-MARKET_SYMBOL = "^GSPC"
 
 
 class Past:
@@ -59,16 +52,3 @@ class Past:
                     raise TypeError(f"bars for {symbol} are not a frame")
                 frames[symbol] = normalize_ohlcv(frame, {"high", "low", "close", "volume"})
         return frames
-
-    def market(self, start: datetime, end: datetime) -> DataFrame | None:
-        frame = yfinance.Ticker(MARKET_SYMBOL).history(
-            start=start.date(),
-            end=end.date() + timedelta(days=1),
-            auto_adjust=True,
-        )
-        if frame.empty:
-            return None
-        frame = cast(DataFrame, frame).rename(
-            columns={column: str(column).lower() for column in frame.columns}
-        )
-        return normalize_ohlcv(frame, {"close"})

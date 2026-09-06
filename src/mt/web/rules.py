@@ -6,7 +6,7 @@ from mt.config.settings import settings
 from mt.strategies.base import Strategy
 from mt.strategies.breakout import Breakout
 from mt.strategies.daily import Daily
-from mt.strategies.keys import StrategyName
+from mt.strategies.keys import StrategyKey
 
 
 class Row(TypedDict):
@@ -43,9 +43,9 @@ def percent(fraction: float) -> str:
 
 
 UNIVERSE = (
-    f"US equities screened daily: market cap {millions(settings.universe.market_cap_usd_min)} or "
-    f"more, share price ${settings.universe.price_usd_min:.0f} or more, 3-month average daily "
-    f"turnover {millions(settings.universe.turnover_usd_min)} or more, and tradable and "
+    f"US common stocks screened daily: share price ${settings.screen.price_usd_min:.0f} or "
+    f"more, turnover {millions(settings.screen.turnover_usd_min)} or more averaged across the "
+    f"last {settings.screen.turnover_sessions} completed sessions, and tradable and "
     "fractionable at Alpaca."
 )
 
@@ -58,11 +58,11 @@ class DailyProse:
     entry: str
     entry_source: str
     market: str = UNIVERSE
-    market_source: str = "portfolio.py · _eligible_symbols"
+    market_source: str = "portfolio.py · _screen"
     risk_source: str = "portfolio.py · enter"
 
 
-DAILY_PROSE: dict[StrategyName, DailyProse] = {
+DAILY_PROSE: dict[StrategyKey, DailyProse] = {
     "daily_sma": DailyProse(
         setup=(
             f"The closing price crosses back above its {settings.daily.average_sessions}-day "
@@ -91,13 +91,13 @@ DAILY_PROSE: dict[StrategyName, DailyProse] = {
     "daily_tfb": DailyProse(
         market=(
             f"{UNIVERSE} This strategy screens that list again on its own floors: share price "
-            f"${settings.universe.price_usd_min:.0f} or more, and turnover of "
-            f"{millions(settings.universe.turnover_usd_min)} or more averaged across the last "
+            f"${settings.screen.price_usd_min:.0f} or more, and turnover of "
+            f"{millions(settings.screen.turnover_usd_min)} or more averaged across the last "
             f"{settings.daily_tfb.turnover_sessions} completed sessions. Turnover here is "
             "the value traded in each session, which is that session's close times its share "
             "volume. A symbol whose sessions cannot be read does not pass."
         ),
-        market_source="portfolio.py · _eligible_symbols, strategies/daily_tfb.py · is_eligible",
+        market_source="portfolio.py · _screen, strategies/daily_tfb.py · is_eligible",
         setup=(
             f"The closing price is above its {settings.daily_tfb.trend_sessions}-day average, "
             f"that average is higher than it was {settings.daily_tfb.average_lag_sessions} "
@@ -166,7 +166,7 @@ def _breakout_rows(
         f"Volume traded up to the signal candle's close is at least "
         f"{cls.volume_multiple:g}x the "
         f"{breakout.past_sessions}-session average at the same time of day, and that "
-        f"average session turns over at least {millions(settings.universe.turnover_usd_min)}. "
+        f"average session turns over at least {millions(settings.screen.turnover_usd_min)}. "
         f"All {breakout.past_sessions} earlier sessions must be available to compare "
         "against. "
         "If fewer are available there is no confirmation, and the breakout is passed over. "
@@ -195,7 +195,7 @@ def _breakout_rows(
     )
 
     return [
-        Row(field="Market", value=UNIVERSE, source="universe.py · eligible"),
+        Row(field="Market", value=UNIVERSE, source="portfolio.py · _screen"),
         Row(
             field="Sentiment",
             value="None. This strategy takes signals whatever the wider market is doing.",
@@ -336,8 +336,9 @@ def _daily_rows(cls: type[Daily], per_trade: float, closes: datetime) -> list[Ro
         Row(field="Market", value=prose.market, source=prose.market_source),
         Row(
             field="Sentiment",
-            value=f"The S&P 500 must be trading above its own {average_sessions}-day "
-            "average. If it is not, no daily strategy takes a position that day.",
+            value=f"{settings.benchmark_symbol} must be trading above its own "
+            f"{average_sessions}-day average. If it is not, no daily strategy takes a "
+            "position that day.",
             source="strategies/daily.py · run",
         ),
         Row(field="Direction", value="Long only.", source="portfolio.py · enter"),

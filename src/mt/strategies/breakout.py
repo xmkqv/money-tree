@@ -10,9 +10,9 @@ from mt.exchange import TRADING_ZONE
 from mt.frames import frame_between, frame_since, frame_until, regular_session
 from mt.indicators import latest_atr, latest_dollar_volume
 from mt.position import Direction, next_stop
-from mt.strategies.keys import StrategyName
 
 from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, ranked
+from .keys import StrategyKey
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,7 +60,7 @@ def range_break(high: float, low: float, close: float) -> Direction | None:
 
 def is_setup_ready(high: float, low: float, close: float) -> bool:
     direction = range_break(high, low, close)
-    if direction is None or close < settings.universe.price_usd_min:
+    if direction is None or close < settings.screen.price_usd_min:
         return False
     if high - low < settings.breakout.range_fraction_min * close:
         return False
@@ -118,7 +118,7 @@ def is_relative_volume_ready(frame: DataFrame, day: date, clock: time, multiple:
     volume = session_volume(frame, day, clock)
     if volume is None:
         return False
-    return volume.turnover >= settings.universe.turnover_usd_min and volume.ratio >= multiple
+    return volume.turnover >= settings.screen.turnover_usd_min and volume.ratio >= multiple
 
 
 class Breakout(Strategy):
@@ -136,7 +136,7 @@ class Breakout(Strategy):
         self._past_failed_on: date | None = None
 
     @classmethod
-    def cap_keys(cls) -> frozenset[StrategyName]:
+    def cap_keys(cls) -> frozenset[StrategyKey]:
         from .registry import family_keys
 
         return family_keys(cls.family)
@@ -181,7 +181,8 @@ class Breakout(Strategy):
                 self,
                 f"entries.capped.{now.date()}",
                 "info",
-                f"Breakout entries paused: {self.positions_max} positions already open",
+                f"{self.family.capitalize()} entries paused: "
+                f"{self.positions_max} positions already open",
             )
             return
         symbols = self._unscanned(now.date())
@@ -333,7 +334,8 @@ class Breakout(Strategy):
             self,
             f"scan.unavailable.{day}",
             "error",
-            f"Breakout scan stood down for the day: past bars unavailable ({detail[:200]})",
+            f"{self.family.capitalize()} scan stood down for the day: "
+            f"past bars unavailable ({detail[:200]})",
         )
 
     def _breaks(
