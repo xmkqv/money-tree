@@ -30,6 +30,9 @@ class AlpacaReadClient:
     async def clock(self) -> Any:
         return await self._get("/v2/clock")
 
+    async def asset(self, symbol: str) -> JsonRow:
+        return cast(JsonRow, await self._get(f"/v2/assets/{symbol}"))
+
     async def raw_fills(self, after: str | None = None) -> list[JsonRow]:
         collected: list[JsonRow] = []
         token: str | None = None

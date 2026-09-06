@@ -1424,7 +1424,24 @@ table.trades.log td { font-size: 12.5px; }
 
 .chart-panel { display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .trade-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.trade-head h2 { font-size: 17px; letter-spacing: -0.02em; }
+.trade-head h2 {
+  font-size: 17px;
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+}
+.trade-head .tc-name { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.trade-head .tc-ticker {
+  flex: none;
+  font-family: var(--font-data);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--ink-2);
+}
 .trade-head .segmented { margin-left: auto; }
 .ghost.back {
   font-size: 12px;

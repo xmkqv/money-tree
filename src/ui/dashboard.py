@@ -141,6 +141,28 @@ CHART_PAGES_MAX = 8
 SESSION_SOURCE = "30Min"
 SESSION_SOURCE_BARS_MAX = 1000
 LEVELS_HISTORY_DAYS = 90
+# Company names barely move, so one read a day per stock is plenty.
+NAME_TTL_SECONDS = 86_400
+NAME_CACHE_MAX = 256
+# Tails Alpaca appends to a company name that say what the share is rather than
+# who issued it. They are stripped so a chart title reads "Snowflake Inc".
+NAME_TAILS = (
+    "common stock",
+    "capital stock",
+    "common shares",
+    "ordinary shares",
+    "ordinary share",
+    "american depositary shares",
+    "american depositary share",
+    "depositary shares",
+    "depositary share",
+    "class a",
+    "class b",
+    "class c",
+    "series a",
+    "series b",
+    "series c",
+)
 DASHBOARD_HEADERS = {
     "Cache-Control": "private, no-cache",
     "Content-Security-Policy": (
@@ -230,6 +252,20 @@ def orb_levels(
         "stop": round(stop, 4),
         "targets": [round(value, 4) for value in targets],
     }
+
+
+def company_name(raw: object) -> str | None:
+    """Trim Alpaca's share description down to the issuer's name."""
+    name = str(raw or "").strip()
+    if not name:
+        return None
+    trimmed = name
+    while True:
+        lowered = trimmed.lower()
+        tail = next((tail for tail in NAME_TAILS if lowered.endswith(tail)), None)
+        if tail is None:
+            return trimmed or name
+        trimmed = trimmed[: len(trimmed) - len(tail)].rstrip(" ,.-")
 
 
 def error_response(
@@ -368,6 +404,7 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
     ledger_cache = ReadCache(LEDGER_TTL_SECONDS)
     pulse_cache = ReadCache(PULSE_TTL_SECONDS)
     bar_cache = BarCache(CHART_TTL_SECONDS, CHART_CACHE_MAX)
+    name_cache = BarCache(NAME_TTL_SECONDS, NAME_CACHE_MAX)
 
     def alpaca(request: Request) -> AlpacaReadClient:
         return request.state.alpaca
@@ -398,6 +435,27 @@ def create_dashboard_router(configuration: WebSettings, runtime_store: RuntimeSt
         if not isinstance(token, str):
             return error_response("Session is invalid", 401)
         return JSONResponse({"csrf_token": token}, headers=NO_STORE)
+
+    @router.get("/api/name")
+    async def company(
+        request: Request,
+        symbol: Annotated[str, Query(min_length=1, max_length=12, pattern=r"^[A-Z][A-Z.]*$")],
+    ) -> JSONResponse:
+        cached = name_cache.fresh(symbol)
+        if cached is None:
+            async with name_cache.lock:
+                cached = name_cache.fresh(symbol)
+                if cached is None:
+                    try:
+                        found = company_name((await alpaca(request).asset(symbol)).get("name"))
+                    except httpx.HTTPError:
+                        found = None
+                    cached = [{"symbol": symbol, "name": found}]
+                    if found is not None:
+                        name_cache.store(symbol, cached)
+        # A name that could not be read is worth asking for again soon; one that
+        # was read is worth holding on to.
+        return read_response(cached[0], 3600 if cached[0]["name"] else 60)
 
     @router.get("/api/bars")
     async def bars(

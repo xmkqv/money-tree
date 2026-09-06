@@ -1470,6 +1470,7 @@ function renderLog() {
 const TC_BARS = { "5Min": "5 min", "1Hour": "1 hour", "1Day": "Day" };
 let TRADE = null, TC_STATE = { bar: "5Min", bars: null, hover: null };
 let TC_LEVELS = null, TC_COTRADES = [];
+const TC_NAMES = new Map();
 const TC_VIEW = { i0: 0, i1: 0, yManual: null, custom: false };
 let TC_ORIGIN = "history";
 
@@ -1560,7 +1561,43 @@ async function openTradeChart(trade, from) {
   paintRail();
   paintStepper();
   loadTradeLevels();
+  loadCompanyName(trade.symbol);
   await loadTradeBars();
+}
+
+// The chart title reads "Snowflake Inc [SNOW]". The name is looked up once per
+// stock and the ticker stands alone until it arrives, or if it never does.
+async function loadCompanyName(symbol) {
+  if (TC_NAMES.has(symbol)) return;
+  TC_NAMES.set(symbol, null);
+  try {
+    const query = new URLSearchParams({ symbol });
+    const response = await fetch("/api/name?" + query, { headers: { Accept: "application/json" } });
+    if (!response.ok) throw new Error("HTTP " + response.status);
+    TC_NAMES.set(symbol, (await response.json()).data.name || null);
+  } catch {
+    TC_NAMES.delete(symbol);
+    return;
+  }
+  if (TRADE && TRADE.symbol === symbol) paintTitle();
+}
+
+function paintTitle() {
+  const symbol = TRADE.symbol;
+  const name = TC_NAMES.get(symbol);
+  const title = document.getElementById("tc-title");
+  title.replaceChildren();
+  if (name) {
+    const issuer = document.createElement("span");
+    issuer.className = "tc-name";
+    issuer.textContent = name;
+    const ticker = document.createElement("span");
+    ticker.className = "tc-ticker";
+    ticker.textContent = "[" + symbol + "]";
+    title.append(issuer, ticker);
+  } else {
+    title.textContent = symbol;
+  }
 }
 
 async function loadTradeLevels() {
@@ -1653,7 +1690,7 @@ function tokenValue(name) {
 
 function paintTradeFacts() {
   const t = TRADE;
-  document.getElementById("tc-title").textContent = t.symbol;
+  paintTitle();
   const strategy = STRAT_BY_ID[t.strategy];
   document.getElementById("tc-sub").textContent =
     (strategy ? strategy.label : t.strategy) + " · " + (t.side === "short" ? "Short" : "Long") +
