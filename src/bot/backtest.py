@@ -34,7 +34,7 @@ def run(
 ) -> dict[str, object]:
     from lumibot.backtesting import AlpacaBacktesting, YahooDataBacktesting
 
-    from .portfolio import Strategy
+    from .portfolio import Portfolio
 
     parameters: dict[str, object] = settings.trading_configuration.model_dump()
     parameters["strategies"] = [strategy_name]
@@ -43,7 +43,7 @@ def run(
     datasource = YahooDataBacktesting
     datasource_configuration: dict[str, str | bool] | None = None
     datasource_options: dict[str, object] = {}
-    if strategy_name in {"orb", "orb_momentum"}:
+    if strategy_name in {"breakout_5m", "breakout_10m"}:
         datasource = AlpacaBacktesting
         datasource_configuration = {
             "API_KEY": settings.alpaca_api_key.get_secret_value(),
@@ -56,7 +56,7 @@ def run(
     if report_mode:
         os.environ[LUMIBOT_DISABLE_UI] = "1"
     try:
-        results = Strategy.backtest(
+        results = Portfolio.backtest(
             datasource,
             start,
             end,

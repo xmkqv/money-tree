@@ -3,20 +3,23 @@ import signal
 from .broker import alpaca_broker
 from .config import settings
 from .export import StateExporter
-from .types import StrategyName, published_roster
+from .strategies.registry import strategy_class
+from .types import StrategyName
 
 
 def run(strategy_names: list[StrategyName]) -> None:
     from lumibot.traders import Trader
 
-    from .portfolio import Strategy
+    from .portfolio import Portfolio
 
     configuration = settings.trading_configuration
-    labels, paused = published_roster(strategy_names)
+    paused: list[StrategyName] = [
+        name for name in strategy_names if strategy_class(name).is_paused
+    ]
     exporter = StateExporter(
         str(settings.state_export_url),
         settings.state_export_secret.get_secret_value(),
-        labels,
+        strategy_names,
         paused,
         configuration,
     )
@@ -24,7 +27,7 @@ def run(strategy_names: list[StrategyName]) -> None:
     exporter.publish("starting", "run", "info", "Trading run is starting")
     try:
         parameters = {**configuration.model_dump(), "strategies": strategy_names}
-        strategy = Strategy(broker=alpaca_broker(), parameters=parameters, name="Portfolio")
+        strategy = Portfolio(broker=alpaca_broker(), parameters=parameters, name="Portfolio")
         strategy.exporter = exporter
         trader = Trader()
         trader.add_strategy(strategy)

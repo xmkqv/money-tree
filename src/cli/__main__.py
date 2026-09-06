@@ -5,7 +5,7 @@ import typer
 
 from bot import backtest, report, trade
 from bot.config import settings
-from bot.types import STRATEGY_LABELS, StrategyName, is_strategy_name
+from bot.types import STRATEGY_KEYS, StrategyName, is_strategy_name
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -17,7 +17,7 @@ def _parse_symbols(value: str) -> list[str]:
 
 def _parse_strategies(value: str) -> list[StrategyName]:
     selected = [item.strip() for item in value.split(",") if item.strip()]
-    allowed = STRATEGY_LABELS
+    allowed = STRATEGY_KEYS
     unknown = set(selected).difference(allowed)
     if not selected or unknown or len(selected) != len(set(selected)):
         names = ", ".join(sorted(allowed))
