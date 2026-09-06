@@ -291,11 +291,17 @@ def _sma20() -> list[Row]:
             f"price and the trail starts: {SMA20_TRAIL_ATR_MULTIPLE:g}x the {PERIOD}-period ATR "
             f"of {SMA20_TRAIL_HOURS}-hour candles below the highest price seen since entry, "
             f"needing {SMA20_TRAIL_BARS_MIN} completed {SMA20_TRAIL_HOURS}-hour candles to read. "
-            "From then on the stop only climbs, and never falls back below the entry price. It "
-            "is the bot that holds this level rather than a resting order at the broker, so it "
-            "is measured against the last traded price on every pass through the session and "
-            "the position leaves at market when price reaches it.",
-            source="portfolio.py · _manage_sma20, _trail_sma20",
+            "From then on the stop only climbs, and never falls back below the entry price. "
+            "The level rests as a good-till-cancelled stop order at the broker, sent the moment "
+            "the entry fills and replaced whenever the trail moves it, so it stands overnight "
+            "and through a restart of the bot — a stop is wanted most on the day the bot is not "
+            "running. A broker holds a stop on whole shares only, so a leftover fraction of a "
+            "share rests behind no order; the bot watches that part itself and sells it with "
+            "the rest. The bot measures the level against the last traded price on every pass "
+            "as well, and closes at market if it is reached — that covers the minute between a "
+            "slice being sold and the replacement stop going in. A stop left resting by an "
+            "earlier run is cancelled when the bot starts, so one position never carries two.",
+            source="portfolio.py · _manage_sma20, _trail_sma20, _protect, _clear_outlived_stops",
         ),
         Row(
             field="Max Risk",

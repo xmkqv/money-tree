@@ -465,8 +465,11 @@ risk
     stop update = recalculated on every iteration once activated
     stop can only move up
     active stop cannot fall below entry price
-    stop is held by the bot rather than resting at the broker
-    stop exit = last price at or below the stop, then exit at market
+    stop order = good-till-cancelled, resting at the broker, whole shares only
+    stop order replaced = whenever the level moves
+    stop order from an earlier run = cancelled when the bot starts
+    stop exit = the resting order fires, or the bot closes at market when the
+        last price is at or below the level
 
 exit
     at +15% close = 50% of original position

@@ -170,6 +170,13 @@ STRATEGY_RISK_MAX: dict[StrategyName, float | None] = {**ORB_RISK_MAXES, **DAILY
 # The strategies that leave in slices rather than all at once, so a part-filled
 # position is read back at the stage its remaining size implies.
 SCALED_STRATEGIES: frozenset[StrategyName] = ORB_STRATEGIES.union({"sma20"})
+# The strategies whose stop rests at the broker rather than being watched a
+# minute at a time. A stop is wanted most on the day the bot is not running.
+RESTING_STOP_STRATEGIES: frozenset[StrategyName] = ORB_STRATEGIES.union({"sma20"})
+# Alpaca holds a stop on whole shares only. A strategy named here rests its stop
+# over the whole shares of the position; a leftover fraction is watched by the
+# bot and swept out with the rest when the stop is reached.
+STOP_WHOLE_SHARES: frozenset[StrategyName] = frozenset({"sma20"})
 
 
 class Strategy(StrategyBase):
@@ -259,7 +266,7 @@ class Strategy(StrategyBase):
             holding.original_quantity = max(self._quantity(symbol), abs(float(quantity)))
             holding.targets = self._targets(holding)
             self._holdings[symbol] = holding
-            if holding.strategy in ORB_STRATEGIES:
+            if holding.strategy in RESTING_STOP_STRATEGIES:
                 self._protect(holding)
             return
         self._closing.discard(symbol)
@@ -270,7 +277,7 @@ class Strategy(StrategyBase):
             holding = self._holdings[symbol]
             if holding.stage == 0:
                 holding.original_quantity = max(holding.original_quantity, remaining)
-            if holding.strategy in ORB_STRATEGIES:
+            if holding.strategy in RESTING_STOP_STRATEGIES:
                 self._protect(holding, remaining)
 
     def _entry_price(self, order: Any, price: float) -> float:
@@ -349,6 +356,7 @@ class Strategy(StrategyBase):
         )
         positions = cast(list[Any], self.broker.api.get_all_positions())
         self._restored = True
+        outlived: set[str] = set()
         symbols = sorted({str(position.symbol) for position in positions})
         if not symbols:
             return
@@ -408,6 +416,8 @@ class Strategy(StrategyBase):
                 self._orb_traded.add((traded_on, symbol))
             if strategy in DAILY_STRATEGIES:
                 self._daily_traded.add((traded_on, symbol))
+            if strategy in RESTING_STOP_STRATEGIES and strategy in DAILY_STRATEGIES:
+                outlived.add(symbol)
             if strategy not in self._enabled:
                 self._exit_only.add(strategy)
                 self._record_event(
@@ -415,6 +425,41 @@ class Strategy(StrategyBase):
                     "warning",
                     f"{strategy} is managing existing positions only",
                     strategy,
+                )
+        self._clear_outlived_stops(outlived)
+
+    def _clear_outlived_stops(self, symbols: set[str]) -> None:
+        """Cancel stops an earlier run left resting at the broker.
+
+        A good-till-cancelled stop outlives the process that placed it. This run
+        did not place it and cannot see it in its own order book, so it would
+        rest a second one beside it and sell the position twice over. The old one
+        goes here, and management rests a fresh one on this iteration.
+        """
+        if not symbols:
+            return
+        request = GetOrdersRequest(
+            status=QueryOrderStatus.OPEN,
+            symbols=sorted(symbols),
+            limit=ORDERS_PER_REQUEST,
+            direction=Sort.DESC,
+        )
+        for order in cast(list[Any], self.broker.api.get_orders(filter=request)):
+            tag = find_order_tag(str(order.client_order_id))
+            if tag is None or tag.kind != "s":
+                continue
+            symbol = str(order.symbol)
+            try:
+                self.broker.api.cancel_order_by_id(order.id)
+            except Exception as error:
+                # Two stops on one position is worse than none. The position is
+                # named rather than quietly left with a stop the bot cannot move.
+                self._record_event(
+                    f"stop.outlived.{symbol}",
+                    "error",
+                    f"{symbol} has a stop from an earlier run that could not be cancelled: "
+                    f"{type(error).__name__}",
+                    tag.strategy,
                 )
 
     def _reconcile(self, now: datetime) -> None:
@@ -438,7 +483,7 @@ class Strategy(StrategyBase):
 
     def _resync_stops(self, positions: dict[str, Any]) -> None:
         for symbol, holding in self._holdings.items():
-            if holding.strategy not in ORB_STRATEGIES or symbol in self._closing:
+            if holding.strategy not in RESTING_STOP_STRATEGIES or symbol in self._closing:
                 continue
             position = positions.get(symbol)
             if position is None:
@@ -1052,6 +1097,8 @@ class Strategy(StrategyBase):
         # that fails the test sends the order on the next session.
         if frame is not None and len(frame) >= DAILY_HISTORY_SESSIONS and does_signal_exit(frame):
             self._exit(holding)
+            return
+        self._protect(holding)
 
     def _daily_since(self, holding: Holding, now: datetime) -> DataFrame | None:
         daily_frame = self._daily_frames.get(holding.symbol)
@@ -1287,11 +1334,22 @@ class Strategy(StrategyBase):
             )
             self._exit(holding)
             return
-        size = quantity_value(
-            amount,
-            is_fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"])),
+        fractional = (
+            is_fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"]))
+            and holding.strategy not in STOP_WHOLE_SHARES
         )
-        if size <= 0 or self._stops.get(holding.symbol) == (stop, float(size)):
+        size = quantity_value(amount, fractional)
+        if size <= 0:
+            if holding.strategy in STOP_WHOLE_SHARES:
+                self._record_event(
+                    f"stop.unrested.{holding.symbol}.{holding.entered_at.date()}",
+                    "warning",
+                    f"{holding.symbol} holds less than a whole share: no stop can rest at the "
+                    "broker, so the bot watches this one on its own",
+                    holding.strategy,
+                )
+            return
+        if self._stops.get(holding.symbol) == (stop, float(size)):
             return
         self._cancel(holding.symbol, "s")
         order = self.create_order(
@@ -1299,7 +1357,10 @@ class Strategy(StrategyBase):
             size,
             "sell" if holding.direction == 1 else "buy",
             stop_price=stop,
-            time_in_force="day",
+            # A breakout is flat by the bell, so a day order is the whole life of
+            # its stop. A position held overnight needs one that outlives the
+            # session it was placed in.
+            time_in_force="gtc" if holding.strategy in DAILY_STRATEGIES else "day",
             custom_params={
                 "client_order_id": order_tag(
                     holding.strategy, "s", holding.symbol, holding.risk / holding.entry
