@@ -10,10 +10,12 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from .alpaca import DATA_API_URL, AlpacaMarketDataClient, AlpacaReadClient, alpaca_api_url
+from mt.config.settings import LoginSettings, WebSettings
+from mt.data.alpaca import PAST_API_URL, AlpacaLiveClient, AlpacaPastClient, alpaca_api_url
+
 from .auth import RailwayOAuthClient
-from .config import LoginSettings, WebSettings
-from .dashboard import NO_STORE, StateStore, dashboard_router, error_response
+from .routes import NO_STORE, dashboard_router, error_response
+from .state import StateStore
 
 
 PUBLIC_PATHS = frozenset({"/healthz", "/login", "/auth/callback", "/internal/state"})
@@ -71,20 +73,20 @@ def create_app() -> FastAPI:
                 base_url=alpaca_api_url(configuration.broker.mode),
                 headers=credentials,
                 timeout=httpx.Timeout(connect=2, read=10, write=5, pool=5),
-            ) as trading,
+            ) as live,
             httpx.AsyncClient(
-                base_url=DATA_API_URL,
+                base_url=PAST_API_URL,
                 headers=credentials,
                 timeout=httpx.Timeout(connect=2, read=8, write=5, pool=5),
-            ) as data,
+            ) as past,
         ):
             yield {
-                "alpaca": AlpacaReadClient(
-                    trading,
+                "live": AlpacaLiveClient(
+                    live,
                     configuration.dashboard.page_rows_max,
                     configuration.dashboard.pages_max,
                 ),
-                "market": AlpacaMarketDataClient(data),
+                "past": AlpacaPastClient(past, configuration.past.intraday_feed),
             }
 
     app = FastAPI(

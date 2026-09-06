@@ -1,18 +1,14 @@
 from datetime import date, datetime
 from typing import TypedDict
 
-from bot.config import settings
-from bot.exchange import upcoming_session_bounds
-from bot.strategies.base import RULE_FIELDS, Strategy
-from bot.strategies.registry import STRATEGIES
-from bot.types import RiskSection
-from bot.universe import percent
+from mt.config.sections import RiskSection
+from mt.config.settings import settings
+from mt.exchange import upcoming_session_bounds
+from mt.strategies.base import Strategy
+from mt.strategies.keys import UNATTRIBUTED
+from mt.strategies.registry import STRATEGIES
 
-
-class Row(TypedDict):
-    field: str
-    value: str
-    source: str
+from .rules import KINDS, RULE_FIELDS, Row, percent, strategy_rows
 
 
 class StrategyCard(TypedDict):
@@ -35,6 +31,15 @@ EntryWindow = TypedDict("EntryWindow", {"from": str, "to": str})
 def entry_windows() -> dict[str, EntryWindow]:
     opens, closes = upcoming_session_bounds(date.today())
     return {cls.key: _window(*cls.entry_window(opens, closes)) for cls in STRATEGIES}
+
+
+def strategy_labels() -> list[dict[str, str]]:
+    labels = [
+        {"id": cls.key, "short": cls.name(), "label": f"{cls.name()} · {KINDS[cls.family]}"}
+        for cls in STRATEGIES
+    ]
+    labels.append({"id": UNATTRIBUTED, "short": "Untagged", "label": "No mt- order tag"})
+    return labels
 
 
 def strategy_rules(risk: RiskSection, *, configured: bool) -> StrategyRules:
@@ -76,23 +81,18 @@ def portfolio_rules(risk: RiskSection) -> list[Row]:
         ),
         Row(
             field="Daily loss limit",
-            value=f"If equity falls {percent(risk.per_day_max)} below the previous close, every "
-            "position is closed and no new trade is opened until the next session.",
+            value=f"If equity falls {percent(risk.per_day_max)} below the session's opening "
+            "value, every position is closed and no new trade is opened until the next session.",
             source="portfolio.py · _is_daily_loss_reached",
         ),
     ]
 
 
 def _card(cls: type[Strategy], per_trade: float, opens: datetime, closes: datetime) -> StrategyCard:
-    rules = cls.describe(per_trade, opens, closes)
-    if [rule.field for rule in rules] != list(RULE_FIELDS):
+    rows = strategy_rows(cls, per_trade, opens, closes)
+    if [row["field"] for row in rows] != list(RULE_FIELDS):
         raise ValueError(f"{cls.__name__} must describe every rule field in order")
-    return StrategyCard(
-        id=cls.key,
-        name=cls.name(),
-        kind=cls.kind,
-        rows=[Row(field=rule.field, value=rule.value, source=rule.source) for rule in rules],
-    )
+    return StrategyCard(id=cls.key, name=cls.name(), kind=KINDS[cls.family], rows=rows)
 
 
 def _window(opens: datetime, closes: datetime) -> EntryWindow:

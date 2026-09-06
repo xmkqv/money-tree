@@ -57,8 +57,8 @@ const mondayOf = d => {
   return at.getFullYear() + "-" + (at.getMonth() + 1) + "-" + at.getDate();
 };
 
-let LIVE, ACCOUNT, STRATEGIES, STRAT_BY_ID, OPEN_POSITIONS, ALL_TRADES, tradesByDate;
-let LEDGER, SESSIONS, LAST_SESSION, DAY_PNL, WEEK_PNL, SPX, DAILY, INTRADAY, LATEST;
+let LEDGER, ACCOUNT, STRATEGIES, STRAT_BY_ID, OPEN_POSITIONS, ALL_TRADES, tradesByDate;
+let SESSION = {}, LEDGER, SESSIONS, LAST_SESSION, DAY_PNL, WEEK_PNL, BENCH, BENCH_SYMBOL, DAILY, INTRADAY, LATEST;
 let FIRST_MONTH, LAST_MONTH, FIRST_IX, LAST_IX;
 let STRATEGY_PERIODS = {};
 let monthCache = new Map();
@@ -110,7 +110,7 @@ function monthData(y, m) {
   for (let d = 1; d <= daysInMonth; d++) {
     const weekday = new Date(y, m, d).getDay();
     const iso = y + "-" + String(m + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
-    const hit = LIVE.days.find(x => x.date === iso);
+    const hit = LEDGER.days.find(x => x.date === iso);
     const entry = {
       day: d, weekday, weekend: weekday === 0 || weekday === 6,
       pnl: null, trades: 0, wins: 0, closed: null,
@@ -160,36 +160,36 @@ function tradesFor(cell) {
   return tradesByDate.get(cell.iso) || [];
 }
 
-function derive(live) {
-  LIVE = live;
+function derive(ledger) {
+  LEDGER = ledger;
   monthCache = new Map();
   STRATEGY_PERIODS = {};
 
-  STRATEGIES = live.strategies.map(s => ({
+  STRATEGIES = ledger.strategies.map(s => ({
     id: s.id, label: s.short, sub: s.label, color: STRATEGY_COLOURS[s.id] || "var(--ink-3)",
   }));
   STRAT_BY_ID = Object.fromEntries(STRATEGIES.map(x => [x.id, x]));
 
   ACCOUNT = {
-    invested: live.invested,
-    portfolio: live.equity,
-    cash: live.cash,
-    deployed: live.marketValue,
-    unrealised: live.unrealised,
-    buyingPower: live.buyingPower,
-    openPositions: live.positions.length,
-    positionCapPct: live.positionCapPct,
-    dailyLossLimitPct: live.dailyLossLimitPct,
+    invested: ledger.invested,
+    portfolio: ledger.equity,
+    cash: ledger.cash,
+    deployed: ledger.marketValue,
+    unrealised: ledger.unrealised,
+    buyingPower: ledger.buyingPower,
+    openPositions: ledger.positions.length,
+    positionCapPct: ledger.positionCapPct,
+    dailyLossLimitPct: ledger.dailyLossLimitPct,
   };
   ACCOUNT.totalReturn = Math.round((ACCOUNT.portfolio - ACCOUNT.invested) * 100) / 100;
   ACCOUNT.rateOfReturn = ACCOUNT.invested ? (ACCOUNT.totalReturn / ACCOUNT.invested) * 100 : 0;
   ACCOUNT.exposurePct = ACCOUNT.portfolio ? (ACCOUNT.deployed / ACCOUNT.portfolio) * 100 : 0;
-  ACCOUNT.largestPositionPct = live.positions.length
-    ? Math.max(...live.positions.map(p => p.weight)) : 0;
+  ACCOUNT.largestPositionPct = ledger.positions.length
+    ? Math.max(...ledger.positions.map(p => p.weight)) : 0;
 
-  OPEN_POSITIONS = live.positions;
+  OPEN_POSITIONS = ledger.positions;
 
-  ALL_TRADES = live.trades.map(t => {
+  ALL_TRADES = ledger.trades.map(t => {
     const [y, m, day] = dparts(t.date);
     return { ...t, y, m: m - 1, day, weekday: dateOf(t.date).getDay() };
   }).reverse();
@@ -206,72 +206,73 @@ function derive(live) {
   ACCOUNT.losses = LEDGER.losses;
   ACCOUNT.winRate = LEDGER.winRate;
 
-  SESSIONS = live.days.map(d => ({
+  SESSIONS = ledger.days.map(d => ({
     ...d,
     pct: d.before ? (d.pnl / d.before) * 100 : 0,
     label: dateOf(d.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
     long: dateOf(d.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" }),
   }));
 
-  LAST_SESSION = SESSIONS[SESSIONS.length - 1] || { date: live.equityDaily.at(-1).date, pnl: 0, before: live.equity, pct: 0, trades: 0, wins: 0 };
+  LAST_SESSION = SESSIONS[SESSIONS.length - 1] || { date: ledger.equityDaily.at(-1).date, pnl: 0, before: ledger.equity, pct: 0, trades: 0, wins: 0 };
   DAY_PNL = LAST_SESSION.pnl;
 
-  const weekCut = live.days.length > 3 ? live.days[live.days.length - 3].date : (live.days[0] || LAST_SESSION).date;
-  const weekTrades = live.trades.filter(t => t.date >= weekCut);
+  const weekCut = ledger.days.length > 3 ? ledger.days[ledger.days.length - 3].date : (ledger.days[0] || LAST_SESSION).date;
+  const weekTrades = ledger.trades.filter(t => t.date >= weekCut);
   WEEK_PNL = Math.round(weekTrades.reduce((a, t) => a + t.pnl, 0) * 100) / 100;
 
   const monthKey = LAST_SESSION.date.slice(0, 7);
   periodFromTrades("D", LAST_SESSION.before, tradesByDate.get(LAST_SESSION.date) || []);
-  periodFromTrades("W", (live.days.find(d => d.date === weekCut) || LAST_SESSION).before, weekTrades);
-  periodFromTrades("M", ACCOUNT.invested, live.trades.filter(t => t.date.startsWith(monthKey)));
-  periodFromTrades("ALL", ACCOUNT.invested, live.trades);
+  periodFromTrades("W", (ledger.days.find(d => d.date === weekCut) || LAST_SESSION).before, weekTrades);
+  periodFromTrades("M", ACCOUNT.invested, ledger.trades.filter(t => t.date.startsWith(monthKey)));
+  periodFromTrades("ALL", ACCOUNT.invested, ledger.trades);
 
-  const spy = live.spy;
-  const at = i => spy[i].close;
+  const bench = ledger.benchmark;
+  const at = i => bench[i].close;
   const since = from => {
-    const i = spy.findIndex(b => b.date >= from);
-    return i < 0 || spy.length < 2 ? 0 : (at(spy.length - 1) / at(Math.max(0, i - 1)) - 1) * 100;
+    const i = bench.findIndex(b => b.date >= from);
+    return i < 0 || bench.length < 2 ? 0 : (at(bench.length - 1) / at(Math.max(0, i - 1)) - 1) * 100;
   };
-  SPX = spy.length > 1
-    ? { D: (at(spy.length - 1) / at(spy.length - 2) - 1) * 100, W: since(weekCut),
-        M: since(monthKey + "-01"), ALL: (at(spy.length - 1) / at(0) - 1) * 100 }
+  BENCH_SYMBOL = ledger.benchmarkSymbol;
+  BENCH = bench.length > 1
+    ? { D: (at(bench.length - 1) / at(bench.length - 2) - 1) * 100, W: since(weekCut),
+        M: since(monthKey + "-01"), ALL: (at(bench.length - 1) / at(0) - 1) * 100 }
     : { D: 0, W: 0, M: 0, ALL: 0 };
 
   const [ly, lm, lday] = dparts(LAST_SESSION.date);
   LATEST = { y: ly, m: lm - 1, day: lday };
 
-  const funded = live.equityDaily.length ? live.equityDaily[0].date : LAST_SESSION.date;
+  const funded = ledger.equityDaily.length ? ledger.equityDaily[0].date : LAST_SESSION.date;
   const [fy, fm] = dparts(funded);
-  const [ty, tm] = dparts(live.today);
+  const [ty, tm] = dparts(ledger.today);
   FIRST_MONTH = { y: fy, m: fm - 1 };
   LAST_MONTH = { y: ty, m: tm - 1 };
   FIRST_IX = monthIndex(FIRST_MONTH.y, FIRST_MONTH.m);
   LAST_IX = Math.max(FIRST_IX, monthIndex(LAST_MONTH.y, LAST_MONTH.m));
 
-  DAILY = live.equityDaily.map((r, i) => ({
+  DAILY = ledger.equityDaily.map((r, i) => ({
     label: dateOf(r.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
     long: dateOf(r.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }),
-    value: Math.round((r.equity - live.invested) * 100) / 100,
-    before: i ? Math.round((live.equityDaily[i - 1].equity - live.invested) * 100) / 100 : 0,
+    value: Math.round((r.equity - ledger.invested) * 100) / 100,
+    before: i ? Math.round((ledger.equityDaily[i - 1].equity - ledger.invested) * 100) / 100 : 0,
   }));
-  DAILY.equityBase = live.invested;
+  DAILY.equityBase = ledger.invested;
 
-  DAILY.liveTip = live.equityDaily.length > 0 && live.equityDaily.at(-1).date === live.today;
+  DAILY.todayTip = ledger.equityDaily.length > 0 && ledger.equityDaily.at(-1).date === ledger.today;
 
-  const opening = live.intraday.length ? live.intraday[0].equity : live.equity;
-  INTRADAY = live.intraday.map((r, i) => ({
+  const opening = ledger.intraday.length ? ledger.intraday[0].equity : ledger.equity;
+  INTRADAY = ledger.intraday.map((r, i) => ({
     label: r.t,
-    long: (live.intradayDate ? dateOf(live.intradayDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) + ", " : "") + r.t,
-    value: Math.round((r.equity - live.invested) * 100) / 100,
-    before: Math.round(((i ? live.intraday[i - 1].equity : opening) - live.invested) * 100) / 100,
+    long: (ledger.intradayDate ? dateOf(ledger.intradayDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) + ", " : "") + r.t,
+    value: Math.round((r.equity - ledger.invested) * 100) / 100,
+    before: Math.round(((i ? ledger.intraday[i - 1].equity : opening) - ledger.invested) * 100) / 100,
   }));
-  INTRADAY.equityBase = live.invested;
-  INTRADAY.liveTip = live.intraday.length > 0 && live.intradayDate === live.today;
+  INTRADAY.equityBase = ledger.invested;
+  INTRADAY.todayTip = ledger.intraday.length > 0 && ledger.intradayDate === ledger.today;
   if (!INTRADAY.length) INTRADAY = DAILY;
 
-  ACCOUNT.dayOpening = live.intraday.length ? opening : 0;
-  ACCOUNT.dayLowEquity = live.intraday.length
-    ? ratchetLow(live.intradayDate, Math.min(...live.intraday.map(r => r.equity), live.equity))
+  ACCOUNT.dayOpening = ledger.intraday.length ? opening : 0;
+  ACCOUNT.dayLowEquity = ledger.intraday.length
+    ? ratchetLow(ledger.intradayDate, Math.min(...ledger.intraday.map(r => r.equity), ledger.equity))
     : 0;
   ACCOUNT.dayDrawdownPct = drawdownPct();
 }
@@ -307,7 +308,7 @@ function renderToday() {
 
   const iso = todaySel.y + "-" + String(todaySel.m + 1).padStart(2, "0") + "-" + String(todaySel.day).padStart(2, "0");
   document.getElementById("today-heading").textContent =
-    iso === LIVE.today ? "Today" : isLatest() ? "Last session" : "Session";
+    iso === LEDGER.today ? "Today" : isLatest() ? "Last session" : "Session";
   document.getElementById("today-date").textContent =
     DAY3[weekday] + " " + todaySel.day + " " + MON3[todaySel.m] + " " + todaySel.y;
   document.getElementById("today-reset").classList.toggle("hidden", isLatest());
@@ -453,7 +454,7 @@ function selectDay(y, m, day) {
 
 function renderAccount() {
   document.getElementById("chart-funded").textContent =
-    "Funded " + money(ACCOUNT.invested) + " · " + LIVE.funded;
+    "Funded " + money(ACCOUNT.invested) + " · " + LEDGER.funded;
   document.getElementById("v-portfolio").textContent = money(ACCOUNT.portfolio);
   document.getElementById("v-cash").textContent = money(ACCOUNT.cash);
 
@@ -493,13 +494,13 @@ function renderAccount() {
     ACCOUNT.losses + " losses across " + ACCOUNT.closed + " closed trades");
 
   const bar = document.getElementById("status");
-  bar.classList.toggle("closed", !LIVE.marketOpen);
-  document.getElementById("st-word").textContent = LIVE.marketOpen ? "Market open" : "Market closed";
+  bar.classList.toggle("closed", !LEDGER.marketOpen);
+  document.getElementById("st-word").textContent = LEDGER.marketOpen ? "Market open" : "Market closed";
   document.getElementById("st-session").textContent =
-    LIVE.marketOpen ? "closes 16:00 ET" : "opens " + LIVE.nextOpen;
+    LEDGER.marketOpen ? "closes 16:00 ET" : "opens " + LEDGER.nextOpen;
   document.getElementById("st-strats").textContent =
-    "Paper " + LIVE.accountNumber + " · " + LIVE.positions.length + " positions";
-  document.getElementById("st-asof").textContent = LIVE.asOf;
+    "Paper " + LEDGER.accountNumber + " · " + LEDGER.positions.length + " positions";
+  document.getElementById("st-asof").textContent = LEDGER.asOf;
 }
 
 
@@ -507,15 +508,16 @@ function renderAccount() {
 function renderPeriodReturns() {
   const host = document.getElementById("period-cells");
   host.replaceChildren();
+  document.querySelector(".bench-note").textContent = "vs " + BENCH_SYMBOL;
 
   for (const [label, key] of [["Session", "D"], ["Week", "W"], ["Month", "M"], ["Inception", "ALL"]]) {
     const p = STRATEGY_PERIODS[key];
     const pnl = Object.values(p.rows).reduce((s, r) => s + r[1], 0);
-    host.append(periodCell(label, pnl, (pnl / p.base) * 100, SPX[key]));
+    host.append(periodCell(label, pnl, (pnl / p.base) * 100, BENCH[key]));
   }
 }
 
-function periodCell(label, pnl, pct, spx) {
+function periodCell(label, pnl, pct, benchPct) {
   const cell = document.createElement("div");
   cell.className = "period-cell";
 
@@ -529,7 +531,7 @@ function periodCell(label, pnl, pct, spx) {
 
   const bench = document.createElement("span");
   bench.className = "bench";
-  bench.textContent = "SPX " + signedPct(spx);
+  bench.textContent = BENCH_SYMBOL + " " + signedPct(benchPct);
 
   cell.append(k, v, bench);
   return cell;
@@ -551,7 +553,7 @@ const SESSION_STATE = {
 };
 
 function switchState(id) {
-  const bot = LIVE.bot || {};
+  const bot = LEDGER.bot || {};
   if (!bot.reported) return "unknown";
   if (!(bot.strategies || []).includes(id)) return "offline";
   return (bot.paused || []).includes(id) ? "paused" : "online";
@@ -571,14 +573,14 @@ function toMinutes(clock) {
 }
 
 function sessionState(id) {
-  const window = (LIVE.windows || {})[id];
-  if (!LIVE.marketOpen || !window) return "closed";
+  const window = (LEDGER.windows || {})[id];
+  if (!LEDGER.marketOpen || !window) return "closed";
   const now = tradingMinutes();
   return now >= toMinutes(window.from) && now <= toMinutes(window.to) ? "open" : "closed";
 }
 
 function windowLabel(id) {
-  const window = (LIVE.windows || {})[id];
+  const window = (LEDGER.windows || {})[id];
   return window ? window.from + "–" + window.to + " ET" : "";
 }
 
@@ -719,7 +721,7 @@ function paintChartHero(w) {
   d.className = "delta " + tone(delta);
 
   document.getElementById("chart-note").textContent =
-    w.visible[0].p.label + " – " + w.last.p.label + (chart.series === INTRADAY && LIVE.intradayDate ? " · " + dayOf(LIVE.intradayDate) : "");
+    w.visible[0].p.label + " – " + w.last.p.label + (chart.series === INTRADAY && LEDGER.intradayDate ? " · " + dayOf(LEDGER.intradayDate) : "");
 
   document.getElementById("chart-table").innerHTML =
     "<table><caption>Cumulative profit and loss across the visible window</caption><tbody>" +
@@ -1267,7 +1269,7 @@ function renderPortfolio() {
       { t: signedMoney(pos.unreal) + "  " + signedPct(pos.unrealPct), r: true, cls: tone(pos.unreal) },
     ]), 3);
 
-  const prev = [...SESSIONS].reverse().find(session => session.date !== LIVE.today);
+  const prev = [...SESSIONS].reverse().find(session => session.date !== LEDGER.today);
   const trades = prev ? tradesByDate.get(prev.date) || [] : [];
   const realised = trades.reduce((a, t) => a + t.pnl, 0);
   const wins = trades.filter(t => t.pnl > 0).length;
@@ -1525,10 +1527,10 @@ function positionTrade(position) {
     qty: position.qty,
     inDate: position.inDate,
     inMinute: position.inMinute,
-    date: LIVE.today,
+    date: LEDGER.today,
     minute: tradingMinutes(),
     heldMin: Math.max(0,
-      (Date.parse(LIVE.today + "T00:00:00Z") / 60000 + tradingMinutes()) -
+      (Date.parse(LEDGER.today + "T00:00:00Z") / 60000 + tradingMinutes()) -
       (Date.parse(position.inDate + "T00:00:00Z") / 60000 + position.inMinute)),
     fills: position.fills || [],
     open: true,
@@ -1720,7 +1722,7 @@ async function loadTradeBars() {
     TC_STATE.first = Math.max(0, TC_STATE.bars.findIndex(b => b.x >= from));
   } catch (error) {
     TC_STATE.bars = null;
-    tcState("Market data could not be read. Try again in a moment.");
+    tcState("Past bars could not be read. Try again in a moment.");
     return;
   }
   if (!TC_STATE.bars.length) {
@@ -2202,7 +2204,7 @@ function ruleRow(row) {
 }
 
 function renderRuleStates() {
-  const bot = LIVE.bot || {};
+  const bot = LEDGER.bot || {};
   const warning = document.getElementById("rules-bot");
   if (warning) {
     const down = bot.reported && !bot.running;
@@ -2313,7 +2315,7 @@ function mergePositions(pulsed) {
 }
 
 function retipSeries(series, equity) {
-  if (!series.liveTip || !series.length) return;
+  if (!series.todayTip || !series.length) return;
   series[series.length - 1].value = Math.round((equity - series.equityBase) * 100) / 100;
 }
 
@@ -2338,7 +2340,7 @@ function applyPulse(pulsed) {
   retipSeries(DAILY, pulsed.equity);
   retipSeries(INTRADAY, pulsed.equity);
 
-  LIVE.asOf = pulsed.asOf;
+  LEDGER.asOf = pulsed.asOf;
   return aligned;
 }
 
@@ -2528,9 +2530,7 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
 });
 
 document.getElementById("logout").addEventListener("click", async () => {
-  const session = await fetch("/api/session", { cache: "no-store" });
-  const token = session.ok ? (await session.json()).csrf_token : "";
-  await fetch("/logout", { method: "POST", headers: { "X-CSRF-Token": token } });
+  await fetch("/logout", { method: "POST", headers: { "X-CSRF-Token": SESSION.csrf_token || "" } });
   location.replace("/login");
 });
 
@@ -2560,11 +2560,11 @@ initChartInteraction();
 wireTradeChart();
 refresh();
 (async () => {
-  const session = await fetch("/api/session", { cache: "no-store" });
-  if (!session.ok) return;
-  const cadence = await session.json();
-  setInterval(() => { if (!document.hidden) refresh(); }, cadence.refresh_seconds * 1000);
-  setInterval(() => { if (!document.hidden) pulse(); }, cadence.pulse_seconds * 1000);
+  const read = await fetch("/api/session", { cache: "no-store" });
+  if (!read.ok) return;
+  SESSION = await read.json();
+  setInterval(() => { if (!document.hidden) refresh(); }, SESSION.refresh_seconds * 1000);
+  setInterval(() => { if (!document.hidden) pulse(); }, SESSION.pulse_seconds * 1000);
 })();
 
 document.addEventListener("visibilitychange", () => {

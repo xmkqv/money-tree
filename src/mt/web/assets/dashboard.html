@@ -122,7 +122,7 @@
 
           <div class="period-returns">
             <div class="period-head">
-              <span class="t">Period returns <span class="eyebrow bench-note">vs SPX</span></span>
+              <span class="t">Period returns <span class="eyebrow bench-note"></span></span>
               <div class="segmented" id="unit-toggle" role="group" aria-label="Show returns as">
                 <button type="button" data-unit="pct" aria-pressed="true">%</button>
                 <button type="button" data-unit="usd" aria-pressed="false">$</button>
@@ -439,8 +439,8 @@
         Prices come from the IEX feed, one exchange rather than the whole market, so volume
         is a share of the true total. Every fill is marked as a small diamond, and the entry
         and exit figures above are their averages. Stop and target levels are reconstructed
-        from the strategy's rules rather than read back from the bot. The live stop trails
-        once a target is hit, so where it finally sat cannot be recovered from market data.
+        from the strategy's rules rather than read back from the bot. The resting stop trails
+        once a target is hit, so where it finally sat cannot be recovered from past bars.
       </p>
       <div class="sr-only" id="tc-table"></div>
     </section>
