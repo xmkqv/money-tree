@@ -6,20 +6,19 @@ from pandas import DataFrame, Series
 from pandas_ta_classic.momentum.rsi import rsi as ta_rsi
 from pandas_ta_classic.overlap.sma import sma as ta_sma
 
-from bot.config import settings
-from bot.earnings import is_earnings_blocked, is_earnings_exit_due
-from bot.exchange import TRADING_ZONE
-from bot.frames import frame_since, last_close
-from bot.indicators import (
+from mt.config.settings import settings
+from mt.data.earnings import is_earnings_blocked, is_earnings_exit_due
+from mt.exchange import TRADING_ZONE
+from mt.frames import frame_since, last_close
+from mt.indicators import (
     finite_row,
     finite_value,
     indicator_series,
     latest_atr,
     latest_dollar_volume,
 )
-from bot.universe import UNIVERSE
 
-from .base import Candidate, Holding, Portfolio, Rule, Session, Strategy, ranked
+from .base import Candidate, Holding, Portfolio, Session, Strategy, ranked
 
 
 def is_market_rising(frame: DataFrame) -> bool:
@@ -54,17 +53,8 @@ def does_signal_exit(frame: DataFrame) -> bool:
 
 class Daily(Strategy):
     family = "daily"
-    kind = "Daily trend"
     stop_atr_multiple: ClassVar[float]
     does_heed_earnings: ClassVar[bool]
-    market_rule: ClassVar[str] = UNIVERSE
-    market_source: ClassVar[str] = "portfolio.py · _eligible_symbols"
-    setup_rule: ClassVar[str]
-    confirmation_rule: ClassVar[str]
-    entry_rule: ClassVar[str]
-    setup_source: ClassVar[str]
-    entry_source: ClassVar[str]
-    risk_source: ClassVar[str] = "portfolio.py · enter"
 
     def __init__(self, portfolio: Portfolio) -> None:
         super().__init__(portfolio)
@@ -83,10 +73,6 @@ class Daily(Strategy):
     def is_eligible(cls, frame: DataFrame) -> bool:
         return True
 
-    @classmethod
-    @abstractmethod
-    def risk_rule(cls, per_trade: float) -> str: ...
-
     def begin(self, day: date) -> None:
         self._candidates = []
         self._scanned_on = None
@@ -98,7 +84,10 @@ class Daily(Strategy):
             return
         if not is_market_rising(market):
             self.portfolio.record(
-                self, "market.stalled", "warning", "SPX is not above its 20-day average"
+                self,
+                "market.stalled",
+                "warning",
+                f"SPX is not above its {settings.daily.average_sessions}-day average",
             )
             return
         if self._scanned_on != now.date():
@@ -192,71 +181,3 @@ class Daily(Strategy):
             "error",
             f"Earnings calendar unavailable for {symbol}: {type(error).__name__}",
         )
-
-    @classmethod
-    def describe(cls, per_trade: float, opens: datetime, closes: datetime) -> list[Rule]:
-        lead_minutes = settings.earnings.exit_lead_minutes
-        period = settings.indicators.period
-        earnings_exit = f"{closes - timedelta(minutes=lead_minutes):%H:%M}"
-        return [
-            Rule(field="Market", value=cls.market_rule, source=cls.market_source),
-            Rule(
-                field="Sentiment",
-                value="The S&P 500 must be trading above its own 20-day average. If it is not, "
-                "no daily strategy takes a position that day.",
-                source="strategies/daily.py · run",
-            ),
-            Rule(field="Direction", value="Long only.", source="portfolio.py · enter"),
-            Rule(
-                field="Range",
-                value="Not used. This strategy reads daily candles and has no opening range.",
-                source="strategies/daily.py · run",
-            ),
-            Rule(field="Setup", value=cls.setup_rule, source=cls.setup_source),
-            Rule(field="Confirmation", value=cls.confirmation_rule, source=cls.setup_source),
-            Rule(
-                field="Sorting",
-                value="Ranked by the value traded in the last completed session, which is its "
-                "close times its share volume, highest first. When more symbols qualify on the "
-                "same morning than there is room to hold, the busiest take the slots. A symbol "
-                "whose session cannot be read ranks last but still trades.",
-                source="strategies/daily.py · _ranked",
-            ),
-            Rule(field="Entry", value=cls.entry_rule, source=cls.entry_source),
-            Rule(
-                field="Stop Loss",
-                value=f"{cls.stop_atr_multiple:g}x the {period}-period ATR below the entry "
-                f"price, then trailing {cls.stop_atr_multiple:g}x ATR below the highest close "
-                "reached since entry. The stop only ever moves up.",
-                source="strategies/daily.py · manage",
-            ),
-            Rule(field="Max Risk", value=cls.risk_rule(per_trade), source=cls.risk_source),
-            Rule(
-                field="Min. R:R",
-                value="No fixed target. The trade is held while the trend holds and closed on "
-                "the exit rule below, so no reward-to-risk ratio is set in advance.",
-                source="strategies/daily.py · manage",
-            ),
-            Rule(
-                field="Exit Rule",
-                value="Closed when the price falls through the trailing stop, or when the close "
-                f"drops below its 20-day average, or RSI ({period}) falls under "
-                f"{settings.daily.exit_rsi_max:g}. Either one is enough on its own.",
-                source="strategies/daily.py · does_signal_exit",
-            ),
-            Rule(
-                field="Emergency Exit",
-                value=(
-                    f"Closed {lead_minutes} minutes before the closing bell "
-                    f"({earnings_exit} on a full session) on the session before the company "
-                    "reports earnings, unless that calendar cannot be read, in which case the "
-                    "position is left alone. The daily loss limit closes all positions and "
-                    "stops new entries for the rest of the day."
-                    if cls.does_heed_earnings
-                    else "The daily loss limit closes all positions and stops new entries for "
-                    "the rest of the day. Earnings do not close a position for this strategy. "
-                    "It holds through the report and leaves on its threshold or its exit rule."
-                ),
-                source="strategies/daily.py · manage, portfolio.py · _is_daily_loss_reached",
-            ),
-        ]

@@ -5,15 +5,14 @@ from typing import Any, ClassVar, cast
 
 from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
-from bot.config import settings
-from bot.exchange import TRADING_ZONE
-from bot.frames import frame_between, frame_since, frame_until, regular_session
-from bot.indicators import latest_atr, latest_dollar_volume
-from bot.sizing import next_stop
-from bot.types import Direction, StrategyName
-from bot.universe import UNIVERSE, millions, percent
+from mt.config.settings import settings
+from mt.exchange import TRADING_ZONE
+from mt.frames import frame_between, frame_since, frame_until, regular_session
+from mt.indicators import latest_atr, latest_dollar_volume
+from mt.position import Direction, next_stop
+from mt.strategies.keys import StrategyName
 
-from .base import Candidate, Holding, Ladder, Portfolio, Rule, Session, Strategy, ranked
+from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, ranked
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,7 +69,7 @@ def is_setup_ready(high: float, low: float, close: float) -> bool:
 
 
 def session_volume(frame: DataFrame, day: date, clock: time) -> SessionVolume | None:
-    sessions = settings.breakout.history_sessions
+    sessions = settings.breakout.past_sessions
     regular = regular_session(frame)
     index = cast(DatetimeIndex, regular.index)
     pandas_index = cast(Any, index)
@@ -97,14 +96,14 @@ def session_volume(frame: DataFrame, day: date, clock: time) -> SessionVolume | 
     if current_session not in grouped.index:
         return None
     grouped_index = cast(Any, cast(DatetimeIndex, grouped.index))
-    history = cast(
+    past = cast(
         DataFrame,
         cast(Any, grouped).loc[grouped_index < current_session].tail(sessions),
     )
-    if len(history) != sessions:
+    if len(past) != sessions:
         return None
-    clock_average = float(cast(Any, history["cumulative_volume"]).mean())
-    turnover = float(cast(Any, history["daily_turnover"]).mean())
+    clock_average = float(cast(Any, past["cumulative_volume"]).mean())
+    turnover = float(cast(Any, past["daily_turnover"]).mean())
     current = float(cast(Any, grouped).loc[current_session, "cumulative_volume"])
     if not all(isfinite(value) for value in (clock_average, turnover, current)):
         return None
@@ -124,7 +123,6 @@ def is_relative_volume_ready(frame: DataFrame, day: date, clock: time, multiple:
 
 class Breakout(Strategy):
     family = "breakout"
-    kind = "Intraday breakout"
     is_stop_resting = True
     positions_max = settings.breakout.positions_max
     opening_minutes: ClassVar[int]
@@ -135,7 +133,7 @@ class Breakout(Strategy):
     def __init__(self, portfolio: Portfolio) -> None:
         super().__init__(portfolio)
         self._scanned: set[str] = set()
-        self._data_failed_on: date | None = None
+        self._past_failed_on: date | None = None
 
     @classmethod
     def cap_keys(cls) -> frozenset[StrategyName]:
@@ -187,7 +185,7 @@ class Breakout(Strategy):
             )
             return
         symbols = self._unscanned(now.date())
-        if not symbols or self._data_failed_on == now.date():
+        if not symbols or self._past_failed_on == now.date():
             return
         try:
             frames = self.portfolio.minute_frames(symbols, session.opens, now, self.opening_minutes)
@@ -205,7 +203,7 @@ class Breakout(Strategy):
         try:
             histories = self.portfolio.minute_frames(
                 [found.symbol for found in breaks],
-                now - timedelta(days=settings.breakout.confirm_history_days),
+                now - timedelta(days=settings.breakout.confirm_past_days),
                 now,
                 self.opening_minutes,
             )
@@ -268,7 +266,7 @@ class Breakout(Strategy):
         try:
             recent = self.portfolio.minute_frames(
                 [holding.symbol],
-                now - timedelta(days=settings.breakout.trail_history_days),
+                now - timedelta(days=settings.breakout.trail_past_days),
                 now,
                 self.opening_minutes,
             ).get(holding.symbol)
@@ -329,13 +327,13 @@ class Breakout(Strategy):
         return price if isfinite(price) and price > 0 else found.close
 
     def _stand_down(self, day: date, error: Exception) -> None:
-        self._data_failed_on = day
+        self._past_failed_on = day
         detail = f"{type(error).__name__}: {error}"
         self.portfolio.record(
             self,
             f"scan.unavailable.{day}",
             "error",
-            f"Breakout scan stood down for the day: no intraday bars ({detail[:200]})",
+            f"Breakout scan stood down for the day: past bars unavailable ({detail[:200]})",
         )
 
     def _breaks(
@@ -379,193 +377,3 @@ class Breakout(Strategy):
             if close < low:
                 return position, -1, close
         return None
-
-    @classmethod
-    def describe(cls, per_trade: float, opens: datetime, closes: datetime) -> list[Rule]:
-        breakout = settings.breakout
-        period = settings.indicators.period
-        minutes = cls.opening_minutes
-        risk_cap = per_trade if cls.risk_fraction_max is None else cls.risk_fraction_max
-        opening_end = f"{opens + timedelta(minutes=minutes):%H:%M}"
-        first_entry = f"{opens + timedelta(minutes=2 * minutes):%H:%M}"
-        scan_end = f"{opens + timedelta(minutes=breakout.scan_minutes):%H:%M}"
-        exit_at = f"{closes - timedelta(minutes=breakout.close_lead_minutes):%H:%M}"
-        exit_before = f"{closes - timedelta(minutes=breakout.close_lead_minutes - 1):%H:%M}"
-
-        confirmation = (
-            f"Volume traded up to the signal candle's close is at least "
-            f"{cls.volume_multiple:g}x the "
-            f"{breakout.history_sessions}-session average at the same time of day, and that "
-            f"average session turns over at least {millions(settings.universe.turnover_usd_min)}. "
-            f"All {breakout.history_sessions} earlier sessions must be available to compare "
-            "against. "
-            "If fewer are available there is no confirmation, and the breakout is passed over. "
-            "The reading is taken at the signal candle's close rather than at the moment the "
-            "scan runs, so a breakout found a pass late is still confirmed on the volume that "
-            "made it. Each session is measured between its own opening and closing bell, so a "
-            "half day is compared as a half day."
-        )
-
-        first, second, third = cls.target_multiples
-        multiples = f"{first:g}x, {second:g}x and {third:g}x"
-        reward = f"{first:g}:1 at the first target, then {second:g}:1 and {third:g}:1."
-        targets = (
-            f"Targets are re-cut from the filled price: {multiples} the risk actually taken. A "
-            "fill away from the signal price moves the targets with it."
-        )
-
-        extension = (
-            ""
-            if cls.entry_extension_max is None
-            else f" It is also passed over if that live quote sits more than "
-            f"{percent(cls.entry_extension_max)} of the opening range beyond the breakout "
-            "level. The stop "
-            "is a fixed distance inside the range, so a price further past the level risks more "
-            "and leaves less of the move to collect."
-        )
-
-        return [
-            Rule(field="Market", value=UNIVERSE, source="portfolio.py · _eligible_symbols"),
-            Rule(
-                field="Sentiment",
-                value="None. This strategy takes signals whatever the wider market is doing.",
-                source="strategies/breakout.py · run",
-            ),
-            Rule(
-                field="Direction",
-                value="Long and short. A short is skipped when the broker will not lend the "
-                "stock. A short is sized in whole shares, because a broker lends whole shares "
-                "only, so every order on a short leg is rounded down to a whole number. Longs "
-                "use fractional quantities when the account allows them.",
-                source="portfolio.py · enter, protect, exit",
-            ),
-            Rule(
-                field="Range",
-                value=f"The opening range is the first {minutes}-minute candle, from the "
-                f"opening bell to {opening_end}. The last trade before {opening_end} closes "
-                "it. Its high "
-                "and low set the levels for the day. The bell is read from the exchange "
-                "calendar, so a late open moves the range with it.",
-                source="strategies/breakout.py · run, exchange.py · session_bounds",
-            ),
-            Rule(
-                field="Setup",
-                value=f"The first completed {minutes}-minute candle since the range that closes "
-                "above the range high (long) or below the range low (short). A candle still "
-                f"forming never signals. Checked every {minutes} minutes from {opening_end}, "
-                f"when the opening candle closes, to {scan_end}, at most once per stock per "
-                "day. Every "
-                "pass re-reads the whole session since the range rather than only its newest "
-                "candle, so a breakout whose bars reached the scan late still supplies the "
-                "signal "
-                f"candle. It must be one of the last {breakout.signal_candles_max} completed "
-                f"candles, which is {breakout.signal_candles_max * minutes} minutes of the move. "
-                "An older close "
-                "has already run, and is passed over. Once either breakout strategy has traded "
-                "a stock, both leave it alone for the rest of the session. The range itself "
-                f"must be at least {percent(breakout.range_fraction_min)} of the price, and the "
-                f"stop cut from it must fall between {percent(breakout.stop_fraction_min)} and "
-                f"{percent(breakout.stop_fraction_max)} of the price. A narrower range puts the "
-                "stop "
-                "inside the spread.",
-                source="strategies/breakout.py · run, is_setup_ready",
-            ),
-            Rule(
-                field="Confirmation",
-                value=confirmation,
-                source="strategies/breakout.py · is_confirmed",
-            ),
-            Rule(
-                field="Sorting",
-                value="Ranked by the value traded in the last completed daily session, which is "
-                "its close times its share volume, highest first. When more breakouts fire than "
-                "there is room to hold, the busiest take the slots. This is a different question "
-                "from the confirmation above, which measures each stock against its own history "
-                "rather than against other stocks.",
-                source="strategies/base.py · ranked",
-            ),
-            Rule(
-                field="Entry",
-                value="A market order goes in the moment the scan reads the breakout, and fills "
-                f"at the next executable price. That is the open of the next {minutes}-minute "
-                f"candle when the signal is read on its own boundary, and {first_entry} at the "
-                "earliest, because the opening candle cannot break its own range. Good for the "
-                "day only. The size is worked out from the live quote, and falls back to the "
-                "breakout candle's close. The fill then sets the entry, the risk and the "
-                "targets. "
-                "The entry is passed over if another strategy already holds the stock, if the "
-                "account is at its position cap or fully invested, if the size that fits the "
-                "risk "
-                f"limits comes to less than ${settings.risk.notional_usd_min:.0f}, or if that "
-                "live quote has "
-                f"already run back through the stop the breakout would have been given."
-                f"{extension}",
-                source="portfolio.py · on_trading_iteration, enter",
-            ),
-            Rule(
-                field="Stop Loss",
-                value=f"{percent(breakout.long_stop_fraction)} of the way back into "
-                f"the opening range for a long, {percent(breakout.short_stop_fraction)} "
-                "for a short. Once the first target is hit, the stop trails "
-                f"{breakout.trail_atr_multiple:g}x the {period}-period ATR behind the best price "
-                f"the trade has seen, and never moves back past the entry price. That "
-                f"ATR({period}) "
-                f"is calculated from {minutes}-minute candles across trading sessions, using "
-                "prior-session bars where they are available, so overnight gaps contribute to "
-                f"true range. At least {breakout.trail_bars_min} completed {minutes}-minute "
-                "candles "
-                "must be available. Prior sessions count towards that total, so the trade "
-                "normally starts with enough. The level rests as a live order at the broker. It "
-                "is replaced whenever it moves, and re-sent if it stops covering the whole "
-                "position. A level the market has already reached cannot rest as an order. When "
-                "the stop lands at or beyond the last price, the whole position is closed at "
-                "market instead. The move to breakeven after the first target is the usual way "
-                "this happens. Price back at the entry means the stop is hit, so the position "
-                "leaves at market.",
-                source="strategies/breakout.py · run, manage, portfolio.py · protect",
-            ),
-            Rule(
-                field="Max Risk",
-                value=f"{percent(risk_cap)} of account equity per trade"
-                + (
-                    ", which is the configured per-trade limit. This strategy states none "
-                    "of its own."
-                    if cls.risk_fraction_max is None
-                    else f". This strategy states its own {percent(cls.risk_fraction_max)} in "
-                    f"the spec, so that governs instead of the configured "
-                    f"{percent(per_trade)}."
-                )
-                + f" A single position is never worth more than "
-                f"{percent(settings.risk.position_fraction_max)} "
-                "of equity.",
-                source="portfolio.py · enter",
-            ),
-            Rule(
-                field="Min. R:R",
-                value=f"{reward} {targets}",
-                source="portfolio.py · on_filled_order",
-            ),
-            Rule(
-                field="Exit Rule",
-                value="Scaled out in three: half the position as first filled at the first "
-                "target, a quarter of it at the second, the remainder at the third. On a short "
-                "each slice is rounded down to whole shares, and a slice worth less than a "
-                "single "
-                "share is skipped. The resting stop still covers the position, and the next "
-                "target or the closing deadline takes it. The trailing stop takes whatever is "
-                "left if price turns first.",
-                source="strategies/breakout.py · manage",
-            ),
-            Rule(
-                field="Emergency Exit",
-                value=f"Everything is closed before {exit_before}. The exit is sent at "
-                f"{exit_at}, "
-                f"which is {breakout.close_lead_minutes} minutes before the closing bell the "
-                "exchange "
-                "calendar gives for the session, so the market order fills in time and a half "
-                "day "
-                "closes on its own clock. This strategy never holds overnight. The daily loss "
-                "limit closes all positions and stops new entries for the rest of the day.",
-                source="strategies/breakout.py · manage, portfolio.py · _is_daily_loss_reached",
-            ),
-        ]

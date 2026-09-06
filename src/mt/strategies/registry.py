@@ -1,4 +1,4 @@
-from bot.types import STRATEGY_KEYS, StrategyName
+from mt.strategies.keys import STRATEGY_KEYS, StrategyName
 
 from .base import Strategy
 from .breakout_5m import Breakout5m

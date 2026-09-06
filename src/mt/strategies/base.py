@@ -6,25 +6,10 @@ from typing import ClassVar, Protocol
 
 from pandas import DataFrame
 
-from bot.config import settings
-from bot.types import Direction, EventLevel, StrategyName
-
-
-RULE_FIELDS = (
-    "Market",
-    "Sentiment",
-    "Direction",
-    "Range",
-    "Setup",
-    "Confirmation",
-    "Sorting",
-    "Entry",
-    "Stop Loss",
-    "Max Risk",
-    "Min. R:R",
-    "Exit Rule",
-    "Emergency Exit",
-)
+from mt.config.settings import settings
+from mt.position import Direction
+from mt.snapshot import EventLevel
+from mt.strategies.keys import StrategyName
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,13 +25,6 @@ class Candidate:
     price: float
     stop: float
     direction: Direction = 1
-
-
-@dataclass(frozen=True, slots=True)
-class Rule:
-    field: str
-    value: str
-    source: str
 
 
 @dataclass(slots=True)
@@ -101,7 +79,6 @@ class Strategy(ABC):
     code: ClassVar[str]
     family: ClassVar[str]
     variation: ClassVar[str]
-    kind: ClassVar[str]
     is_paused: ClassVar[bool] = False
     is_stop_resting: ClassVar[bool] = False
     positions_max: ClassVar[int] = settings.risk.positions_max
@@ -121,10 +98,6 @@ class Strategy(ABC):
     @classmethod
     @abstractmethod
     def entry_window(cls, opens: datetime, closes: datetime) -> tuple[datetime, datetime]: ...
-
-    @classmethod
-    @abstractmethod
-    def describe(cls, per_trade: float, opens: datetime, closes: datetime) -> list[Rule]: ...
 
     @abstractmethod
     def run(self, session: Session) -> None: ...

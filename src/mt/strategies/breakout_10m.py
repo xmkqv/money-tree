@@ -1,4 +1,4 @@
-from bot.config import settings
+from mt.config.settings import settings
 
 from .breakout import Breakout
 

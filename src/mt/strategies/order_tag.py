@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import uuid4
 
-from .strategies.registry import STRATEGIES, STRATEGIES_BY_CODE
-from .types import StrategyName
+from mt.strategies.keys import StrategyName
+from mt.strategies.registry import STRATEGIES, STRATEGIES_BY_CODE
 
 
 type OrderKind = Literal["e", "s", "x"]
