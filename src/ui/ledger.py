@@ -4,9 +4,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import TypedDict
 
+from bot.exchange import TRADING_ZONE
 from bot.order_tag import find_order_tag
-from bot.strategies.shared import TRADING_ZONE
-from bot.types import STRATEGY_LABELS, STRATEGY_SHORT_LABELS, StrategyName
+from bot.strategies.registry import STRATEGIES
+from bot.types import StrategyName
 
 from .alpaca import ClosedOrder, Fill
 
@@ -74,19 +75,12 @@ class _LiveCycle:
 
 UNATTRIBUTED = "unattributed"
 EPSILON = 1e-9
-STRATEGY_IDS_BY_LABEL = {label: name for name, label in STRATEGY_LABELS.items()}
-
-
-def strategy_id(published: str) -> str:
-    if published in STRATEGY_LABELS:
-        return published
-    return STRATEGY_IDS_BY_LABEL.get(published, published)
 
 
 def strategy_labels() -> list[dict[str, str]]:
     labels = [
-        {"id": name, "short": short, "label": STRATEGY_LABELS[name]}
-        for name, short in STRATEGY_SHORT_LABELS.items()
+        {"id": cls.key, "short": cls.name(), "label": f"{cls.name()} · {cls.kind}"}
+        for cls in STRATEGIES
     ]
     labels.append({"id": UNATTRIBUTED, "short": "Untagged", "label": "No mt- order tag"})
     return labels

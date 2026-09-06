@@ -16,23 +16,18 @@ from pandas import DataFrame, DatetimeIndex, Timedelta
 from pydantic import ValidationError
 from starlette.responses import FileResponse
 
-from bot.strategies.daily_base import DAILY_STOP_ATR_MULTIPLES
-from bot.strategies.orb_base import ORB_OPENING_MINUTES, ORB_TARGET_MULTIPLES, range_stop
-from bot.strategies.shared import (
-    PERIOD,
-    TRADING_ZONE,
-    Direction,
-    latest_atr,
-    regular_session,
-    session_bounds,
-    session_starts,
-)
+from bot.exchange import TRADING_ZONE, session_bounds, session_starts
+from bot.frames import regular_session
+from bot.indicators import PERIOD, latest_atr
+from bot.strategies.breakout import Breakout, range_stop
+from bot.strategies.daily import Daily
+from bot.strategies.registry import strategy_class
 from bot.types import (
     POSITION_FRACTION_CAP,
     STATE_SIGNATURE_SALT,
+    Direction,
     StateEvent,
     StateSnapshot,
-    StrategyName,
     TradingConfiguration,
     is_strategy_name,
 )
@@ -49,7 +44,6 @@ from .ledger import (
     match_cycles,
     parse_day,
     sessions,
-    strategy_id,
     strategy_labels,
     totals,
 )
@@ -343,12 +337,10 @@ def opening_range(bars: list[Bar], opens: datetime, minutes: int) -> tuple[float
 
 
 def orb_levels(
-    strategy: StrategyName, direction: Direction, entry: float, high: float, low: float
+    strategy: type[Breakout], direction: Direction, entry: float, high: float, low: float
 ) -> OrbLevels:
     stop = range_stop(direction, high, low)
-    risk = abs(entry - stop)
-    multiples = ORB_TARGET_MULTIPLES[strategy]
-    targets = [entry + direction * risk * multiple for multiple in multiples]
+    targets = strategy.target_prices(entry, stop, direction)
     return OrbLevels(
         range=OpeningRange(high=round(high, 4), low=round(low, 4)),
         stop=round(stop, 4),
@@ -479,8 +471,8 @@ def bot_state(snapshot: StateSnapshot | None, stale: bool) -> BotState:
         stale=stale,
         running=running,
         reported=snapshot is not None,
-        strategies=[strategy_id(name) for name in snapshot.strategies] if snapshot else [],
-        paused=[strategy_id(name) for name in snapshot.paused] if snapshot else [],
+        strategies=list(snapshot.strategies) if snapshot else [],
+        paused=list(snapshot.paused) if snapshot else [],
         events=list(reversed(snapshot.events)) if snapshot else [],
     )
 
@@ -590,7 +582,10 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         request: Request,
         symbol: Annotated[str, Query(min_length=1, max_length=12, pattern=r"^[A-Z][A-Z.]*$")],
         strategy: Annotated[
-            Literal["orb", "orb_momentum", "sma", "tfb_50", "unattributed"], Query()
+            Literal[
+                "breakout_5m", "breakout_10m", "daily_sma", "daily_tfb", "unattributed"
+            ],
+            Query(),
         ],
         side: Annotated[Literal["long", "short"], Query()],
         entry: Annotated[float, Query(gt=0)],
@@ -609,12 +604,13 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         direction: Direction = 1 if side == "long" else -1
         payload = Levels(strategy=strategy, reconstructed=True)
         bounds = session_bounds(opened_on)
-        name = strategy if is_strategy_name(strategy) else None
+        found_class = strategy_class(strategy) if is_strategy_name(strategy) else None
 
         async with levels_cache.lock:
-            if name is not None and name in ORB_OPENING_MINUTES and bounds is not None:
+            if found_class is not None and issubclass(found_class, Breakout) and bounds:
+                breakout = found_class
                 opens = bounds[0]
-                minutes = ORB_OPENING_MINUTES[name]
+                minutes = breakout.opening_minutes
                 opening_bars = await market(request).bars(
                     symbol,
                     "5Min",
@@ -624,11 +620,11 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 )
                 found = opening_range(opening_bars, opens, minutes)
                 if found is not None:
-                    marks = orb_levels(name, direction, entry, *found)
+                    marks = orb_levels(breakout, direction, entry, *found)
                     payload["range"] = marks["range"]
                     payload["stop"] = marks["stop"]
                     payload["targets"] = marks["targets"]
-            elif name is not None and name in DAILY_STOP_ATR_MULTIPLES:
+            elif found_class is not None and issubclass(found_class, Daily):
                 history = await market(request).bars(
                     symbol,
                     "1Day",
@@ -638,7 +634,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 )
                 average_range = bars_atr(history)
                 if average_range is not None:
-                    distance = DAILY_STOP_ATR_MULTIPLES[name] * average_range
+                    distance = found_class.stop_atr_multiple * average_range
                     payload["stop"] = round(entry - direction * distance, 4)
                     payload["atr"] = round(average_range, 4)
             levels_cache.store(key, payload)

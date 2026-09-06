@@ -23,10 +23,10 @@
   --hold-mark: #B87503;
   --hold-ink:  #8A5800;
 
-  --s-orb5:     #2A72CC;
-  --s-orb10:    #9A6B12;
-  --s-momentum: #6A57C8;
-  --s-tfb50:    #B23F79;
+  --s-breakout-5m:     #2A72CC;
+  --s-breakout-10m:    #9A6B12;
+  --s-daily-sma: #6A57C8;
+  --s-daily-tfb:    #B23F79;
 
   --grid:      rgba(16, 24, 40, .06);
   --grid-zero: rgba(16, 24, 40, .22);
@@ -70,10 +70,10 @@
     --flat-ink:  #79818D;
     --hold-mark: #D18F1C;
     --hold-ink:  #E8AE45;
-    --s-orb5:     #3A8AE8;
-    --s-orb10:    #C08820;
-    --s-momentum: #7F6EE0;
-    --s-tfb50:    #C9548F;
+    --s-breakout-5m:     #3A8AE8;
+    --s-breakout-10m:    #C08820;
+    --s-daily-sma: #7F6EE0;
+    --s-daily-tfb:    #C9548F;
     --grid:      rgba(255, 255, 255, .055);
     --grid-zero: rgba(255, 255, 255, .2);
     --axis-ink:  #79818D;
@@ -108,10 +108,10 @@
   --flat-ink:  #79818D;
   --hold-mark: #D18F1C;
   --hold-ink:  #E8AE45;
-  --s-orb5:     #3A8AE8;
-  --s-orb10:    #C08820;
-  --s-momentum: #7F6EE0;
-  --s-tfb50:    #C9548F;
+  --s-breakout-5m:     #3A8AE8;
+  --s-breakout-10m:    #C08820;
+  --s-daily-sma: #7F6EE0;
+  --s-daily-tfb:    #C9548F;
   --grid:      rgba(255, 255, 255, .055);
   --grid-zero: rgba(255, 255, 255, .2);
   --axis-ink:  #79818D;
@@ -1354,8 +1354,8 @@ table.trades.log td { font-size: 12.5px; }
   cursor: pointer;
   border-bottom: 1px dashed var(--hairline-strong);
 }
-.sym.linked:hover { color: var(--accent, var(--s-orb5)); border-bottom-color: currentColor; }
-.sym.linked:focus-visible { outline: 2px solid var(--s-orb5); outline-offset: 2px; border-radius: 3px; }
+.sym.linked:hover { color: var(--accent, var(--s-breakout-5m)); border-bottom-color: currentColor; }
+.sym.linked:focus-visible { outline: 2px solid var(--s-breakout-5m); outline-offset: 2px; border-radius: 3px; }
 
 .chart-panel { display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .trade-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -1456,7 +1456,7 @@ body[data-view="chart"] .chart-panel { min-height: 74vh; }
 .tc-toggle:hover { background: var(--surface-2); }
 .tc-toggle.off { color: var(--ink-3); cursor: not-allowed; }
 .tc-toggle.off:hover { background: none; }
-.tc-toggle input { accent-color: var(--s-orb5); margin: 0; }
+.tc-toggle input { accent-color: var(--s-breakout-5m); margin: 0; }
 .tc-swatch { width: 12px; height: 3px; border-radius: 2px; flex: none; }
 .tc-swatch.plain { background: var(--ink-3); }
 

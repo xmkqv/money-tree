@@ -46,10 +46,10 @@ const PHONE = window.matchMedia("(max-width: 720px)");
 const onPhone = () => PHONE.matches;
 
 const STRATEGY_COLOURS = {
-  orb: "var(--s-orb5)",
-  orb_momentum: "var(--s-orb10)",
-  sma: "var(--s-momentum)",
-  tfb_50: "var(--s-tfb50)",
+  breakout_5m: "var(--s-breakout-5m)",
+  breakout_10m: "var(--s-breakout-10m)",
+  daily_sma: "var(--s-daily-sma)",
+  daily_tfb: "var(--s-daily-tfb)",
   unattributed: "var(--ink-3)",
 };
 
@@ -1470,9 +1470,9 @@ const TC_VIEW = { i0: 0, i1: 0, yManual: null, custom: false };
 let TC_ORIGIN = "history";
 
 const SMA_SET = [
-  { length: 20, token: "--s-orb5" },
-  { length: 50, token: "--s-orb10" },
-  { length: 200, token: "--s-tfb50" },
+  { length: 20, token: "--s-breakout-5m" },
+  { length: 50, token: "--s-breakout-10m" },
+  { length: 200, token: "--s-daily-tfb" },
 ];
 const TC_SHOW = { sma20: false, sma50: false, sma200: false, range: true, stop: true, targets: true };
 
