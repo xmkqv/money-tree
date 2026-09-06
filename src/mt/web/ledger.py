@@ -19,7 +19,7 @@ from mt.data.alpaca import (
 )
 from mt.exchange import TRADING_ZONE
 from mt.snapshot import StateSnapshot
-from mt.strategies.keys import UNATTRIBUTED, StrategyName
+from mt.strategies.keys import UNATTRIBUTED, StrategyKey
 from mt.strategies.order_tag import find_order_tag
 
 from .pulse import BotState, PulsePosition, bot_state, pulse_positions
@@ -79,7 +79,7 @@ class Day(TypedDict):
 class _Tally:
     direction: int
     opened: datetime
-    strategy: StrategyName | None
+    strategy: StrategyKey | None
     in_quantity: float = 0.0
     in_value: float = 0.0
     out_quantity: float = 0.0
@@ -94,7 +94,7 @@ def match_cycles(
     fills: list[Fill],
     orders: list[ClosedOrder],
 ) -> tuple[list[Cycle], dict[str, OpenCycle]]:
-    strategies: dict[str, StrategyName | None] = {
+    strategies: dict[str, StrategyKey | None] = {
         order.id: _order_strategy(order.client_order_id or "") for order in orders
     }
     held: defaultdict[str, float] = defaultdict(float)
@@ -206,7 +206,7 @@ def sessions(cycles: list[Cycle], closes: dict[str, float], opening: float) -> l
     return days
 
 
-def _order_strategy(client_order_id: str) -> StrategyName | None:
+def _order_strategy(client_order_id: str) -> StrategyKey | None:
     tag = find_order_tag(client_order_id)
     return None if tag is None else tag.strategy
 

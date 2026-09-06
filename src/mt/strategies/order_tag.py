@@ -2,8 +2,8 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import uuid4
 
-from mt.strategies.keys import StrategyName
-from mt.strategies.registry import STRATEGIES, STRATEGIES_BY_CODE
+from .keys import StrategyKey
+from .registry import STRATEGIES, STRATEGIES_BY_CODE
 
 
 type OrderKind = Literal["e", "s", "x"]
@@ -11,7 +11,7 @@ type OrderKind = Literal["e", "s", "x"]
 
 @dataclass(frozen=True, slots=True)
 class OrderTag:
-    strategy: StrategyName
+    strategy: StrategyKey
     kind: OrderKind
     signal: str
     risk_fraction: float
@@ -21,10 +21,10 @@ ORDER_TAG_PREFIX = "mt"
 ORDER_TAG_PARTS = 6
 RISK_FRACTION_SCALE = 1_000_000
 ORDER_KINDS: frozenset[OrderKind] = frozenset({"e", "s", "x"})
-STRATEGY_CODES: dict[StrategyName, str] = {cls.key: cls.code for cls in STRATEGIES}
+STRATEGY_CODES: dict[StrategyKey, str] = {cls.key: cls.code for cls in STRATEGIES}
 
 
-def order_tag(strategy: StrategyName, kind: OrderKind, signal: str, risk_fraction: float) -> str:
+def order_tag(strategy: StrategyKey, kind: OrderKind, signal: str, risk_fraction: float) -> str:
     scaled = round(risk_fraction * RISK_FRACTION_SCALE)
     return "-".join(
         (ORDER_TAG_PREFIX, STRATEGY_CODES[strategy], kind, signal, str(scaled), uuid4().hex[:8])

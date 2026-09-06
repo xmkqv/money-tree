@@ -6,6 +6,7 @@ from mt.config.settings import settings
 from mt.exchange import upcoming_session_bounds
 from mt.strategies.base import Strategy
 from mt.strategies.keys import UNATTRIBUTED
+from mt.strategies.order_tag import ORDER_TAG_PREFIX
 from mt.strategies.registry import STRATEGIES
 
 from .rules import KINDS, RULE_FIELDS, Row, percent, strategy_rows
@@ -38,7 +39,13 @@ def strategy_labels() -> list[dict[str, str]]:
         {"id": cls.key, "short": cls.name(), "label": f"{cls.name()} · {KINDS[cls.family]}"}
         for cls in STRATEGIES
     ]
-    labels.append({"id": UNATTRIBUTED, "short": "Untagged", "label": "No mt- order tag"})
+    labels.append(
+        {
+            "id": UNATTRIBUTED,
+            "short": "Untagged",
+            "label": f"No {ORDER_TAG_PREFIX}- order tag",
+        }
+    )
     return labels
 
 

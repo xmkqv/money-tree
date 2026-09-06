@@ -9,7 +9,8 @@ from pandas import DataFrame
 from mt.config.settings import settings
 from mt.position import Direction
 from mt.snapshot import EventLevel
-from mt.strategies.keys import StrategyName
+
+from .keys import StrategyKey
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,7 +62,7 @@ class Portfolio(Protocol):
 
     def last_price(self, symbol: str) -> float: ...
 
-    def position_count(self, keys: frozenset[StrategyName]) -> int: ...
+    def position_count(self, keys: frozenset[StrategyKey]) -> int: ...
 
     def is_taken(self, strategy: "Strategy", symbol: str, day: date) -> bool: ...
 
@@ -75,7 +76,7 @@ class Portfolio(Protocol):
 
 
 class Strategy(ABC):
-    key: ClassVar[StrategyName]
+    key: ClassVar[StrategyKey]
     code: ClassVar[str]
     family: ClassVar[str]
     variation: ClassVar[str]
@@ -92,7 +93,7 @@ class Strategy(ABC):
         return f"{cls.family.capitalize()} {cls.variation}"
 
     @classmethod
-    def cap_keys(cls) -> frozenset[StrategyName]:
+    def cap_keys(cls) -> frozenset[StrategyKey]:
         return frozenset({cls.key})
 
     @classmethod

@@ -5,7 +5,7 @@ from typing import cast
 
 from mt.config.settings import settings
 from mt.strategies.breakout import Breakout
-from mt.strategies.keys import StrategyName
+from mt.strategies.keys import StrategyKey
 from mt.strategies.registry import strategy_class
 
 from .broker import broker_credentials
@@ -30,7 +30,7 @@ def _artifact_paths(output_dir: Path) -> dict[str, str]:
 
 
 def run(
-    strategy_name: StrategyName,
+    strategy_key: StrategyKey,
     symbols: list[str],
     start: datetime,
     end: datetime,
@@ -40,11 +40,11 @@ def run(
 
     from .portfolio import Portfolio
 
-    parameters: dict[str, object] = {"strategies": [strategy_name], "symbols": symbols}
+    parameters: dict[str, object] = {"strategies": [strategy_key], "symbols": symbols}
     datasource = YahooDataBacktesting
     datasource_configuration: dict[str, str | bool] | None = None
     datasource_options: dict[str, object] = {}
-    if strategy_class(strategy_name).family == Breakout.family:
+    if strategy_class(strategy_key).family == Breakout.family:
         datasource = AlpacaBacktesting
         datasource_configuration = broker_credentials(paper=True)
         datasource_options = {
@@ -84,12 +84,12 @@ def run(
 
 
 def report(
-    strategy_name: StrategyName,
+    strategy_key: StrategyKey,
     symbols: list[str],
     start: datetime,
     end: datetime,
 ) -> Path:
-    output_dir = Path("runs") / f"{strategy_name}-{start:%Y%m%d}-{end:%Y%m%d}"
-    run(strategy_name, symbols, start, end, output_dir=output_dir)
+    output_dir = Path("runs") / f"{strategy_key}-{start:%Y%m%d}-{end:%Y%m%d}"
+    run(strategy_key, symbols, start, end, output_dir=output_dir)
     print(output_dir)
     return output_dir
