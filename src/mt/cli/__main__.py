@@ -3,10 +3,9 @@ from typing import Annotated
 
 import typer
 
-from bot.config import settings
-from bot.types import STRATEGY_KEYS, StrategyName, is_strategy_name
-
-from .environment import SERVICE_SETTINGS, ServiceName, service_keys
+from mt.config.services import SERVICE_SETTINGS, ServiceName, service_keys
+from mt.config.settings import settings
+from mt.strategies.keys import STRATEGY_KEYS, StrategyName, is_strategy_name
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -51,30 +50,30 @@ def _parse_strategy(value: str) -> StrategyName:
 
 @app.command("backtest")
 def run_backtest(
+    symbols: Annotated[str, typer.Option()],
     strategy: Annotated[str, typer.Option()] = settings.strategy_names[0],
     start: Annotated[datetime, typer.Option()] = datetime(2023, 1, 1),
     end: Annotated[datetime, typer.Option()] = datetime(2024, 1, 1),
-    symbols: Annotated[str, typer.Option()] = "",
 ) -> None:
-    from bot import backtest
+    from mt.bot import backtest
 
-    backtest.run(_parse_strategy(strategy), start, end, _parse_symbols(symbols) or None)
+    backtest.run(_parse_strategy(strategy), _parse_symbols(symbols), start, end)
 
 
 @app.command("report")
 def run_report(
     strategy: Annotated[str, typer.Option()] = settings.strategy_names[0],
-    symbols: Annotated[str, typer.Option()] = "SPY",
+    symbols: Annotated[str, typer.Option()] = settings.benchmark_symbol,
     start: Annotated[datetime, typer.Option()] = datetime(2023, 1, 1),
     end: Annotated[datetime, typer.Option()] = datetime(2024, 1, 1),
 ) -> None:
-    from bot import report
+    from mt.bot.backtest import report
 
-    report.run(_parse_strategy(strategy), _parse_symbols(symbols), start, end)
+    report(_parse_strategy(strategy), _parse_symbols(symbols), start, end)
 
 
 @app.command("trade")
 def run_trade(strategies: Annotated[str, typer.Option()] = settings.strategies) -> None:
-    from bot import trade
+    from mt.bot import trade
 
     trade.run(_parse_strategies(strategies))
