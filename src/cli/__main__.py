@@ -7,8 +7,26 @@ from bot import backtest, report, trade
 from bot.config import settings
 from bot.types import STRATEGY_KEYS, StrategyName, is_strategy_name
 
+from .environment import SERVICE_SETTINGS, ServiceName, service_keys
+
 
 app = typer.Typer(no_args_is_help=True)
+environment = typer.Typer(no_args_is_help=True)
+app.add_typer(environment, name="env")
+
+
+@environment.command("list")
+def list_environment(service: Annotated[str, typer.Option()]) -> None:
+    for key in service_keys(_parse_service(service)):
+        typer.echo(key)
+
+
+def _parse_service(value: str) -> ServiceName:
+    for name in SERVICE_SETTINGS:
+        if value == name:
+            return name
+    names = ", ".join(sorted(SERVICE_SETTINGS))
+    raise typer.BadParameter(f"service must be one of: {names}")
 
 
 def _parse_symbols(value: str) -> list[str]:
