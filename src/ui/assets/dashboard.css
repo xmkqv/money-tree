@@ -2,11 +2,11 @@
 :root {
   color-scheme: light;
 
-  --canvas:    #F4F5F7;   
+  --canvas:    #F4F5F7;
   --surface:   #FFFFFF;
-  --surface-2: #F6F7F9;   
-  --surface-3: #EAECF1;   
-  --thumb:     #FFFFFF;   
+  --surface-2: #F6F7F9;
+  --surface-3: #EAECF1;
+  --thumb:     #FFFFFF;
   --hairline:  rgba(16, 24, 40, .07);
   --hairline-strong: rgba(16, 24, 40, .12);
   --week-rule: rgba(16, 24, 40, .26);
@@ -136,7 +136,7 @@ body {
   font-family: var(--font-ui);
   font-size: 13px;
   line-height: 1.45;
-  overflow: hidden;              
+  overflow: hidden;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }

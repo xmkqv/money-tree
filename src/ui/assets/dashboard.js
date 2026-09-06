@@ -654,13 +654,13 @@ const PAD = { t: 12, r: 58, b: 22, l: 16 };
 
 const chart = {
   series: null,
-  i0: 0, i1: 1,          
-  yManual: null,         
+  i0: 0, i1: 1,
+  yManual: null,
   preset: "ALL",
   custom: false,
 };
 
-let geo = null;          
+let geo = null;
 
 function presetWindow(range) {
   if (range === "D") return { series: INTRADAY, i0: 0, i1: INTRADAY.length - 1 };
@@ -701,7 +701,7 @@ function niceStep(raw) {
 
 function chartWindow() {
   const s = chart.series;
-  if (!s || !s.length) return null;                    
+  if (!s || !s.length) return null;
   const N = s.length;
   const lo = clamp(Math.floor(chart.i0), 0, N - 1);
   const hi = clamp(Math.ceil(chart.i1), 0, N - 1);
@@ -736,7 +736,7 @@ function drawChart() {
   const w = chartWindow();
   if (!w) return;
   paintChartHero(w);
-  if (onPhone()) return;            
+  if (onPhone()) return;
 
   const host = document.getElementById("chart-host");
   const width = host.clientWidth;
@@ -845,9 +845,9 @@ const ZOOM_STEP = 1.14;
 const SCALE_TRAVEL_PX = 180;
 const TAP_TRAVEL_PX = 8;
 
-function wirePanZoom(spec) {
-  const { plot, axis, view, geometry, spanMin, spanMax, scaleMin, clampWindow, redraw, onReset } = spec;
-  const { onHover, onLeave, pinchable } = spec;
+function wirePanZoom(options) {
+  const { plot, axis, view, geometry, spanMin, spanMax, scaleMin, clampWindow, redraw, onReset } = options;
+  const { onHover, onLeave, pinchable } = options;
   let drag = null;
   let pinch = null;
   const touches = new Map();
@@ -1616,9 +1616,9 @@ function paintRail() {
   levels.replaceChildren();
   const has = TC_LEVELS || {};
   levels.append(
-    railToggle("range", "Opening range", null, Boolean(has.range), has.range ? "" : "ORB trades only"),
+    railToggle("range", "Opening range", null, Boolean(has.range), has.range ? "" : "Breakout trades only"),
     railToggle("stop", "Stop", null, has.stop !== undefined, has.stop !== undefined ? "" : "Not reconstructable"),
-    railToggle("targets", "Targets", null, Boolean(has.targets), has.targets ? "" : "ORB trades only"),
+    railToggle("targets", "Targets", null, Boolean(has.targets), has.targets ? "" : "Breakout trades only"),
   );
   document.getElementById("tc-rail-note").textContent =
     has.reconstructed ? "Stop and targets are reconstructed from the rules." : "";
@@ -1877,7 +1877,7 @@ function drawTradeChart() {
   });
   candidates.sort((a, b) => a.i - b.i);
 
-  const CHAR = 6.1, GAP = 10;          
+  const CHAR = 6.1, GAP = 10;
   const kept = [];
   for (const candidate of candidates) {
     const half = Math.max(...candidate.lines.map(line => line.length)) * CHAR / 2;
@@ -1954,6 +1954,7 @@ function drawTradeChart() {
   if (TC_SHOW.range && levels.range) {
     overlays += band(py(levels.range.high), py(levels.range.low), C.axis);
     named(py(levels.range.high), C.axis, "RANGE HIGH " + money(levels.range.high), "4 3");
+    named(py(levels.range.mid), C.axis, "RANGE MID " + money(levels.range.mid), "2 4");
     named(py(levels.range.low), C.axis, "RANGE LOW " + money(levels.range.low), "4 3");
   }
   if (TC_SHOW.stop && levels.stop !== undefined) {
@@ -2255,13 +2256,13 @@ function paintRules() {
     chip.className = "chip";
     chip.style.background = STRATEGY_COLOURS[strategy.id] || "var(--ink-3)";
     const name = document.createElement("span");
-    name.textContent = strategy.short;
+    name.textContent = strategy.name;
     title.append(chip, name);
     head.append(title, stateBadges(strategy.id));
 
     const sub = document.createElement("div");
     sub.className = "rule-sub";
-    sub.textContent = strategy.label + " · " + strategy.kind;
+    sub.textContent = strategy.name + " · " + strategy.kind;
 
     const body = document.createElement("div");
     body.className = "panel-body";
@@ -2308,10 +2309,10 @@ function renderAll() {
 }
 
 
-function mergeMarks(marks) {
+function mergePositions(pulsed) {
   const rows = new Map(OPEN_POSITIONS.map(pos => [pos.symbol, pos]));
-  if (marks.length !== rows.size || marks.some(m => !rows.has(m.symbol))) return false;
-  for (const mark of marks) Object.assign(rows.get(mark.symbol), mark);
+  if (pulsed.length !== rows.size || pulsed.some(p => !rows.has(p.symbol))) return false;
+  for (const position of pulsed) Object.assign(rows.get(position.symbol), position);
   OPEN_POSITIONS.sort((a, b) => b.value - a.value);
   return true;
 }
@@ -2334,7 +2335,7 @@ function applyPulse(pulsed) {
   if (ACCOUNT.dayOpening) ACCOUNT.dayLowEquity = ratchetLow(SESSION_LOW.date, pulsed.equity);
   ACCOUNT.dayDrawdownPct = drawdownPct();
 
-  const aligned = mergeMarks(pulsed.positions);
+  const aligned = mergePositions(pulsed.positions);
   ACCOUNT.openPositions = OPEN_POSITIONS.length;
   ACCOUNT.largestPositionPct = OPEN_POSITIONS.length
     ? Math.max(...OPEN_POSITIONS.map(p => p.weight)) : 0;
@@ -2367,7 +2368,7 @@ let resyncing = false;
 let pulsing = false;
 
 async function pulse() {
-  if (!booted || pulsing) return;       
+  if (!booted || pulsing) return;
   pulsing = true;
   try {
     const response = await fetch("/api/pulse", { headers: { Accept: "application/json" } });

@@ -2,7 +2,7 @@ from bisect import bisect_left
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from bot.exchange import TRADING_ZONE
 from bot.order_tag import find_order_tag
@@ -10,6 +10,9 @@ from bot.strategies.registry import STRATEGIES
 from bot.types import StrategyName
 
 from .alpaca import ClosedOrder, Fill
+
+
+type Unattributed = Literal["unattributed"]
 
 
 class FillRow(TypedDict):
@@ -73,7 +76,7 @@ class _LiveCycle:
     fills: list[FillRow] = field(default_factory=list[FillRow])
 
 
-UNATTRIBUTED = "unattributed"
+UNATTRIBUTED: Unattributed = "unattributed"
 EPSILON = 1e-9
 
 

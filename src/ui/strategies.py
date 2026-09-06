@@ -3,7 +3,7 @@ from typing import TypedDict
 
 from bot.exchange import upcoming_session_bounds
 from bot.strategies.base import RULE_FIELDS, Strategy
-from bot.strategies.breakout import POSITIONS_MAX as BREAKOUT_POSITIONS_MAX
+from bot.strategies.breakout import BREAKOUT_POSITIONS_MAX
 from bot.strategies.registry import STRATEGIES
 from bot.types import POSITIONS_MAX, TradingConfiguration
 from bot.universe import percent
@@ -17,13 +17,12 @@ class Row(TypedDict):
 
 class StrategyCard(TypedDict):
     id: str
-    short: str
-    label: str
+    name: str
     kind: str
     rows: list[Row]
 
 
-class StrategySpec(TypedDict):
+class StrategyRules(TypedDict):
     fields: list[str]
     strategies: list[StrategyCard]
     portfolio: list[Row]
@@ -38,13 +37,12 @@ def entry_windows() -> dict[str, EntryWindow]:
     return {cls.key: _window(*cls.entry_window(opens, closes)) for cls in STRATEGIES}
 
 
-def strategy_spec(configuration: TradingConfiguration, *, configured: bool) -> StrategySpec:
+def strategy_rules(configuration: TradingConfiguration, *, configured: bool) -> StrategyRules:
     opens, closes = upcoming_session_bounds(date.today())
-    return StrategySpec(
+    return StrategyRules(
         fields=list(RULE_FIELDS),
         strategies=[
-            _card(cls, configuration.risk_per_trade_max, opens, closes)
-            for cls in STRATEGIES
+            _card(cls, configuration.risk_per_trade_max, opens, closes) for cls in STRATEGIES
         ],
         portfolio=portfolio_rules(configuration.risk_per_day_max),
         configured=configured,
@@ -87,16 +85,13 @@ def portfolio_rules(daily_loss: float) -> list[Row]:
     ]
 
 
-def _card(
-    cls: type[Strategy], per_trade: float, opens: datetime, closes: datetime
-) -> StrategyCard:
+def _card(cls: type[Strategy], per_trade: float, opens: datetime, closes: datetime) -> StrategyCard:
     rules = cls.describe(per_trade, opens, closes)
     if [rule.field for rule in rules] != list(RULE_FIELDS):
         raise ValueError(f"{cls.__name__} must describe every rule field in order")
     return StrategyCard(
         id=cls.key,
-        short=cls.name(),
-        label=cls.name(),
+        name=cls.name(),
         kind=cls.kind,
         rows=[Row(field=rule.field, value=rule.value, source=rule.source) for rule in rules],
     )

@@ -19,7 +19,7 @@ from starlette.responses import FileResponse
 from bot.exchange import TRADING_ZONE, session_bounds, session_starts
 from bot.frames import regular_session
 from bot.indicators import PERIOD, latest_atr
-from bot.strategies.breakout import Breakout, range_stop
+from bot.strategies.breakout import Breakout, range_marks, range_stop
 from bot.strategies.daily import Daily
 from bot.strategies.registry import strategy_class
 from bot.types import (
@@ -28,6 +28,7 @@ from bot.types import (
     Direction,
     StateEvent,
     StateSnapshot,
+    StrategyName,
     TradingConfiguration,
     is_strategy_name,
 )
@@ -41,13 +42,14 @@ from .ledger import (
     OpenCycle,
     Session,
     Totals,
+    Unattributed,
     match_cycles,
     parse_day,
     sessions,
     strategy_labels,
     totals,
 )
-from .strategies import EntryWindow, entry_windows, strategy_spec
+from .strategies import EntryWindow, entry_windows, strategy_rules
 
 
 class BarRow(TypedDict):
@@ -61,10 +63,11 @@ class BarRow(TypedDict):
 
 class OpeningRange(TypedDict):
     high: float
+    mid: float
     low: float
 
 
-class OrbLevels(TypedDict):
+class BreakoutLevels(TypedDict):
     range: OpeningRange
     stop: float
     targets: list[float]
@@ -96,7 +99,7 @@ class BotState(TypedDict):
     events: list[StateEvent]
 
 
-class PositionMark(TypedDict):
+class PulsePosition(TypedDict):
     symbol: str
     side: str
     qty: float
@@ -108,7 +111,7 @@ class PositionMark(TypedDict):
     weight: float
 
 
-class PositionRow(PositionMark):
+class PositionRow(PulsePosition):
     strategy: str
     opened: str
     inDate: str | None
@@ -138,7 +141,7 @@ class Pulse(TypedDict):
     buyingPower: float
     marketValue: float
     unrealised: float
-    positions: list[PositionMark]
+    positions: list[PulsePosition]
 
 
 class Ledger(TypedDict):
@@ -336,13 +339,16 @@ def opening_range(bars: list[Bar], opens: datetime, minutes: int) -> tuple[float
     return max(bar.high for bar in inside), min(bar.low for bar in inside)
 
 
-def orb_levels(
+def breakout_levels(
     strategy: type[Breakout], direction: Direction, entry: float, high: float, low: float
-) -> OrbLevels:
+) -> BreakoutLevels:
     stop = range_stop(direction, high, low)
     targets = strategy.target_prices(entry, stop, direction)
-    return OrbLevels(
-        range=OpeningRange(high=round(high, 4), low=round(low, 4)),
+    marks = range_marks(high, low)
+    return BreakoutLevels(
+        range=OpeningRange(
+            high=round(marks.high, 4), mid=round(marks.mid, 4), low=round(marks.low, 4)
+        ),
         stop=round(stop, 4),
         targets=[round(value, 4) for value in targets],
     )
@@ -452,15 +458,15 @@ async def build_pulse(alpaca: AlpacaReadClient) -> Pulse:
     account = account_read.result()
     positions = positions_read.result()
     equity = round(account.equity, 2)
-    marks = _position_marks(positions, equity)
+    held = _pulse_positions(positions, equity)
     return Pulse(
         asOf=datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
         equity=equity,
         cash=round(account.cash, 2),
         buyingPower=round(account.buying_power, 2),
-        marketValue=round(sum(mark["value"] for mark in marks), 2),
-        unrealised=round(sum(mark["unreal"] for mark in marks), 2),
-        positions=marks,
+        marketValue=round(sum(row["value"] for row in held), 2),
+        unrealised=round(sum(row["unreal"] for row in held), 2),
+        positions=held,
     )
 
 
@@ -479,8 +485,8 @@ def bot_state(snapshot: StateSnapshot | None, stale: bool) -> BotState:
 
 def dashboard_router(configuration: WebSettings, state_store: StateStore) -> APIRouter:
     router = APIRouter()
-    mode = b"PAPER" if configuration.alpaca_is_paper else b"LIVE"
-    dashboard_html = DASHBOARD_HTML.replace(b"{{ ALPACA_MODE }}", mode)
+    mode = configuration.broker_mode.upper().encode()
+    dashboard_html = DASHBOARD_HTML.replace(b"{{ BROKER_MODE }}", mode)
     for plain, fingerprinted in ASSET_REWRITES.items():
         dashboard_html = dashboard_html.replace(plain, fingerprinted)
     signer = TimestampSigner(
@@ -581,12 +587,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
     async def levels(
         request: Request,
         symbol: Annotated[str, Query(min_length=1, max_length=12, pattern=r"^[A-Z][A-Z.]*$")],
-        strategy: Annotated[
-            Literal[
-                "breakout_5m", "breakout_10m", "daily_sma", "daily_tfb", "unattributed"
-            ],
-            Query(),
-        ],
+        strategy: Annotated[StrategyName | Unattributed, Query()],
         side: Annotated[Literal["long", "short"], Query()],
         entry: Annotated[float, Query(gt=0)],
         opened: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
@@ -620,10 +621,10 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 )
                 found = opening_range(opening_bars, opens, minutes)
                 if found is not None:
-                    marks = orb_levels(breakout, direction, entry, *found)
-                    payload["range"] = marks["range"]
-                    payload["stop"] = marks["stop"]
-                    payload["targets"] = marks["targets"]
+                    levels = breakout_levels(breakout, direction, entry, *found)
+                    payload["range"] = levels["range"]
+                    payload["stop"] = levels["stop"]
+                    payload["targets"] = levels["targets"]
             elif found_class is not None and issubclass(found_class, Daily):
                 history = await market(request).bars(
                     symbol,
@@ -647,7 +648,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         active_configuration = (
             snapshot.configuration if snapshot else configuration.trading_configuration
         )
-        return read_response(strategy_spec(active_configuration, configured=reported), 60)
+        return read_response(strategy_rules(active_configuration, configured=reported), 60)
 
     @router.get("/api/ledger")
     async def ledger(request: Request) -> JSONResponse:
@@ -679,7 +680,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
 
         held = ledger_cache.fresh()
         if held is not None and {row["symbol"] for row in held["positions"]} != {
-            mark["symbol"] for mark in cached["positions"]
+            row["symbol"] for row in cached["positions"]
         }:
             ledger_cache.drop()
 
@@ -787,9 +788,9 @@ def _intraday_series(points: list[EquityPoint]) -> tuple[list[IntradayPoint], st
     return rows, funded[0][0].date().isoformat() if funded else ""
 
 
-def _position_marks(raw: list[Position], equity: float) -> list[PositionMark]:
-    marks = [
-        PositionMark(
+def _pulse_positions(raw: list[Position], equity: float) -> list[PulsePosition]:
+    rows = [
+        PulsePosition(
             symbol=item.symbol,
             side="long" if item.side == "long" else "short",
             qty=round(abs(item.qty), 4),
@@ -802,8 +803,8 @@ def _position_marks(raw: list[Position], equity: float) -> list[PositionMark]:
         )
         for item in raw
     ]
-    marks.sort(key=lambda mark: -mark["value"])
-    return marks
+    rows.sort(key=lambda row: -row["value"])
+    return rows
 
 
 def _position_rows(
@@ -812,11 +813,11 @@ def _position_rows(
     open_cycles: dict[str, OpenCycle],
 ) -> list[PositionRow]:
     rows: list[PositionRow] = []
-    for mark in _position_marks(raw, equity):
-        held = open_cycles.get(mark["symbol"])
+    for position in _pulse_positions(raw, equity):
+        held = open_cycles.get(position["symbol"])
         rows.append(
             PositionRow(
-                **mark,
+                **position,
                 strategy=held["strategy"] if held else UNATTRIBUTED,
                 opened=held["opened"] if held else "—",
                 inDate=held["inDate"] if held else None,
