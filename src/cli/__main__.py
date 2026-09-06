@@ -3,7 +3,6 @@ from typing import Annotated
 
 import typer
 
-from bot import backtest, report, trade
 from bot.config import settings
 from bot.types import STRATEGY_KEYS, StrategyName, is_strategy_name
 
@@ -57,6 +56,8 @@ def run_backtest(
     end: Annotated[datetime, typer.Option()] = datetime(2024, 1, 1),
     symbols: Annotated[str, typer.Option()] = "",
 ) -> None:
+    from bot import backtest
+
     backtest.run(_parse_strategy(strategy), start, end, _parse_symbols(symbols) or None)
 
 
@@ -67,9 +68,13 @@ def run_report(
     start: Annotated[datetime, typer.Option()] = datetime(2023, 1, 1),
     end: Annotated[datetime, typer.Option()] = datetime(2024, 1, 1),
 ) -> None:
+    from bot import report
+
     report.run(_parse_strategy(strategy), _parse_symbols(symbols), start, end)
 
 
 @app.command("trade")
 def run_trade(strategies: Annotated[str, typer.Option()] = settings.strategies) -> None:
+    from bot import trade
+
     trade.run(_parse_strategies(strategies))
