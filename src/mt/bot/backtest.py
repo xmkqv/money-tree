@@ -3,10 +3,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import cast
 
-from .config import settings
-from .strategies.breakout import Breakout
-from .strategies.registry import strategy_class
-from .types import StrategyName
+from mt.config.settings import settings
+from mt.strategies.breakout import Breakout
+from mt.strategies.keys import StrategyName
+from mt.strategies.registry import strategy_class
+
+from .broker import broker_credentials
 
 
 ARTIFACT_NAMES = {
@@ -29,28 +31,22 @@ def _artifact_paths(output_dir: Path) -> dict[str, str]:
 
 def run(
     strategy_name: StrategyName,
+    symbols: list[str],
     start: datetime,
     end: datetime,
-    symbols: list[str] | None = None,
     output_dir: Path | None = None,
 ) -> dict[str, object]:
     from lumibot.backtesting import AlpacaBacktesting, YahooDataBacktesting
 
     from .portfolio import Portfolio
 
-    parameters: dict[str, object] = {"strategies": [strategy_name]}
-    if symbols:
-        parameters["symbols"] = symbols
+    parameters: dict[str, object] = {"strategies": [strategy_name], "symbols": symbols}
     datasource = YahooDataBacktesting
     datasource_configuration: dict[str, str | bool] | None = None
     datasource_options: dict[str, object] = {}
     if strategy_class(strategy_name).family == Breakout.family:
         datasource = AlpacaBacktesting
-        datasource_configuration = {
-            "API_KEY": settings.broker.api_key.get_secret_value(),
-            "API_SECRET": settings.broker.api_secret.get_secret_value(),
-            "PAPER": True,
-        }
+        datasource_configuration = broker_credentials(paper=True)
         datasource_options = {
             "timestep": "minute",
             "warm_up_trading_days": settings.backtest.warm_up_days,
@@ -85,3 +81,15 @@ def run(
             else:
                 os.environ[LUMIBOT_DISABLE_UI] = previous_disable_ui
     return cast(dict[str, object], results or {})
+
+
+def report(
+    strategy_name: StrategyName,
+    symbols: list[str],
+    start: datetime,
+    end: datetime,
+) -> Path:
+    output_dir = Path("runs") / f"{strategy_name}-{start:%Y%m%d}-{end:%Y%m%d}"
+    run(strategy_name, symbols, start, end, output_dir=output_dir)
+    print(output_dir)
+    return output_dir

@@ -1,38 +1,25 @@
-import json
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from importlib import import_module
 from math import isfinite
 from typing import Any, cast
-from uuid import uuid4
 
-from alpaca.common.enums import Sort
-from alpaca.data.enums import Adjustment, DataFeed
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-from alpaca.trading.enums import QueryOrderStatus
-from alpaca.trading.requests import GetOrdersRequest
 from lumibot.strategies import Strategy as LumibotStrategy
 from pandas import DataFrame, DatetimeIndex
 
-from .config import settings
-from .exchange import TRADING_ZONE, session_bounds
+from mt.config.settings import settings
+from mt.data.live import BrokerLive, EngineLive, Live
+from mt.data.past import MARKET_SYMBOL, Past
+from mt.data.universe import eligible
+from mt.exchange import TRADING_ZONE, session_bounds
+from mt.position import Direction, entry_quantity, is_fractional_allowed, quantity_value, round_stop
+from mt.snapshot import EventLevel
+from mt.strategies.base import Candidate, Holding, Session, Strategy
+from mt.strategies.keys import StrategyName, is_strategy_name
+from mt.strategies.order_tag import find_order_tag, order_tag
+from mt.strategies.registry import STRATEGIES
+
 from .export import StateExporter
-from .frames import normalize_ohlcv
-from .order_tag import find_order_tag, order_tag
-from .sizing import entry_quantity, is_fractional_allowed, quantity_value, round_stop
-from .strategies.base import Candidate, Holding, Session, Strategy
-from .strategies.registry import STRATEGIES
-from .types import (
-    Direction,
-    EventLevel,
-    StrategyName,
-    is_strategy_name,
-)
-
-
-yfinance = cast(Any, import_module("yfinance"))
 
 
 @dataclass(slots=True)
@@ -42,19 +29,7 @@ class Pending:
     notional: float
 
 
-class LoadUniverseError(Exception):
-    pass
-
-
-FIVE_MINUTES = TimeFrame(5, cast(TimeFrameUnit, TimeFrameUnit.Minute))
-TEN_MINUTES = TimeFrame(10, cast(TimeFrameUnit, TimeFrameUnit.Minute))
-DATA_FEEDS: dict[str, DataFeed] = {
-    "sip": DataFeed.SIP,
-    "delayed_sip": DataFeed.DELAYED_SIP,
-    "iex": DataFeed.IEX,
-}
 STOP_COVERAGE_DRIFT_MAX = 1e-6
-MARKET_SYMBOL = "^GSPC"
 
 
 class Portfolio(LumibotStrategy):
@@ -78,6 +53,12 @@ class Portfolio(LumibotStrategy):
         selected: list[StrategyName] = [value for value in supplied if is_strategy_name(value)]
         if len(selected) != len(supplied):
             raise ValueError("strategies parameter contains unknown strategy names")
+        given = cast(list[str] | None, self.parameters.get("symbols"))
+        if self.is_backtesting and not given:
+            raise ValueError("a replay needs its symbols")
+        self.live: Live = EngineLive(given) if given else BrokerLive()
+        self.past = Past()
+        self._given = given
         self._selected = set(selected)
         self._strategies = {cls.key: cls(self) for cls in STRATEGIES}
         self._holdings: dict[str, Holding] = {}
@@ -96,14 +77,10 @@ class Portfolio(LumibotStrategy):
         self._preparation_attempts = 0
         self._preparation_attempts_on: date | None = None
         self._restored = False
-        self._data = StockHistoricalDataClient(
-            settings.broker.api_key.get_secret_value(),
-            settings.broker.api_secret.get_secret_value(),
-        )
 
     def before_market_opens(self) -> None:
         self._restore()
-        self._prepare(self.get_datetime().astimezone(TRADING_ZONE).date())
+        self._prepare(self.get_datetime().astimezone(TRADING_ZONE))
 
     def on_trading_iteration(self) -> None:
         now = self.get_datetime().astimezone(TRADING_ZONE)
@@ -117,7 +94,7 @@ class Portfolio(LumibotStrategy):
         self._reconcile(now)
         if self._is_daily_loss_reached(now.date()):
             return
-        self._prepare(now.date())
+        self._prepare(now)
         for holding in list(self._holdings.values()):
             holding.strategy.manage(holding, session)
         for strategy in self._strategies.values():
@@ -178,11 +155,9 @@ class Portfolio(LumibotStrategy):
     def minute_frames(
         self, symbols: list[str], start: datetime, now: datetime, minutes: int
     ) -> dict[str, DataFrame]:
-        timeframe = FIVE_MINUTES if minutes == 5 else TEN_MINUTES
-        return {
-            symbol: self._completed(frame, now, minutes)
-            for symbol, frame in self._frames(symbols, start, timeframe, now).items()
-        }
+        timeframe = TimeFrame(minutes, cast(TimeFrameUnit, TimeFrameUnit.Minute))
+        frames = self.past.bars(symbols, timeframe, start, now, settings.past.intraday_feed)
+        return {symbol: self._completed(frame, now, minutes) for symbol, frame in frames.items()}
 
     def last_price(self, symbol: str) -> float:
         return float(self.get_last_price(symbol))
@@ -223,14 +198,17 @@ class Portfolio(LumibotStrategy):
         if self.exporter is not None:
             self.exporter.publish("running", key, level, message, strategy=strategy)
 
+    def _equity(self) -> float:
+        value = self.get_portfolio_value()
+        if value is None:
+            raise RuntimeError("portfolio value is unavailable")
+        return float(value)
+
     def _begin_day(self, day: date) -> None:
         if day == self._day:
             return
-        account = self.broker.api.get_account()
-        equity = float(account.portfolio_value)
-        previous = float(account.last_equity)
         self._day = day
-        self._baseline_equity = previous if previous > 0 else equity
+        self._baseline_equity = self._equity()
         self._events.clear()
         for strategy in self._strategies.values():
             strategy.begin(day)
@@ -238,9 +216,8 @@ class Portfolio(LumibotStrategy):
     def _is_daily_loss_reached(self, day: date) -> bool:
         if self._locked_on == day:
             return True
-        equity = float(self.broker.api.get_account().portfolio_value)
         limit = settings.risk.per_day_max
-        if equity > self._baseline_equity * (1.0 - limit):
+        if self._equity() > self._baseline_equity * (1.0 - limit):
             return False
         self.cancel_open_orders()
         for holding in list(self._holdings.values()):
@@ -250,8 +227,7 @@ class Portfolio(LumibotStrategy):
         return True
 
     def _restore(self) -> None:
-        if self._restored or self.is_backtesting:
-            self._restored = True
+        if self._restored:
             return
         for strategy in self._strategies.values():
             if strategy.key in self._selected and strategy.is_paused:
@@ -264,20 +240,14 @@ class Portfolio(LumibotStrategy):
         self._record(
             "feed.announced",
             "info",
-            f"Intraday strategies use Alpaca {settings.broker.data_feed} market data",
+            f"Intraday candles read the Alpaca {settings.past.intraday_feed} feed",
         )
-        positions = cast(list[Any], self.broker.api.get_all_positions())
+        positions = cast(list[Any], self.live.positions())
         self._restored = True
         symbols = sorted({str(position.symbol) for position in positions})
         if not symbols:
             return
-        request = GetOrdersRequest(
-            status=QueryOrderStatus.ALL,
-            symbols=symbols,
-            limit=settings.portfolio.orders_per_request,
-            direction=Sort.DESC,
-        )
-        orders = cast(list[Any], self.broker.api.get_orders(filter=request))
+        orders = cast(list[Any], self.live.tagged_orders(symbols))
         tagged = [
             (order, tag)
             for order in orders
@@ -325,8 +295,11 @@ class Portfolio(LumibotStrategy):
                     key,
                 )
 
+    def _positions(self) -> dict[str, Any]:
+        return {str(value.asset.symbol): value for value in cast(list[Any], self.get_positions())}
+
     def _reconcile(self, now: datetime) -> None:
-        positions = {str(value.symbol): value for value in self.broker.api.get_all_positions()}
+        positions = self._positions()
         for symbol in list(self._holdings):
             if symbol not in positions:
                 self._release(symbol)
@@ -352,7 +325,7 @@ class Portfolio(LumibotStrategy):
             position = positions.get(symbol)
             if position is None:
                 continue
-            quantity = abs(float(position.qty))
+            quantity = abs(float(position.quantity))
             if quantity <= 0:
                 continue
             ladder = holding.ladder
@@ -362,7 +335,8 @@ class Portfolio(LumibotStrategy):
             if resting is None or resting[1] < quantity - STOP_COVERAGE_DRIFT_MAX:
                 self.protect(holding, quantity)
 
-    def _prepare(self, day: date) -> None:
+    def _prepare(self, now: datetime) -> None:
+        day = now.date()
         if self._prepared_on == day:
             return
         if self._preparation_attempts_on != day:
@@ -371,42 +345,34 @@ class Portfolio(LumibotStrategy):
         if self._preparation_attempts >= settings.portfolio.preparation_attempts_max:
             return
         self._preparation_attempts += 1
-        history = timedelta(days=settings.universe.history_days)
+        first = day - timedelta(days=settings.universe.past_days)
+        start = datetime.combine(first, time(), TRADING_ZONE)
         try:
-            eligible = self._universe()
+            symbols = self._given or eligible(self.live.listing())
             held = set(self._holdings)
-            symbols = sorted(set(eligible).union({settings.benchmark_symbol}, held))
-            daily_frames = self._frames(
-                symbols,
-                datetime.combine(day - history, time(), TRADING_ZONE),
+            requested = sorted(set(symbols).union({settings.benchmark_symbol}, held))
+            daily_frames = self.past.bars(
+                requested,
                 cast(TimeFrame, TimeFrame.Day),
-                feed=DATA_FEEDS[settings.broker.daily_feed],
+                start,
+                now,
+                settings.past.daily_feed,
             )
-            spx = self._spx(day)
-            if spx is not None:
-                daily_frames[MARKET_SYMBOL] = spx
+            market = self._market(start, now)
+            if market is not None:
+                daily_frames[MARKET_SYMBOL] = market
         except Exception as error:
             self._daily_frames = {}
             self._eligible_symbols = []
             self._record("universe.unavailable", "error", f"Stock universe unavailable: {error}")
             return
         self._daily_frames = daily_frames
-        self._eligible_symbols = eligible
+        self._eligible_symbols = list(symbols)
         self._prepared_on = day
 
-    def _spx(self, day: date) -> DataFrame | None:
+    def _market(self, start: datetime, end: datetime) -> DataFrame | None:
         try:
-            frame = yfinance.Ticker(MARKET_SYMBOL).history(
-                start=day - timedelta(days=settings.universe.history_days),
-                end=day + timedelta(days=1),
-                auto_adjust=True,
-            )
-            if frame.empty:
-                return None
-            frame = cast(DataFrame, frame).rename(
-                columns={column: str(column).lower() for column in frame.columns}
-            )
-            return normalize_ohlcv(frame, {"close"})
+            return self.past.market(start, end)
         except Exception as error:
             self._record(
                 "market.unavailable",
@@ -414,134 +380,6 @@ class Portfolio(LumibotStrategy):
                 f"SPX market state unavailable: {type(error).__name__}",
             )
             return None
-
-    def _universe(self) -> list[str]:
-        try:
-            eligible = self._discover_eligible_symbols()
-            self._write_universe_cache(eligible)
-            return eligible
-        except Exception as discovery_error:
-            try:
-                return self._load_universe_cache()
-            except Exception as cache_error:
-                message = (
-                    f"live discovery failed with {type(discovery_error).__name__}; "
-                    f"cache {settings.universe.cache} failed with {type(cache_error).__name__}"
-                )
-                raise LoadUniverseError(message) from ExceptionGroup(
-                    "universe loading failed",
-                    [discovery_error, cache_error],
-                )
-
-    def _discover_eligible_symbols(self) -> list[str]:
-        Query = yfinance.EquityQuery
-        query = Query(
-            "and",
-            [
-                Query("eq", ["region", "us"]),
-                Query("gte", ["intradaymarketcap", settings.universe.market_cap_usd_min]),
-            ],
-        )
-        quotes: list[dict[str, Any]] = []
-        offset = 0
-        while True:
-            page = yfinance.screen(
-                query,
-                offset=offset,
-                size=250,
-                sortField="intradaymarketcap",
-                sortAsc=False,
-            )
-            values = cast(list[dict[str, Any]], page.get("quotes", []))
-            quotes.extend(values)
-            offset += len(values)
-            if not values or offset >= int(page.get("total", offset)):
-                break
-        assets = {
-            str(asset.symbol)
-            for asset in self.broker.api.get_all_assets()
-            if bool(asset.tradable) and bool(asset.fractionable)
-        }
-        rows = [
-            (
-                str(value.get("symbol", "")).replace("-", "."),
-                float(value.get("marketCap") or 0),
-                float(value.get("averageDailyVolume3Month") or 0),
-                float(value.get("regularMarketPrice") or 0),
-            )
-            for value in quotes
-            if value.get("quoteType") == "EQUITY"
-        ]
-        return sorted(
-            {
-                symbol
-                for symbol, cap, volume, price in rows
-                if symbol in assets
-                and cap >= settings.universe.market_cap_usd_min
-                and price >= settings.universe.price_usd_min
-                and volume * price >= settings.universe.turnover_usd_min
-            }
-        )
-
-    def _load_universe_cache(self) -> list[str]:
-        cached: object = json.loads(settings.universe.cache.read_text())
-        if not isinstance(cached, dict):
-            raise ValueError("universe cache must be an eligible-symbol object")
-        payload = cast(dict[str, object], cached)
-        if set(payload) != {"eligible"}:
-            raise ValueError("universe cache must be an eligible-symbol object")
-        symbols = payload["eligible"]
-        if not isinstance(symbols, list):
-            raise ValueError("universe cache eligible symbols must be non-empty strings")
-        loaded: set[str] = set()
-        for symbol in cast(list[object], symbols):
-            if not isinstance(symbol, str) or not symbol.strip():
-                raise ValueError("universe cache eligible symbols must be non-empty strings")
-            loaded.add(symbol.strip())
-        return sorted(loaded)
-
-    def _write_universe_cache(self, symbols: list[str]) -> None:
-        cache = settings.universe.cache
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        temporary = cache.with_name(f".{cache.name}.{uuid4().hex}.tmp")
-        try:
-            temporary.write_text(json.dumps({"eligible": symbols}))
-            temporary.replace(cache)
-        finally:
-            temporary.unlink(missing_ok=True)
-
-    def _frames(
-        self,
-        symbols: list[str],
-        start: datetime,
-        timeframe: TimeFrame,
-        end: datetime | None = None,
-        feed: DataFeed | None = None,
-    ) -> dict[str, DataFrame]:
-        frames: dict[str, DataFrame] = {}
-        for offset in range(0, len(symbols), settings.portfolio.symbols_per_request):
-            request = StockBarsRequest(
-                symbol_or_symbols=symbols[offset : offset + settings.portfolio.symbols_per_request],
-                start=start.astimezone(UTC),
-                end=None if end is None else end.astimezone(UTC),
-                timeframe=timeframe,
-                adjustment=Adjustment.ALL,
-                feed=DATA_FEEDS[settings.broker.data_feed] if feed is None else feed,
-            )
-            values = cast(DataFrame, cast(Any, self._data.get_stock_bars(request)).df)
-            if values.empty:
-                continue
-            symbols_index = cast(
-                list[object],
-                cast(Any, values.index).get_level_values("symbol").unique().tolist(),
-            )
-            for symbol_value in symbols_index:
-                symbol = str(symbol_value)
-                frame = values.xs(symbol_value, level="symbol")
-                if not isinstance(frame, DataFrame):
-                    raise TypeError(f"stock bars for {symbol} are not a frame")
-                frames[symbol] = normalize_ohlcv(frame, {"high", "low", "close", "volume"})
-        return frames
 
     def _completed(self, frame: DataFrame, now: datetime, minutes: int = 0) -> DataFrame:
         index = cast(DatetimeIndex, frame.index)
@@ -560,7 +398,7 @@ class Portfolio(LumibotStrategy):
             or direction * (price - stop) <= 0
         ):
             return False
-        if direction == -1 and not bool(self.broker.api.get_asset(symbol).shortable):
+        if direction == -1 and not self.live.is_shortable(symbol):
             self.record(
                 strategy,
                 f"short.refused.{symbol}.{now.date()}",
@@ -568,12 +406,12 @@ class Portfolio(LumibotStrategy):
                 f"Short entry skipped for {symbol}: security is not shortable",
             )
             return False
-        account = self.broker.api.get_account()
-        equity = float(account.portfolio_value)
-        positions = cast(list[Any], self.broker.api.get_all_positions())
-        gross = sum(abs(float(position.market_value)) for position in positions) + sum(
-            pending.notional for pending in self._pending.values()
-        )
+        equity = self._equity()
+        positions = list(self._positions().values())
+        gross = sum(
+            abs(float(position.quantity) * float(self.get_last_price(position.asset)))
+            for position in positions
+        ) + sum(pending.notional for pending in self._pending.values())
         if len(positions) + len(self._pending) >= settings.risk.positions_max or gross >= equity:
             self.record(
                 strategy,
@@ -661,7 +499,7 @@ class Portfolio(LumibotStrategy):
         )
         if size <= 0 or self._stops.get(holding.symbol) == (stop, float(size)):
             return
-        self._cancel(holding.symbol, "s")
+        self._cancel(holding.symbol, stops_only=True)
         order = self.create_order(
             holding.symbol,
             size,
@@ -706,12 +544,11 @@ class Portfolio(LumibotStrategy):
         self.submit_order(order)
         self._closing.add(holding.symbol)
 
-    def _cancel(self, symbol: str, kind: str | None = None) -> None:
+    def _cancel(self, symbol: str, *, stops_only: bool = False) -> None:
         def matches(order: Any) -> bool:
             if not order.is_active() or str(order.asset.symbol) != symbol:
                 return False
-            tag = find_order_tag(str(getattr(order, "client_order_id", "") or ""))
-            return kind is None or (tag is not None and tag.kind == kind)
+            return not stops_only or bool(order.is_stop_order())
 
         orders = [order for order in cast(list[Any], self.get_orders()) if matches(order)]
         self.cancel_open_orders(orders)
