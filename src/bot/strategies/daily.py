@@ -22,7 +22,6 @@ from bot.universe import UNIVERSE
 from .base import Candidate, Holding, Portfolio, Rule, Session, Strategy, ranked
 
 
-HISTORY_SESSIONS = 20
 EARNINGS_EXIT_LEAD_MINUTES = 10
 AVERAGE_SESSIONS = 20
 EXIT_RSI_MAX = 50.0
@@ -115,8 +114,7 @@ class Daily(Strategy):
                     self,
                     f"entries.capped.{now.date()}",
                     "info",
-                    f"{self.name()} entries paused: {self.positions_max} positions "
-                    "already open",
+                    f"{self.name()} entries paused: {self.positions_max} positions already open",
                 )
                 return
             if self.portfolio.is_taken(self, candidate.symbol, now.date()):
@@ -139,8 +137,7 @@ class Daily(Strategy):
                 self,
                 f"scan.emptied.{now.date()}",
                 "info",
-                f"{self.name()} found no candidate: no eligible name passed its screen "
-                "and setup",
+                f"{self.name()} found no candidate: no eligible name passed its screen and setup",
             )
         return candidates
 
@@ -154,7 +151,7 @@ class Daily(Strategy):
             self.portfolio.exit(holding)
             return
         frame = self.portfolio.daily_frame(holding.symbol, now)
-        if frame is None or len(frame) < HISTORY_SESSIONS:
+        if frame is None or len(frame) < AVERAGE_SESSIONS:
             return
         since = frame_since(frame, holding.entered_at.astimezone(TRADING_ZONE))
         last = last_close(frame)
@@ -218,9 +215,7 @@ class Daily(Strategy):
                 source="strategies/daily.py · run",
             ),
             Rule(field="Setup", value=cls.setup_rule, source=cls.setup_source),
-            Rule(
-                field="Confirmation", value=cls.confirmation_rule, source=cls.setup_source
-            ),
+            Rule(field="Confirmation", value=cls.confirmation_rule, source=cls.setup_source),
             Rule(
                 field="Sorting",
                 value="Ranked by the value traded in the last completed session, which is its "

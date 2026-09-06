@@ -13,7 +13,7 @@ from .daily import AVERAGE_SESSIONS, Daily
 
 
 TREND_SESSIONS = 50
-MOMENTUM_SESSIONS = 200
+TREND_SESSIONS_LONG = 200
 RSI_MIN = 50.0
 ADX_MIN = 25.0
 
@@ -45,11 +45,11 @@ class DailySma(Daily):
     @classmethod
     def does_enter(cls, frame: DataFrame) -> bool:
         close = frame["close"]
-        if close.count() < MOMENTUM_SESSIONS:
+        if close.count() < TREND_SESSIONS_LONG:
             return False
         average_20 = ta_sma(close, length=AVERAGE_SESSIONS, talib=False)
         average_50 = ta_sma(close, length=TREND_SESSIONS, talib=False)
-        average_200 = ta_sma(close, length=MOMENTUM_SESSIONS, talib=False)
+        average_200 = ta_sma(close, length=TREND_SESSIONS_LONG, talib=False)
         strength = indicator_series(ta_rsi(close, length=PERIOD, talib=False), f"RSI_{PERIOD}", 1)
         directional = indicator_column(adx(frame), f"ADX_{PERIOD}", 1)
         if not all(isinstance(value, Series) for value in (average_20, average_50, average_200)):

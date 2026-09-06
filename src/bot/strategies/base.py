@@ -92,9 +92,7 @@ class Portfolio(Protocol):
 
     def protect(self, holding: Holding, quantity: float | None = None) -> None: ...
 
-    def record(
-        self, strategy: "Strategy", key: str, level: EventLevel, message: str
-    ) -> None: ...
+    def record(self, strategy: "Strategy", key: str, level: EventLevel, message: str) -> None: ...
 
 
 class Strategy(ABC):

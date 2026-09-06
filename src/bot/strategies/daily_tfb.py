@@ -21,7 +21,7 @@ TURNOVER_SESSIONS = 20
 ADX_MIN = 20.0
 AVERAGE_LAG_SESSIONS = 3
 RISK_MAX = 0.005
-POSITIONS_MAX = 5
+TFB_POSITIONS_MAX = 5
 
 
 class DailyTfb(Daily):
@@ -30,7 +30,7 @@ class DailyTfb(Daily):
     variation = "TFB"
     stop_atr_multiple = 2.0
     does_heed_earnings = False
-    positions_max = POSITIONS_MAX
+    positions_max = TFB_POSITIONS_MAX
     risk_fraction_max = RISK_MAX
     market_rule = (
         f"{UNIVERSE} This strategy screens that list again on its own floors: share price "
@@ -101,5 +101,5 @@ class DailyTfb(Daily):
             f"own {percent(RISK_MAX)} in the spec, so that governs instead of the "
             f"configured {percent(per_trade)}. A single position is never worth more than "
             f"{percent(POSITION_FRACTION_CAP)} of equity, and this strategy holds at most "
-            f"{POSITIONS_MAX} positions at once."
+            f"{TFB_POSITIONS_MAX} positions at once."
         )

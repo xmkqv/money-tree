@@ -22,9 +22,12 @@ from .base import Candidate, Holding, Ladder, Portfolio, Rule, Session, Strategy
 
 
 RANGE_FRACTION_MIN = 0.004
+LONG_STOP_FRACTION = 0.75
+MID_FRACTION = 0.5
+SHORT_STOP_FRACTION = 0.25
 STOP_FRACTION_MIN = 0.01
 STOP_FRACTION_MAX = 0.05
-POSITIONS_MAX = 3
+BREAKOUT_POSITIONS_MAX = 3
 HISTORY_SESSIONS = 20
 SIGNAL_CANDLES_MAX = 2
 TRAIL_ATR_MULTIPLE = 1.5
@@ -33,6 +36,13 @@ SCAN_MINUTES = 60
 CLOSE_LEAD_MINUTES = 6
 CONFIRM_HISTORY_DAYS = 45
 TRAIL_HISTORY_DAYS = 5
+
+
+@dataclass(frozen=True, slots=True)
+class RangeMarks:
+    high: float
+    mid: float
+    low: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,8 +61,17 @@ class Break:
     at: Timestamp
 
 
+def range_level(high: float, low: float, fraction: float) -> float:
+    return low + (high - low) * fraction
+
+
+def range_marks(high: float, low: float) -> RangeMarks:
+    return RangeMarks(high, range_level(high, low, MID_FRACTION), low)
+
+
 def range_stop(direction: Direction, high: float, low: float) -> float:
-    return low + (high - low) * (0.75 if direction == 1 else 0.25)
+    fraction = LONG_STOP_FRACTION if direction == 1 else SHORT_STOP_FRACTION
+    return range_level(high, low, fraction)
 
 
 def range_break(high: float, low: float, close: float) -> Direction | None:
@@ -127,7 +146,7 @@ class Breakout(Strategy):
     family = "breakout"
     kind = "Intraday breakout"
     is_stop_resting = True
-    positions_max = POSITIONS_MAX
+    positions_max = BREAKOUT_POSITIONS_MAX
     opening_minutes: ClassVar[int]
     volume_multiple: ClassVar[float]
     target_multiples: ClassVar[tuple[float, float, float]]
@@ -189,23 +208,21 @@ class Breakout(Strategy):
         if not symbols or self._data_failed_on == now.date():
             return
         try:
-            frames = self.portfolio.minute_frames(
-                symbols, session.opens, now, self.opening_minutes
-            )
+            frames = self.portfolio.minute_frames(symbols, session.opens, now, self.opening_minutes)
         except Exception as error:
             self._stand_down(now.date(), error)
             return
-        marks = self._marks(frames, session, opening_end)
-        if not marks:
+        breaks = self._breaks(frames, session, opening_end)
+        if not breaks:
             return
-        marks = ranked(
-            marks,
-            symbol=lambda mark: mark.symbol,
-            turnover=lambda mark: self._turnover(mark.symbol, now),
+        breaks = ranked(
+            breaks,
+            symbol=lambda found: found.symbol,
+            turnover=lambda found: self._turnover(found.symbol, now),
         )
         try:
             histories = self.portfolio.minute_frames(
-                [mark.symbol for mark in marks],
+                [found.symbol for found in breaks],
                 now - timedelta(days=CONFIRM_HISTORY_DAYS),
                 now,
                 self.opening_minutes,
@@ -213,28 +230,28 @@ class Breakout(Strategy):
         except Exception as error:
             self._stand_down(now.date(), error)
             return
-        for mark in marks:
+        for found in breaks:
             if self.is_capped():
                 return
-            frame = histories.get(mark.symbol)
+            frame = histories.get(found.symbol)
             if frame is None:
                 continue
-            if not self.is_confirmed(frame_until(frame, mark.at), now):
+            if not self.is_confirmed(frame_until(frame, found.at), now):
                 continue
-            price = self._price(mark)
-            if self.is_overextended(mark, price):
+            price = self._price(found)
+            if self.is_overextended(found, price):
                 self.portfolio.record(
                     self,
-                    f"entry.overextended.{mark.symbol}.{now.date()}",
+                    f"entry.overextended.{found.symbol}.{now.date()}",
                     "warning",
-                    f"{mark.symbol} entry skipped: price is more than "
+                    f"{found.symbol} entry skipped: price is more than "
                     f"{self.entry_extension_max:g} of the opening range beyond the "
                     "breakout level",
                 )
                 continue
-            stop = range_stop(mark.direction, mark.high, mark.low)
+            stop = range_stop(found.direction, found.high, found.low)
             self.portfolio.enter(
-                self, Candidate(mark.symbol, price, stop, mark.direction), session
+                self, Candidate(found.symbol, price, stop, found.direction), session
             )
 
     def manage(self, holding: Holding, session: Session) -> None:
@@ -305,14 +322,14 @@ class Breakout(Strategy):
             self.volume_multiple,
         )
 
-    def is_overextended(self, mark: Break, price: float) -> bool:
+    def is_overextended(self, found: Break, price: float) -> bool:
         limit = self.entry_extension_max
         if limit is None:
             return False
-        span = mark.high - mark.low
-        if mark.direction == 1:
-            return price > mark.high + limit * span
-        return price < mark.low - limit * span
+        span = found.high - found.low
+        if found.direction == 1:
+            return price > found.high + limit * span
+        return price < found.low - limit * span
 
     def _unscanned(self, day: date) -> list[str]:
         return [
@@ -325,9 +342,9 @@ class Breakout(Strategy):
         frame = self.portfolio.daily_frame(symbol, now)
         return 0.0 if frame is None else latest_dollar_volume(frame)
 
-    def _price(self, mark: Break) -> float:
-        price = self.portfolio.last_price(mark.symbol)
-        return price if isfinite(price) and price > 0 else mark.close
+    def _price(self, found: Break) -> float:
+        price = self.portfolio.last_price(found.symbol)
+        return price if isfinite(price) and price > 0 else found.close
 
     def _stand_down(self, day: date, error: Exception) -> None:
         self._data_failed_on = day
@@ -336,14 +353,13 @@ class Breakout(Strategy):
             self,
             f"scan.unavailable.{day}",
             "error",
-            f"Breakout scan stood down for the day: no intraday bars "
-            f"({detail[:200]})",
+            f"Breakout scan stood down for the day: no intraday bars ({detail[:200]})",
         )
 
-    def _marks(
+    def _breaks(
         self, frames: dict[str, DataFrame], session: Session, opening_end: datetime
     ) -> list[Break]:
-        marks: list[Break] = []
+        breaks: list[Break] = []
         for symbol, frame in frames.items():
             if frame.empty:
                 continue
@@ -364,10 +380,10 @@ class Breakout(Strategy):
                 continue
             if len(after) - position > SIGNAL_CANDLES_MAX:
                 continue
-            marks.append(
+            breaks.append(
                 Break(symbol, direction, high, low, close, cast(Timestamp, after.index[position]))
             )
-        return marks
+        return breaks
 
     def _signal(
         self, candles: DataFrame, high: float, low: float

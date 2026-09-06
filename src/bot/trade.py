@@ -13,9 +13,7 @@ def run(strategy_names: list[StrategyName]) -> None:
     from .portfolio import Portfolio
 
     configuration = settings.trading_configuration
-    paused: list[StrategyName] = [
-        name for name in strategy_names if strategy_class(name).is_paused
-    ]
+    paused: list[StrategyName] = [name for name in strategy_names if strategy_class(name).is_paused]
     exporter = StateExporter(
         str(settings.state_export_url),
         settings.state_export_secret.get_secret_value(),
