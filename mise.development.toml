@@ -1,21 +1,16 @@
 [env]
-STRATEGIES = "breakout_5m,daily_sma,daily_tfb,breakout_10m"
-BROKER_MODE = "paper"
-ALPACA_DATA_FEED = "iex"
-ALPACA_DAILY_FEED = "sip"
-UNIVERSE_CACHE = "/tmp/money-tree-universe.json"
-FRACTIONAL_ORDERS = "true"
-RISK_PER_DAY_MAX = "0.02"
-RISK_PER_TRADE_MAX = "0.005"
-POSITION_FRACTION_MAX = "0.10"
-SESSION_TTL_SECONDS = "28800"
 PORT = "8000"
-APP_BASE_URL = "http://127.0.0.1:8000"
-STATE_EXPORT_URL = "http://127.0.0.1:8000/internal/state"
+WEB__BASE_URL = "http://127.0.0.1:8000"
+EXPORT__URL = "http://127.0.0.1:8000/internal/state"
 
 ## broker
-##   ALPACA_API_KEY, ALPACA_API_SECRET
-## session
-##   SESSION_SECRET, STATE_EXPORT_SECRET
+BROKER__API_KEY = ""
+BROKER__API_SECRET = ""
+
+## web
+WEB__SESSION_SECRET = ""
+
+## export
+EXPORT__SECRET = ""
 
 _.file = { path = ".env.development", redact = true }

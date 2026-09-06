@@ -6,8 +6,123 @@ uv = "0.12.9"
 
 [env]
 MISE_ENV = "{% if mise_env %}{{ mise_env | join(sep='') }}{% else %}{{ throw(message='no environment selected: rerun with --env development or --env production') }}{% endif %}"
+MISE_PROJECT_ROOT = "{{ config_root }}"
 UV_PYTHON = "python3.13"
 UV_PYTHON_PREFERENCE = "only-system"
+STRATEGIES = "breakout_5m,daily_sma,daily_tfb,breakout_10m"
+
+## broker
+BROKER__MODE = "paper"
+BROKER__DATA_FEED = "iex"
+BROKER__DAILY_FEED = "sip"
+
+## risk
+RISK__PER_DAY_MAX = "0.02"
+RISK__PER_TRADE_MAX = "0.005"
+RISK__POSITION_FRACTION_MAX = "0.10"
+RISK__POSITIONS_MAX = "10"
+RISK__NOTIONAL_USD_MIN = "1.0"
+RISK__FRACTIONAL_ORDERS = "true"
+
+## universe
+UNIVERSE__CACHE = "/tmp/money-tree-universe.json"
+UNIVERSE__MARKET_CAP_USD_MIN = "500000000.0"
+UNIVERSE__PRICE_USD_MIN = "5.0"
+UNIVERSE__TURNOVER_USD_MIN = "20000000.0"
+UNIVERSE__HISTORY_DAYS = "390"
+
+## portfolio
+PORTFOLIO__SYMBOLS_PER_REQUEST = "200"
+PORTFOLIO__ORDERS_PER_REQUEST = "500"
+PORTFOLIO__PREPARATION_ATTEMPTS_MAX = "2"
+PORTFOLIO__PENDING_TTL_MINUTES = "5"
+
+## export
+EXPORT__INTERVAL_SECONDS = "5"
+
+## earnings
+EARNINGS__BLOCK_DAYS = "5"
+EARNINGS__EXIT_LEAD_MINUTES = "10"
+
+## indicators
+INDICATORS__PERIOD = "14"
+
+## web
+WEB__SESSION_TTL_SECONDS = "28800"
+WEB__HEARTBEAT_TIMEOUT_SECONDS = "15"
+WEB__SIGNATURE_WINDOW_SECONDS = "30"
+WEB__STATE_BODY_BYTES_MAX = "65536"
+
+## dashboard
+DASHBOARD__LEDGER_TTL_SECONDS = "60"
+DASHBOARD__PULSE_TTL_SECONDS = "2"
+DASHBOARD__CHART_TTL_SECONDS = "120"
+DASHBOARD__CHART_CACHE_MAX = "64"
+DASHBOARD__LEVELS_HISTORY_DAYS = "90"
+DASHBOARD__SESSION_SOURCE_BARS_MAX = "1000"
+DASHBOARD__SESSION_SOURCE_PAGES_MAX = "6"
+DASHBOARD__PAGE_ROWS_MAX = "100"
+DASHBOARD__PAGES_MAX = "40"
+DASHBOARD__SMA_LENGTHS = "[20, 50, 200]"
+
+## breakout
+BREAKOUT__RANGE_FRACTION_MIN = "0.004"
+BREAKOUT__LONG_STOP_FRACTION = "0.75"
+BREAKOUT__MID_FRACTION = "0.5"
+BREAKOUT__SHORT_STOP_FRACTION = "0.25"
+BREAKOUT__STOP_FRACTION_MIN = "0.01"
+BREAKOUT__STOP_FRACTION_MAX = "0.05"
+BREAKOUT__POSITIONS_MAX = "3"
+BREAKOUT__HISTORY_SESSIONS = "20"
+BREAKOUT__SIGNAL_CANDLES_MAX = "2"
+BREAKOUT__TRAIL_ATR_MULTIPLE = "1.5"
+BREAKOUT__TRAIL_BARS_MIN = "15"
+BREAKOUT__SCAN_MINUTES = "60"
+BREAKOUT__CLOSE_LEAD_MINUTES = "6"
+BREAKOUT__CONFIRM_HISTORY_DAYS = "45"
+BREAKOUT__TRAIL_HISTORY_DAYS = "5"
+
+## breakout_5m
+BREAKOUT_5M__OPENING_MINUTES = "5"
+BREAKOUT_5M__VOLUME_MULTIPLE = "1.3"
+BREAKOUT_5M__TARGET_MULTIPLES = "[1.5, 2.5, 4.0]"
+BREAKOUT_5M__ENTRY_EXTENSION_MAX = "none"
+BREAKOUT_5M__RISK_FRACTION_MAX = "0.0015"
+BREAKOUT_5M__IS_PAUSED = "false"
+
+## breakout_10m
+BREAKOUT_10M__OPENING_MINUTES = "10"
+BREAKOUT_10M__VOLUME_MULTIPLE = "1.5"
+BREAKOUT_10M__TARGET_MULTIPLES = "[2.0, 3.0, 5.0]"
+BREAKOUT_10M__ENTRY_EXTENSION_MAX = "0.25"
+BREAKOUT_10M__RISK_FRACTION_MAX = "none"
+BREAKOUT_10M__IS_PAUSED = "true"
+
+## daily
+DAILY__AVERAGE_SESSIONS = "20"
+DAILY__EXIT_RSI_MAX = "50.0"
+
+## daily_sma
+DAILY_SMA__TREND_SESSIONS = "50"
+DAILY_SMA__TREND_SESSIONS_LONG = "200"
+DAILY_SMA__RSI_MIN = "50.0"
+DAILY_SMA__ADX_MIN = "25.0"
+DAILY_SMA__STOP_ATR_MULTIPLE = "1.5"
+DAILY_SMA__DOES_HEED_EARNINGS = "true"
+DAILY_SMA__RISK_FRACTION_MAX = "none"
+DAILY_SMA__POSITIONS_MAX = "10"
+DAILY_SMA__IS_PAUSED = "false"
+
+## daily_tfb
+DAILY_TFB__TREND_SESSIONS = "50"
+DAILY_TFB__TURNOVER_SESSIONS = "20"
+DAILY_TFB__ADX_MIN = "20.0"
+DAILY_TFB__AVERAGE_LAG_SESSIONS = "3"
+DAILY_TFB__STOP_ATR_MULTIPLE = "2.0"
+DAILY_TFB__DOES_HEED_EARNINGS = "false"
+DAILY_TFB__RISK_FRACTION_MAX = "0.005"
+DAILY_TFB__POSITIONS_MAX = "5"
+DAILY_TFB__IS_PAUSED = "false"
 
 [tasks.setup]
 run = ["mise install", "uv sync --locked"]
@@ -19,6 +134,28 @@ run = ["uv run ruff check src", "uv run pyright"]
 depends = ["check"]
 run = "uv build"
 
+[tasks.deploy]
+depends = ["check"]
+run = '''
+set -euo pipefail
+
+: "${RAILWAY_TOKEN:?}"
+
+revision="$(git rev-parse --short HEAD)"
+
+for service in web bot; do
+  for key in $(uv run mt env list --service "$service"); do
+    printf '%s' "${!key}" \
+      | railway variable set "$key" --stdin --service "money-tree-$service" \
+        --skip-deploys --json >/dev/null
+  done
+done
+
+for service in web bot; do
+  railway up --service "money-tree-$service" --ci --message "$revision"
+done
+'''
+
 [tasks.serve]
 run = '''
 set -euo pipefail
@@ -28,7 +165,7 @@ pid_file="$run_dir/web.pid"
 log_file="$run_dir/web.log"
 
 if [[ -f "$pid_file" ]] && kill -0 "$(<"$pid_file")" 2>/dev/null; then
-  echo "already serving on ${APP_BASE_URL:?} (pid $(<"$pid_file"))"
+  echo "already serving on ${WEB__BASE_URL:?} (pid $(<"$pid_file"))"
   exit 0
 fi
 
@@ -39,11 +176,11 @@ uv run --locked uvicorn ui.app:create_app \
 echo $! >"$pid_file"
 
 if ! curl -sf --retry 60 --retry-connrefused --retry-delay 1 \
-  "${APP_BASE_URL:?}/healthz" >/dev/null; then
+  "${WEB__BASE_URL:?}/healthz" >/dev/null; then
   echo "the dashboard never became healthy; see $log_file" >&2
   exit 1
 fi
-echo "serving ${APP_BASE_URL:?} (pid $(<"$pid_file"))"
+echo "serving ${WEB__BASE_URL:?} (pid $(<"$pid_file"))"
 '''
 
 [tasks.stop]

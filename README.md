@@ -35,7 +35,7 @@ Backtest an intraday strategy.
 mise exec -- uv run mt backtest --strategy breakout_5m --symbols SPY --start 2023-01-01 --end 2024-01-01
 ```
 
-Trade. The environment picks the settings; `BROKER_MODE` picks paper or live.
+Trade. The environment picks the settings; `BROKER__MODE` picks paper or live.
 
 ```sh
 mise exec -- uv run mt trade --strategies breakout_5m
