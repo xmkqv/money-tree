@@ -13,6 +13,7 @@ src/
             daily_base.py
             orb_base.py
             shared.py
+            sma20.py
             tfb_50.py
         backtest.py
         broker.py

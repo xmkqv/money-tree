@@ -24,8 +24,12 @@ from .strategies.daily_base import (
     DAILY_EARNINGS_EXIT_LEAD_MINUTES,
     DAILY_EXITS_BEFORE_EARNINGS,
     DAILY_HISTORY_SESSIONS,
+    DAILY_NOTIONAL_USD,
+    DAILY_POSITIONS_MAX,
+    DAILY_REQUIRES_MARKET,
     DAILY_RISK_MAX,
     DAILY_STOP_ATR_MULTIPLES,
+    DAILY_STOP_FRACTIONS,
     DAILY_STRATEGIES,
 )
 from .strategies.orb_base import (
@@ -52,6 +56,7 @@ from .strategies.shared import (
     Direction,
     does_momentum_enter,
     does_signal_exit,
+    does_sma20_enter,
     does_tfb_enter,
     entry_quantity,
     is_earnings_blocked,
@@ -66,7 +71,19 @@ from .strategies.shared import (
     regular_session,
     session_bounds,
 )
-from .strategies.tfb_50 import TFB_POSITIONS_MAX, is_tfb_market_ready
+from .strategies.sma20 import (
+    SMA20_BREAKEVEN_GAIN,
+    SMA20_STOP_FRACTION,
+    SMA20_TARGET_FRACTIONS,
+    SMA20_TARGET_GAINS,
+    SMA20_TRAIL_ATR_MULTIPLE,
+    SMA20_TRAIL_BARS_MIN,
+    SMA20_TRAIL_HISTORY_DAYS,
+    SMA20_TRAIL_HOURS,
+    is_gain_reached,
+    is_sma20_market_ready,
+)
+from .strategies.tfb_50 import is_tfb_market_ready
 from .types import (
     POSITION_FRACTION_CAP_MAX,
     POSITIONS_MAX,
@@ -136,6 +153,10 @@ DATA_FEEDS: dict[str, DataFeed] = {
     "iex": DataFeed.IEX,
 }
 DAILY_FEED = DataFeed.SIP
+# 20SMA reads its trailing stop from 4-hour candles; everything else it reads
+# comes from the daily ones.
+SMA20_TIMEFRAME = TimeFrame(SMA20_TRAIL_HOURS, cast(TimeFrameUnit, TimeFrameUnit.Hour))
+SMA20_TRAIL_MINUTES = SMA20_TRAIL_HOURS * 60
 SYMBOLS_PER_REQUEST = 200
 ORDERS_PER_REQUEST = 500
 UNIVERSE_CAP_USD_MIN = 500_000_000.0
@@ -146,6 +167,16 @@ PREPARATION_ATTEMPTS_MAX = 2
 STOP_COVERAGE_DRIFT_MAX = 1e-6
 PENDING_TTL_MINUTES = 5
 STRATEGY_RISK_MAX: dict[StrategyName, float | None] = {**ORB_RISK_MAXES, **DAILY_RISK_MAX}
+# The strategies that leave in slices rather than all at once, so a part-filled
+# position is read back at the stage its remaining size implies.
+SCALED_STRATEGIES: frozenset[StrategyName] = ORB_STRATEGIES.union({"sma20"})
+# The strategies whose stop rests at the broker rather than being watched a
+# minute at a time. A stop is wanted most on the day the bot is not running.
+RESTING_STOP_STRATEGIES: frozenset[StrategyName] = ORB_STRATEGIES.union({"sma20"})
+# Alpaca holds a stop on whole shares only. A strategy named here rests its stop
+# over the whole shares of the position; a leftover fraction is watched by the
+# bot and swept out with the rest when the stop is reached.
+STOP_WHOLE_SHARES: frozenset[StrategyName] = frozenset({"sma20"})
 
 
 class Strategy(StrategyBase):
@@ -170,11 +201,13 @@ class Strategy(StrategyBase):
         self._locked_on: date | None = None
         self._daily_frames: dict[str, DataFrame] = {}
         self._eligible_symbols: list[str] = []
+        self._market_caps: dict[str, float] = {}
+        self._sma20_atr_read: dict[str, tuple[datetime, float]] = {}
         self._prepared_on: date | None = None
         self._preparation_attempts = 0
         self._preparation_attempts_on: date | None = None
         self._daily_candidates: dict[StrategyName, list[DailyCandidate]] = {}
-        self._daily_scanned_on: date | None = None
+        self._daily_scanned: dict[StrategyName, date] = {}
         self._orb_data_failed_on: date | None = None
         self._intraday_bucket: datetime | None = None
         self._restored = False
@@ -223,13 +256,17 @@ class Strategy(StrategyBase):
             self._pending.pop(symbol)
             holding = pending.holding
             holding.entry = self._entry_price(order, price)
+            fraction = DAILY_STOP_FRACTIONS.get(holding.strategy)
+            if fraction is not None:
+                # The stop is stated against the entry, so the fill moves it.
+                holding.stop = holding.entry * (1.0 - fraction)
             holding.risk = abs(holding.entry - holding.stop)
             holding.highest = holding.entry
             holding.lowest = holding.entry
             holding.original_quantity = max(self._quantity(symbol), abs(float(quantity)))
             holding.targets = self._targets(holding)
             self._holdings[symbol] = holding
-            if holding.strategy in ORB_STRATEGIES:
+            if holding.strategy in RESTING_STOP_STRATEGIES:
                 self._protect(holding)
             return
         self._closing.discard(symbol)
@@ -240,7 +277,8 @@ class Strategy(StrategyBase):
             holding = self._holdings[symbol]
             if holding.stage == 0:
                 holding.original_quantity = max(holding.original_quantity, remaining)
-            self._protect(holding, remaining)
+            if holding.strategy in RESTING_STOP_STRATEGIES:
+                self._protect(holding, remaining)
 
     def _entry_price(self, order: Any, price: float) -> float:
         average = getattr(order, "avg_fill_price", None)
@@ -318,6 +356,7 @@ class Strategy(StrategyBase):
         )
         positions = cast(list[Any], self.broker.api.get_all_positions())
         self._restored = True
+        outlived: set[str] = set()
         symbols = sorted({str(position.symbol) for position in positions})
         if not symbols:
             return
@@ -368,7 +407,7 @@ class Strategy(StrategyBase):
             )
             holding.targets = self._targets(holding)
             remaining_fraction = abs(quantity) / original
-            if strategy in ORB_STRATEGIES and remaining_fraction <= 0.5:
+            if strategy in SCALED_STRATEGIES and remaining_fraction <= 0.5:
                 holding.stage = 1 if remaining_fraction > 0.25 else 2
             self._holdings[symbol] = holding
             self._claims[symbol] = strategy
@@ -377,6 +416,8 @@ class Strategy(StrategyBase):
                 self._orb_traded.add((traded_on, symbol))
             if strategy in DAILY_STRATEGIES:
                 self._daily_traded.add((traded_on, symbol))
+            if strategy in RESTING_STOP_STRATEGIES and strategy in DAILY_STRATEGIES:
+                outlived.add(symbol)
             if strategy not in self._enabled:
                 self._exit_only.add(strategy)
                 self._record_event(
@@ -384,6 +425,41 @@ class Strategy(StrategyBase):
                     "warning",
                     f"{strategy} is managing existing positions only",
                     strategy,
+                )
+        self._clear_outlived_stops(outlived)
+
+    def _clear_outlived_stops(self, symbols: set[str]) -> None:
+        """Cancel stops an earlier run left resting at the broker.
+
+        A good-till-cancelled stop outlives the process that placed it. This run
+        did not place it and cannot see it in its own order book, so it would
+        rest a second one beside it and sell the position twice over. The old one
+        goes here, and management rests a fresh one on this iteration.
+        """
+        if not symbols:
+            return
+        request = GetOrdersRequest(
+            status=QueryOrderStatus.OPEN,
+            symbols=sorted(symbols),
+            limit=ORDERS_PER_REQUEST,
+            direction=Sort.DESC,
+        )
+        for order in cast(list[Any], self.broker.api.get_orders(filter=request)):
+            tag = find_order_tag(str(order.client_order_id))
+            if tag is None or tag.kind != "s":
+                continue
+            symbol = str(order.symbol)
+            try:
+                self.broker.api.cancel_order_by_id(order.id)
+            except Exception as error:
+                # Two stops on one position is worse than none. The position is
+                # named rather than quietly left with a stop the bot cannot move.
+                self._record_event(
+                    f"stop.outlived.{symbol}",
+                    "error",
+                    f"{symbol} has a stop from an earlier run that could not be cancelled: "
+                    f"{type(error).__name__}",
+                    tag.strategy,
                 )
 
     def _reconcile(self, now: datetime) -> None:
@@ -407,7 +483,7 @@ class Strategy(StrategyBase):
 
     def _resync_stops(self, positions: dict[str, Any]) -> None:
         for symbol, holding in self._holdings.items():
-            if holding.strategy not in ORB_STRATEGIES or symbol in self._closing:
+            if holding.strategy not in RESTING_STOP_STRATEGIES or symbol in self._closing:
                 continue
             position = positions.get(symbol)
             if position is None:
@@ -431,7 +507,7 @@ class Strategy(StrategyBase):
             return
         self._preparation_attempts += 1
         try:
-            eligible = self._universe()
+            eligible, caps = self._universe()
             held = set(self._holdings)
             symbols = sorted(set(eligible).union({"SPY", "QQQ"}, held))
             daily_frames = self._frames(
@@ -446,12 +522,14 @@ class Strategy(StrategyBase):
         except Exception as error:
             self._daily_frames = {}
             self._eligible_symbols = []
+            self._market_caps = {}
             self._record_event(
                 "universe.unavailable", "error", f"Stock universe unavailable: {error}"
             )
             return
         self._daily_frames = daily_frames
         self._eligible_symbols = eligible
+        self._market_caps = caps
         self._prepared_on = day
 
     def _spx(self, day: date) -> DataFrame | None:
@@ -475,11 +553,11 @@ class Strategy(StrategyBase):
             )
             return None
 
-    def _universe(self) -> list[str]:
+    def _universe(self) -> tuple[list[str], dict[str, float]]:
         try:
-            eligible = self._discover_eligible_symbols()
-            self._write_universe_cache(eligible)
-            return eligible
+            eligible, caps = self._discover_eligible_symbols()
+            self._write_universe_cache(eligible, caps)
+            return eligible, caps
         except Exception as discovery_error:
             try:
                 return self._load_universe_cache()
@@ -493,7 +571,7 @@ class Strategy(StrategyBase):
                     [discovery_error, cache_error],
                 )
 
-    def _discover_eligible_symbols(self) -> list[str]:
+    def _discover_eligible_symbols(self) -> tuple[list[str], dict[str, float]]:
         Query = yfinance.EquityQuery
         query = Query(
             "and",
@@ -532,23 +610,25 @@ class Strategy(StrategyBase):
             for value in quotes
             if value.get("quoteType") == "EQUITY"
         ]
-        return sorted(
-            {
-                symbol
-                for symbol, cap, volume, price in rows
-                if symbol in assets
-                and cap >= UNIVERSE_CAP_USD_MIN
-                and price >= ORB_PRICE_USD_MIN
-                and volume * price >= UNIVERSE_TURNOVER_USD_MIN
-            }
-        )
+        caps = {
+            symbol: cap
+            for symbol, cap, volume, price in rows
+            if symbol in assets
+            and cap >= UNIVERSE_CAP_USD_MIN
+            and price >= ORB_PRICE_USD_MIN
+            and volume * price >= UNIVERSE_TURNOVER_USD_MIN
+        }
+        # The market cap is carried alongside the symbol: a strategy screening on
+        # a higher floor than the universe reads it here rather than asking the
+        # screener a second time.
+        return sorted(caps), caps
 
-    def _load_universe_cache(self) -> list[str]:
+    def _load_universe_cache(self) -> tuple[list[str], dict[str, float]]:
         cached: object = json.loads(UNIVERSE_CACHE.read_text())
         if not isinstance(cached, dict):
             raise ValueError("universe cache must be an eligible-symbol object")
         payload = cast(dict[str, object], cached)
-        if set(payload) != {"eligible"}:
+        if "eligible" not in payload or not set(payload).issubset({"eligible", "caps"}):
             raise ValueError("universe cache must be an eligible-symbol object")
         symbols = payload["eligible"]
         if not isinstance(symbols, list):
@@ -558,12 +638,22 @@ class Strategy(StrategyBase):
             if not isinstance(symbol, str) or not symbol.strip():
                 raise ValueError("universe cache eligible symbols must be non-empty strings")
             loaded.add(symbol.strip())
-        return sorted(loaded)
+        # A cache written before market caps were kept still loads; the
+        # strategies that screen on one stand down until discovery works again.
+        caps = payload.get("caps", {})
+        if not isinstance(caps, dict):
+            raise ValueError("universe cache market caps must be numbers")
+        market_caps: dict[str, float] = {}
+        for symbol, cap in cast(dict[object, object], caps).items():
+            if not isinstance(symbol, str) or not isinstance(cap, int | float):
+                raise ValueError("universe cache market caps must be numbers")
+            market_caps[symbol] = float(cap)
+        return sorted(loaded), market_caps
 
-    def _write_universe_cache(self, symbols: list[str]) -> None:
+    def _write_universe_cache(self, symbols: list[str], caps: dict[str, float]) -> None:
         temporary = UNIVERSE_CACHE.with_name(f".{UNIVERSE_CACHE.name}.{uuid4().hex}.tmp")
         try:
-            temporary.write_text(json.dumps({"eligible": symbols}))
+            temporary.write_text(json.dumps({"eligible": symbols, "caps": caps}))
             temporary.replace(UNIVERSE_CACHE)
         finally:
             temporary.unlink(missing_ok=True)
@@ -610,27 +700,57 @@ class Strategy(StrategyBase):
         return cast(DataFrame, frame[cast(Any, index).date < now.date()])
 
     def _run_daily(self, now: datetime) -> None:
+        day = now.date()
+        rising = self._market_is_rising(now)
+        for strategy in self._selected:
+            if strategy not in DAILY_STRATEGIES or strategy not in self._enabled:
+                continue
+            if DAILY_REQUIRES_MARKET[strategy]:
+                if rising is None:
+                    # SPX has not been read yet. The strategies that wait on it
+                    # wait rather than scanning against an answer nobody has.
+                    continue
+                if not rising:
+                    self._record_event(
+                        "market.stalled", "warning", "SPX is not above its 20-day average"
+                    )
+                    self._daily_candidates[strategy] = []
+                    self._daily_scanned[strategy] = day
+                    continue
+            if self._daily_scanned.get(strategy) != day:
+                self._daily_scanned[strategy] = day
+                self._daily_candidates[strategy] = self._scan_daily(strategy, now)
+            self._enter_daily(strategy, now)
+
+    def _market_is_rising(self, now: datetime) -> bool | None:
+        """Whether SPX is above its 20-day average, or None while it cannot be read."""
         market_frame = self._daily_frames.get("^GSPC")
         if market_frame is None:
-            return
-        market = self._completed(market_frame, now)
-        if not market_is_rising(market):
-            self._record_event("market.stalled", "warning", "SPX is not above its 20-day average")
-            self._daily_candidates = {}
-            self._daily_scanned_on = now.date()
-            return
-        if self._daily_scanned_on != now.date():
-            self._daily_scanned_on = now.date()
-            self._daily_candidates = {
-                strategy: self._scan_sma(now) if strategy == "sma" else self._scan_tfb(now)
-                for strategy in self._selected
-                if strategy in self._enabled and strategy in DAILY_STRATEGIES
-            }
-        for strategy in self._selected:
-            if strategy == "sma":
-                self._run_sma(now)
-            if strategy == "tfb_50":
-                self._run_tfb(now)
+            return None
+        return market_is_rising(self._completed(market_frame, now))
+
+    def _scan_daily(self, strategy: StrategyName, now: datetime) -> list[DailyCandidate]:
+        if strategy == "sma":
+            return self._scan_sma(now)
+        if strategy == "tfb_50":
+            return self._scan_tfb(now)
+        return self._scan_sma20(now)
+
+    def _enter_daily(self, strategy: StrategyName, now: datetime) -> None:
+        limit = DAILY_POSITIONS_MAX.get(strategy)
+        label = STRATEGY_LABELS[strategy]
+        for candidate in self._daily_candidates.get(strategy, []):
+            if limit is not None and self._strategy_position_count(strategy) >= limit:
+                self._record_event(
+                    f"daily.capped.{strategy}.{now.date()}",
+                    "info",
+                    f"{label} entries paused: {limit} positions already open",
+                    strategy,
+                )
+                return
+            if self._is_daily_entered(now.date(), candidate.symbol):
+                continue
+            self._enter(strategy, candidate.symbol, candidate.price, candidate.stop, now)
 
     def _ranked(self, now: datetime) -> list[tuple[str, DataFrame]]:
         ranked: list[tuple[float, str, DataFrame]] = []
@@ -665,12 +785,6 @@ class Strategy(StrategyBase):
             candidates.append(DailyCandidate(symbol, last, stop))
         return candidates
 
-    def _run_sma(self, now: datetime) -> None:
-        for candidate in self._daily_candidates.get("sma", []):
-            if self._is_daily_entered(now.date(), candidate.symbol):
-                continue
-            self._enter("sma", candidate.symbol, candidate.price, candidate.stop, now)
-
     def _scan_tfb(self, now: datetime) -> list[DailyCandidate]:
         candidates: list[DailyCandidate] = []
         for symbol, frame in self._ranked(now):
@@ -688,19 +802,25 @@ class Strategy(StrategyBase):
             )
         return candidates
 
-    def _run_tfb(self, now: datetime) -> None:
-        for candidate in self._daily_candidates.get("tfb_50", []):
-            if self._strategy_position_count("tfb_50") >= TFB_POSITIONS_MAX:
-                self._record_event(
-                    f"tfb.capped.{now.date()}",
-                    "info",
-                    f"TFB-50 entries paused: {TFB_POSITIONS_MAX} positions already open",
-                    "tfb_50",
-                )
-                return
-            if self._is_daily_entered(now.date(), candidate.symbol):
+    def _scan_sma20(self, now: datetime) -> list[DailyCandidate]:
+        if not self._market_caps:
+            self._record_event(
+                f"sma20.caps_unavailable.{now.date()}",
+                "warning",
+                "20SMA stood down: market capitalisations could not be read, so the "
+                "$2 billion floor cannot be applied",
+                "sma20",
+            )
+            return []
+        candidates: list[DailyCandidate] = []
+        for symbol, frame in self._ranked(now):
+            if not is_sma20_market_ready(self._market_caps.get(symbol)):
                 continue
-            self._enter("tfb_50", candidate.symbol, candidate.price, candidate.stop, now)
+            if not does_sma20_enter(frame):
+                continue
+            last = float(cast(Any, frame["close"]).iloc[-1])
+            candidates.append(DailyCandidate(symbol, last, last * (1.0 - SMA20_STOP_FRACTION)))
+        return candidates
 
     def _rank_candidates(self, candidates: list[OrbCandidate], now: datetime) -> list[OrbCandidate]:
         ranked: list[tuple[float, str, OrbCandidate]] = []
@@ -908,7 +1028,9 @@ class Strategy(StrategyBase):
             if now >= orb_deadline and holding.strategy in ORB_STRATEGIES:
                 self._exit(holding)
                 continue
-            if holding.strategy in DAILY_STRATEGIES:
+            if holding.strategy == "sma20":
+                self._manage_sma20(holding, now)
+            elif holding.strategy in DAILY_STRATEGIES:
                 self._manage_daily(holding, now, closes)
             else:
                 self._manage_orb(holding, now)
@@ -947,6 +1069,97 @@ class Strategy(StrategyBase):
         holding.stop = max(holding.stop, holding.highest - multiple * latest_atr(frame))
         if last < holding.stop or does_signal_exit(frame):
             self._exit(holding)
+
+    def _manage_sma20(self, holding: Holding, now: datetime) -> None:
+        if holding.symbol in self._closing:
+            # An exit is already on its way. Nothing is decided twice on the
+            # strength of a position that is already leaving.
+            return
+        price = float(self.get_last_price(holding.symbol))
+        live = price if isfinite(price) and price > 0 else None
+        frame = self._daily_since(holding, now)
+        if live is not None:
+            holding.highest = max(holding.highest, live)
+        if frame is not None:
+            since = cast(
+                DataFrame,
+                frame[cast(Any, frame.index) >= holding.entered_at.astimezone(TRADING_ZONE)],
+            )
+            if len(since):
+                holding.highest = max(holding.highest, float(cast(Any, since["high"]).max()))
+        self._trail_sma20(holding, now)
+        if live is not None and live <= holding.stop:
+            self._exit(holding)
+            return
+        if live is not None and self._take_sma20_profit(holding, live):
+            return
+        # The emergency exit is read from completed daily candles, so the close
+        # that fails the test sends the order on the next session.
+        if frame is not None and len(frame) >= DAILY_HISTORY_SESSIONS and does_signal_exit(frame):
+            self._exit(holding)
+            return
+        self._protect(holding)
+
+    def _daily_since(self, holding: Holding, now: datetime) -> DataFrame | None:
+        daily_frame = self._daily_frames.get(holding.symbol)
+        if daily_frame is None:
+            return None
+        frame = self._completed(daily_frame, now)
+        return frame if len(frame) else None
+
+    def _trail_sma20(self, holding: Holding, now: datetime) -> None:
+        """Breakeven at +10%, then 1.5x the 4-hour ATR under the best price seen."""
+        if not is_gain_reached(holding.highest, holding.entry, SMA20_BREAKEVEN_GAIN):
+            return
+        holding.stop = max(holding.stop, holding.entry)
+        trail = self._sma20_atr(holding, now)
+        if trail is None:
+            return
+        # The stop only ever climbs, and never back below the entry price.
+        holding.stop = max(holding.stop, holding.highest - trail, holding.entry)
+
+    def _sma20_atr(self, holding: Holding, now: datetime) -> float | None:
+        # The reading only changes when a 4-hour candle completes, so it is held
+        # for the rest of that candle rather than fetched again every minute.
+        hour = now.hour - now.hour % SMA20_TRAIL_HOURS
+        bucket = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        cached = self._sma20_atr_read.get(holding.symbol)
+        if cached is not None and cached[0] == bucket:
+            return cached[1]
+        try:
+            recent = self._frames(
+                [holding.symbol],
+                now - timedelta(days=SMA20_TRAIL_HISTORY_DAYS),
+                SMA20_TIMEFRAME,
+                now,
+                feed=DAILY_FEED,
+            ).get(holding.symbol)
+        except Exception as error:
+            self._record_event(
+                f"trail.stalled.{holding.symbol}.{now.date()}",
+                "warning",
+                f"{holding.symbol} trailing stop not updated: {type(error).__name__}",
+                holding.strategy,
+            )
+            return None
+        if recent is None:
+            return None
+        frame = self._completed(recent, now, SMA20_TRAIL_MINUTES)
+        if len(frame) < SMA20_TRAIL_BARS_MIN:
+            return None
+        trail = SMA20_TRAIL_ATR_MULTIPLE * latest_atr(frame)
+        self._sma20_atr_read[holding.symbol] = (bucket, trail)
+        return trail
+
+    def _take_sma20_profit(self, holding: Holding, price: float) -> bool:
+        if holding.stage >= len(SMA20_TARGET_GAINS):
+            return False
+        if not is_gain_reached(price, holding.entry, SMA20_TARGET_GAINS[holding.stage]):
+            return False
+        quantity = holding.original_quantity * SMA20_TARGET_FRACTIONS[holding.stage]
+        holding.stage += 1
+        self._exit(holding, quantity)
+        return True
 
     def _manage_orb(self, holding: Holding, now: datetime) -> None:
         price = float(self.get_last_price(holding.symbol))
@@ -1044,11 +1257,17 @@ class Strategy(StrategyBase):
         risk_fraction = STRATEGY_RISK_MAX.get(
             strategy, float(self.parameters["risk_per_trade_max"])
         )
+        fraction = min(POSITION_FRACTION_CAP_MAX, float(self.parameters["position_fraction_max"]))
+        notional_max = DAILY_NOTIONAL_USD.get(strategy)
+        if notional_max is not None:
+            # A position stated in dollars. The caps above still bind, so a small
+            # account buys what it can rather than what the strategy asked for.
+            fraction = min(fraction, notional_max / equity)
         quantity = entry_quantity(
             equity,
             price,
             abs(price - stop),
-            min(POSITION_FRACTION_CAP_MAX, float(self.parameters["position_fraction_max"])),
+            fraction,
             risk_fraction,
             is_fractional_allowed(direction, bool(self.parameters["fractional_orders"])),
         )
@@ -1115,11 +1334,22 @@ class Strategy(StrategyBase):
             )
             self._exit(holding)
             return
-        size = quantity_value(
-            amount,
-            is_fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"])),
+        fractional = (
+            is_fractional_allowed(holding.direction, bool(self.parameters["fractional_orders"]))
+            and holding.strategy not in STOP_WHOLE_SHARES
         )
-        if size <= 0 or self._stops.get(holding.symbol) == (stop, float(size)):
+        size = quantity_value(amount, fractional)
+        if size <= 0:
+            if holding.strategy in STOP_WHOLE_SHARES:
+                self._record_event(
+                    f"stop.unrested.{holding.symbol}.{holding.entered_at.date()}",
+                    "warning",
+                    f"{holding.symbol} holds less than a whole share: no stop can rest at the "
+                    "broker, so the bot watches this one on its own",
+                    holding.strategy,
+                )
+            return
+        if self._stops.get(holding.symbol) == (stop, float(size)):
             return
         self._cancel(holding.symbol, "s")
         order = self.create_order(
@@ -1127,7 +1357,10 @@ class Strategy(StrategyBase):
             size,
             "sell" if holding.direction == 1 else "buy",
             stop_price=stop,
-            time_in_force="day",
+            # A breakout is flat by the bell, so a day order is the whole life of
+            # its stop. A position held overnight needs one that outlives the
+            # session it was placed in.
+            time_in_force="gtc" if holding.strategy in DAILY_STRATEGIES else "day",
             custom_params={
                 "client_order_id": order_tag(
                     holding.strategy, "s", holding.symbol, holding.risk / holding.entry
@@ -1187,6 +1420,7 @@ class Strategy(StrategyBase):
         return symbol in self._claims or symbol in self._pending or symbol in self._holdings
 
     def _release(self, symbol: str) -> None:
+        self._sma20_atr_read.pop(symbol, None)
         self._pending.pop(symbol, None)
         self._holdings.pop(symbol, None)
         self._claims.pop(symbol, None)

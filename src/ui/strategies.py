@@ -5,6 +5,7 @@ from bot.strategies.daily_base import (
     DAILY_EARNINGS_EXIT_LEAD_MINUTES,
     DAILY_EXITS_BEFORE_EARNINGS,
     DAILY_STOP_ATR_MULTIPLES,
+    DAILY_STRATEGIES,
 )
 from bot.strategies.orb_base import (
     ORB_CLOSE_LEAD_MINUTES,
@@ -25,7 +26,26 @@ from bot.strategies.orb_base import (
     ORB_TURNOVER_USD_MIN,
     ORB_VOLUME_MULTIPLES,
 )
-from bot.strategies.shared import NOTIONAL_USD_MIN, PERIOD, upcoming_session_bounds
+from bot.strategies.shared import (
+    NOTIONAL_USD_MIN,
+    PERIOD,
+    SMA20_ADX_MIN,
+    SMA20_RSI_MAX,
+    SMA20_RSI_MIN,
+    upcoming_session_bounds,
+)
+from bot.strategies.sma20 import (
+    SMA20_BREAKEVEN_GAIN,
+    SMA20_CAP_USD_MIN,
+    SMA20_NOTIONAL_USD,
+    SMA20_POSITIONS_MAX,
+    SMA20_STOP_FRACTION,
+    SMA20_TARGET_FRACTIONS,
+    SMA20_TARGET_GAINS,
+    SMA20_TRAIL_ATR_MULTIPLE,
+    SMA20_TRAIL_BARS_MIN,
+    SMA20_TRAIL_HOURS,
+)
 from bot.strategies.tfb_50 import (
     TFB_POSITIONS_MAX,
     TFB_PRICE_USD_MIN,
@@ -35,6 +55,7 @@ from bot.strategies.tfb_50 import (
 )
 from bot.types import (
     POSITION_FRACTION_CAP_MAX,
+    POSITION_NOTIONAL_USD_MAX,
     POSITIONS_MAX,
     STRATEGY_LABELS,
     StrategyName,
@@ -80,6 +101,7 @@ STRATEGY_SHORT_LABELS: dict[StrategyName, str] = {
     "orb15": "ORB15",
     "sma": "Momentum SMA",
     "tfb_50": "TFB-50",
+    "sma20": "20SMA",
 }
 STRATEGY_KINDS: dict[StrategyName, str] = {
     "orb5": "Intraday breakout",
@@ -87,6 +109,7 @@ STRATEGY_KINDS: dict[StrategyName, str] = {
     "orb15": "Intraday breakout",
     "sma": "Daily trend",
     "tfb_50": "Daily trend",
+    "sma20": "Daily trend",
 }
 
 
@@ -97,7 +120,7 @@ def entry_windows() -> dict[str, dict[str, str]]:
         strategy: (opens + timedelta(minutes=minutes), scan_end)
         for strategy, minutes in ORB_OPENING_MINUTES.items()
     }
-    windows.update({strategy: (opens, closes) for strategy in DAILY_STOP_ATR_MULTIPLES})
+    windows.update({strategy: (opens, closes) for strategy in DAILY_STRATEGIES})
     return {
         strategy: {"from": f"{window[0]:%H:%M}", "to": f"{window[1]:%H:%M}"}
         for strategy, window in windows.items()
@@ -118,6 +141,8 @@ def strategy_spec(configuration: TradingConfiguration, *, configured: bool) -> d
             rows=(
                 _orb(strategy, per_trade, opens, closes)
                 if strategy in ORB_OPENING_MINUTES
+                else _sma20()
+                if strategy == "sma20"
                 else _daily(strategy, per_trade, closes)
             ),
         )
@@ -150,6 +175,14 @@ def portfolio_rules(daily_loss: float) -> list[Row]:
             source="portfolio.py · _orb_position_count",
         ),
         Row(
+            field="Position ceiling",
+            value=f"A new position is never worth more than {_usd(POSITION_NOTIONAL_USD_MAX)} "
+            "at entry, however large the account grows. It is a limit on entries alone: a "
+            "position already open keeps the size it was opened at, and is managed and exited "
+            "on its own rules.",
+            source="strategies/shared.py · entry_quantity",
+        ),
+        Row(
             field="Exposure",
             value="The total value held never exceeds account equity, so the account never "
             "trades on borrowed money.",
@@ -174,9 +207,17 @@ def _millions(value: float) -> str:
     return f"${value / 1_000_000:g}M"
 
 
+def _billions(value: float) -> str:
+    return f"${value / 1_000_000_000:g} billion"
+
+
 def _pct(fraction: float) -> str:
     text = f"{fraction * 100:.2f}".rstrip("0").rstrip(".")
     return f"{text}%"
+
+
+def _usd(amount: float) -> str:
+    return f"${amount:,.0f}"
 
 
 UNIVERSE = (
@@ -193,6 +234,124 @@ TFB_UNIVERSE = (
     "traded, not a share count against today's price. A symbol whose sessions cannot be read "
     "does not pass."
 )
+
+
+SMA20_UNIVERSE = (
+    f"{UNIVERSE} This strategy then screens that list again on its own floor: a market "
+    f"capitalisation of {_billions(SMA20_CAP_USD_MIN)} or more. The cap comes from the same "
+    "daily screen the universe is built from, so a day the screen cannot be read is a day this "
+    "strategy opens nothing."
+)
+
+
+def _sma20() -> list[Row]:
+    first_gain, second_gain = SMA20_TARGET_GAINS
+    first_slice, second_slice = SMA20_TARGET_FRACTIONS
+    remainder = 1.0 - first_slice - second_slice
+    return [
+        Row(
+            field="Market",
+            value=SMA20_UNIVERSE,
+            source="portfolio.py · _discover_eligible_symbols, _scan_sma20",
+        ),
+        Row(
+            field="Sentiment",
+            value="None. The other daily strategies wait for the S&P 500 to be above its own "
+            "20-day average; this one takes its signal whatever the wider market is doing.",
+            source="portfolio.py · _run_daily",
+        ),
+        Row(field="Direction", value="Long only.", source="portfolio.py · _enter"),
+        Row(
+            field="Range",
+            value="Not used. Daily candles carry the setup, the confirmation, the entry signal "
+            f"and the emergency exit. {SMA20_TRAIL_HOURS}-hour candles are read for one thing "
+            "only: the ATR behind the trailing stop.",
+            source="portfolio.py · _scan_sma20, _manage_sma20",
+        ),
+        Row(
+            field="Setup",
+            value="Price above the 50-day average, and that average above the 200-day. Needs "
+            "200 sessions of history.",
+            source="strategies/shared.py · does_sma20_enter",
+        ),
+        Row(
+            field="Confirmation",
+            value=f"RSI ({PERIOD}) between {SMA20_RSI_MIN:g} and {SMA20_RSI_MAX:g} inclusive — "
+            "an upper bound as well as a lower one, so a name already stretched is passed over — "
+            f"and ADX ({PERIOD}) at {SMA20_ADX_MIN:g} or above.",
+            source="strategies/shared.py · does_sma20_enter",
+        ),
+        Row(
+            field="Sorting",
+            value="Ranked by the value traded in the last completed session — its close times "
+            "its share volume — highest first. When more symbols qualify than there is room to "
+            "hold, the busiest take the slots.",
+            source="portfolio.py · _ranked",
+        ),
+        Row(
+            field="Entry",
+            value="One session closes below the 20-day average and the next closes back above "
+            "it. The buy goes in at the open of the session after that — a market order, "
+            "retried every iteration until the close, so a name that could not be funded at the "
+            "open is taken later in the day if a slot frees up. One entry per symbol per "
+            "session. Upcoming earnings do not block an entry.",
+            source="strategies/shared.py · does_sma20_enter, portfolio.py · _enter_daily",
+        ),
+        Row(
+            field="Stop Loss",
+            value=f"{_pct(SMA20_STOP_FRACTION)} below the price the order filled at. Once the "
+            f"trade has been {_pct(SMA20_BREAKEVEN_GAIN)} ahead the stop moves to the entry "
+            f"price and the trail starts: {SMA20_TRAIL_ATR_MULTIPLE:g}x the {PERIOD}-period ATR "
+            f"of {SMA20_TRAIL_HOURS}-hour candles below the highest price seen since entry, "
+            f"needing {SMA20_TRAIL_BARS_MIN} completed {SMA20_TRAIL_HOURS}-hour candles to read. "
+            "From then on the stop only climbs, and never falls back below the entry price. "
+            "The level rests as a good-till-cancelled stop order at the broker, sent the moment "
+            "the entry fills and replaced whenever the trail moves it, so it stands overnight "
+            "and through a restart of the bot — a stop is wanted most on the day the bot is not "
+            "running. A broker holds a stop on whole shares only, so a leftover fraction of a "
+            "share rests behind no order; the bot watches that part itself and sells it with "
+            "the rest. The bot measures the level against the last traded price on every pass "
+            "as well, and closes at market if it is reached — that covers the minute between a "
+            "slice being sold and the replacement stop going in. A stop left resting by an "
+            "earlier run is cancelled when the bot starts, so one position never carries two.",
+            source="portfolio.py · _manage_sma20, _trail_sma20, _protect, _clear_outlived_stops",
+        ),
+        Row(
+            field="Max Risk",
+            value=f"${SMA20_NOTIONAL_USD:,.0f} per position rather than a share of equity, and "
+            f"never more than {_pct(POSITION_FRACTION_CAP_MAX)} of equity — an account too "
+            f"small for the full ${SMA20_NOTIONAL_USD:,.0f} buys what fits. The "
+            f"{_pct(SMA20_STOP_FRACTION)} stop puts about "
+            f"${SMA20_NOTIONAL_USD * SMA20_STOP_FRACTION:,.0f} at risk per position. At most "
+            f"{SMA20_POSITIONS_MAX} positions at once.",
+            source="portfolio.py · _enter, _enter_daily",
+        ),
+        Row(
+            field="Min. R:R",
+            value=f"Not set as a ratio. The two profit targets sit at {_pct(first_gain)} and "
+            f"{_pct(second_gain)} above the entry, against a {_pct(SMA20_STOP_FRACTION)} stop, "
+            f"so the first pays about {first_gain / SMA20_STOP_FRACTION:g}:1 and the second "
+            f"about {second_gain / SMA20_STOP_FRACTION:g}:1 on the slice it sells.",
+            source="portfolio.py · _take_sma20_profit",
+        ),
+        Row(
+            field="Exit Rule",
+            value=f"{_pct(first_slice)} of the position as first filled is sold "
+            f"{_pct(first_gain)} above the entry, {_pct(second_slice)} of it "
+            f"{_pct(second_gain)} above. The last {_pct(remainder)} is left to run on the "
+            "trailing stop with no target of its own.",
+            source="portfolio.py · _manage_sma20, _take_sma20_profit",
+        ),
+        Row(
+            field="Emergency Exit",
+            value="At the daily close, a close below the 20-day average or RSI "
+            f"({PERIOD}) under 50 closes whatever is left — the test is read from completed "
+            "candles, so the order goes in at the next market open. Either one is enough on its "
+            "own. Earnings do not close a position for this strategy. The daily loss limit "
+            "closes all positions and stops new entries for the rest of the day.",
+            source="strategies/shared.py · does_signal_exit, portfolio.py · _manage_sma20",
+        ),
+    ]
 
 
 def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: datetime) -> list[Row]:
@@ -335,7 +494,8 @@ def _orb(strategy: StrategyName, per_trade: float, opens: datetime, closes: date
                 else " (the configured per-trade limit; this strategy states none of its own)."
             )
             + f" A single position is never worth more than {_pct(POSITION_FRACTION_CAP_MAX)} "
-            "of equity.",
+            f"of equity, and never more than {_usd(POSITION_NOTIONAL_USD_MAX)} whatever that "
+            "equity comes to.",
             source="portfolio.py · _enter",
         ),
         Row(field="Min. R:R", value=f"{reward} {targets}", source="portfolio.py · on_filled_order"),
@@ -382,7 +542,8 @@ def _daily(strategy: StrategyName, per_trade: float, closes: datetime) -> list[R
         )
         risk = (
             "No per-trade risk limit is set for this strategy, so the size comes from the "
-            f"position cap alone: never more than {_pct(POSITION_FRACTION_CAP_MAX)} of equity."
+            f"position cap alone: never more than {_pct(POSITION_FRACTION_CAP_MAX)} of equity, "
+            f"and never more than {_usd(POSITION_NOTIONAL_USD_MAX)}."
         )
         setup_source = "strategies/shared.py · does_momentum_enter"
         entry_source = "strategies/shared.py · does_momentum_enter, portfolio.py · _run_sma"
@@ -403,7 +564,8 @@ def _daily(strategy: StrategyName, per_trade: float, closes: datetime) -> list[R
             f"{_pct(TFB_RISK_MAX)} of account equity per trade — this strategy states its "
             f"own {_pct(TFB_RISK_MAX)} in the register, so that governs instead of the "
             f"configured {_pct(per_trade)}. A single position is never worth more than "
-            f"{_pct(POSITION_FRACTION_CAP_MAX)} of equity, and this strategy holds at most "
+            f"{_pct(POSITION_FRACTION_CAP_MAX)} of equity or "
+            f"{_usd(POSITION_NOTIONAL_USD_MAX)} in money, and this strategy holds at most "
             f"{TFB_POSITIONS_MAX} positions at once."
         )
         setup_source = "strategies/shared.py · does_tfb_enter"

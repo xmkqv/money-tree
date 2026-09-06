@@ -54,6 +54,7 @@ const STRATEGY_COLOURS = {
   orb15: "var(--s-orb15)",
   sma: "var(--s-momentum)",
   tfb_50: "var(--s-tfb50)",
+  sma20: "var(--s-sma20)",
   unattributed: "var(--ink-3)",
 };
 
@@ -188,6 +189,7 @@ function derive(live) {
     buyingPower: live.buyingPower,
     openPositions: live.positions.length,
     positionCapPct: live.positionCapPct,
+    positionCapUsd: live.positionCapUsd,
     dailyLossLimitPct: live.dailyLossLimitPct,
   };
   ACCOUNT.totalReturn = Math.round((ACCOUNT.portfolio - ACCOUNT.invested) * 100) / 100;
@@ -487,7 +489,8 @@ function renderAccount() {
   dll.style.background = "var(--loss-mark)";
 
   document.getElementById("v-cap").innerHTML =
-    "<b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "%";
+    "<b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "%"
+    + " · " + usd0.format(ACCOUNT.positionCapUsd);
   const cap = document.getElementById("m-cap");
   cap.style.width = clamp(ACCOUNT.largestPositionPct / ACCOUNT.positionCapPct, 0, 1) * 100 + "%";
   cap.style.background = "var(--ink-3)";
@@ -1192,7 +1195,8 @@ function renderPortfolio() {
   document.getElementById("pf-risk").textContent = money(ACCOUNT.buyingPower);
 
   document.getElementById("pf-cap").innerHTML =
-    "<b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "%";
+    "<b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "%"
+    + " · " + usd0.format(ACCOUNT.positionCapUsd);
   const cm = document.getElementById("pf-cap-meter");
   cm.style.width = clamp(ACCOUNT.largestPositionPct / ACCOUNT.positionCapPct, 0, 1) * 100 + "%";
   cm.style.background = "var(--ink-3)";
@@ -1854,7 +1858,7 @@ function drawTradeChart() {
   };
   TC_STATE.geo = {
     px, py, step, width, height, inIndex, outIndex, shown: all,
-    lo, hi, yMin, yMax, plotW, plotH, indexAt, count: all.length,
+    lo, hi, yMin, yMax, plotW, plotH, indexAt, count: all.length, pad: TC_PAD,
   };
 
   const ticks = [];
@@ -2083,6 +2087,7 @@ function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
   const host = document.getElementById("tc-host");
   host.querySelectorAll(".tc-mark").forEach(n => n.remove());
   const strategy = STRAT_BY_ID[TRADE.strategy];
+  const marks = [];
   const place = (x, y, title, price, cls) => {
     const el = document.createElement("div");
     el.className = "tc-mark " + cls;
@@ -2101,24 +2106,61 @@ function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
     el.style.borderLeftColor = cls === "exit" ? result : "var(--ink-3)";
     if (x > width * 0.6) el.classList.add("flip");
     host.append(el);
+    marks.push({ el, x, y, tone: cls === "exit" ? result : C.axis });
   };
   if (entryInView) place(x1, y1, "Entry", TRADE.entry, "entry");
   if (exitInView) place(x2, y2, TRADE.open ? "Now" : "Exit", TRADE.exit, "exit");
-  separateMarks(host);
+  liftMarks(host, marks);
 }
 
-function separateMarks(host) {
-  const [a, b] = [...host.querySelectorAll(".tc-mark")];
-  if (!a || !b) return;
-  const boxA = a.getBoundingClientRect(), boxB = b.getBoundingClientRect();
-  const overlapY = Math.min(boxA.bottom, boxB.bottom) - Math.max(boxA.top, boxB.top);
-  const overlapX = Math.min(boxA.right, boxB.right) - Math.max(boxA.left, boxB.left);
-  if (overlapY <= 0 || overlapX <= 0) return;
-  const shift = (overlapY + 8) / 2;
-  const upper = TRADE.entry >= TRADE.exit ? a : b;
-  const lower = upper === a ? b : a;
-  upper.style.marginTop = -shift + "px";
-  lower.style.marginTop = shift + "px";
+/* A box left sitting on the price it names covers the candles there, so each
+   one is lifted out of the way — the higher price to the top of the plot, the
+   lower to the bottom — and a faint line is drawn back to the point it marks.
+
+      ┌─────────┐
+      │ ENTRY   │
+      └────┬────┘
+           ╎          <- faint leader
+           ●  entry
+*/
+const TC_LIFT = 6;
+
+function liftMarks(host, marks) {
+  const geo = TC_STATE.geo;
+  const svg = host.querySelector("svg");
+  if (!geo || !svg || !marks.length) return;
+  svg.querySelectorAll(".tc-leaders").forEach(n => n.remove());
+
+  const top = geo.pad.t, bottom = geo.pad.t + geo.plotH;
+  const middle = (top + bottom) / 2;
+  [...marks].sort((a, b) => a.y - b.y)
+    .forEach((mark, n) => { mark.up = marks.length > 1 ? n === 0 : mark.y > middle; });
+
+  const frame = host.getBoundingClientRect();
+  let leaders = "";
+  for (const mark of marks) {
+    const box = mark.el.getBoundingClientRect();
+    const lifted = mark.up ? top + TC_LIFT : bottom - TC_LIFT - box.height;
+    mark.el.style.top = Math.round(lifted + box.height / 2) + "px";
+
+    /* The box hangs off one side of its anchor, so a mark near an edge has to
+       be nudged back inside the chart before the line to it is drawn. */
+    const spill = box.right - frame.right + 4;
+    const short = frame.left + 4 - box.left;
+    if (spill > 0) mark.el.style.left = Math.round(mark.x - spill) + "px";
+    else if (short > 0) mark.el.style.left = Math.round(mark.x + short) + "px";
+
+    const placed = mark.el.getBoundingClientRect();
+    const fromX = placed.left - frame.left + placed.width / 2;
+    const fromY = (mark.up ? placed.bottom : placed.top) - frame.top;
+    leaders +=
+      '<line x1="' + fromX.toFixed(2) + '" y1="' + fromY.toFixed(2) +
+      '" x2="' + mark.x.toFixed(2) + '" y2="' + mark.y.toFixed(2) +
+      '" stroke="' + mark.tone + '" stroke-width="1" stroke-dasharray="2 4" opacity="0.45"/>' +
+      '<circle cx="' + fromX.toFixed(2) + '" cy="' + fromY.toFixed(2) +
+      '" r="1.6" fill="' + mark.tone + '" opacity="0.45"/>';
+  }
+  svg.insertAdjacentHTML("beforeend", '<g class="tc-leaders">' + leaders + "</g>");
 }
 
 function paintTradeTable() {
@@ -2382,6 +2424,8 @@ function paintInsidesLimits() {
     tile("Risk per trade", limitPct(limits.risk_per_trade_max), "", "of equity, per position"),
     tile("Risk per day", limitPct(limits.risk_per_day_max), "", "then everything is closed"),
     tile("Position cap", limitPct(limits.position_fraction_max), "", "of equity in one name"),
+    tile("Position ceiling", usd0.format(limits.position_notional_max), "",
+      "the most a new position may cost"),
     tile("Fractional", limits.fractional_orders ? "Yes" : "No", "", "part shares allowed"),
   );
 }

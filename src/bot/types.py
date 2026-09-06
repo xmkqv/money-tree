@@ -19,12 +19,16 @@ type RequiredSecret = Annotated[SecretStr, Field(min_length=1)]
 type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
 type EventLevel = Literal["info", "warning", "error"]
-type StrategyName = Literal["noop", "orb5", "sma", "tfb_50", "orb10", "orb15"]
+type StrategyName = Literal["noop", "orb5", "sma", "tfb_50", "orb10", "orb15", "sma20"]
 type DataFeedName = Literal["sip", "delayed_sip", "iex"]
 
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
 POSITIONS_MAX = 10
 POSITION_FRACTION_CAP_MAX = 0.10
+# A hard dollar ceiling on what one new position may be worth, whatever the
+# account is worth. It sizes entries and nothing else: a position already open
+# keeps the size it was opened at, and is managed and exited as it always was.
+POSITION_NOTIONAL_USD_MAX = 1_000.0
 STRATEGY_LABELS: dict[StrategyName, str] = {
     "noop": "No-op",
     "orb5": "ORB (5-minute)",
@@ -32,6 +36,7 @@ STRATEGY_LABELS: dict[StrategyName, str] = {
     "tfb_50": "TFB-50",
     "orb10": "ORB (10-minute)",
     "orb15": "ORB (15-minute)",
+    "sma20": "20SMA",
 }
 # Nothing is paused. A strategy named here is loaded and manages whatever it
 # already holds, but opens nothing new.
@@ -94,6 +99,10 @@ class TradingConfiguration(_StrictModel):
     position_fraction_max: RiskLimit
     risk_per_day_max: RiskLimit
     risk_per_trade_max: RiskLimit
+    # The ceiling is a code constant rather than a deployed variable, so it
+    # travels with the snapshot for the dashboard to quote. It carries a default
+    # so a snapshot written before the field existed still reads.
+    position_notional_max: float = Field(default=POSITION_NOTIONAL_USD_MAX, gt=0)
 
 
 class Settings(BaseSettings):

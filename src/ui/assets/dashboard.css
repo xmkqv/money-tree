@@ -28,6 +28,7 @@
   --s-orb15:    #0F7B8A;
   --s-momentum: #6A57C8;
   --s-tfb50:    #B23F79;
+  --s-sma20:    #C0521F;
 
   --grid:      rgba(16, 24, 40, .06);
   --grid-zero: rgba(16, 24, 40, .22);
@@ -76,6 +77,7 @@
     --s-orb15:    #35A9BC;
     --s-momentum: #7F6EE0;
     --s-tfb50:    #C9548F;
+    --s-sma20:    #E58150;
     --grid:      rgba(255, 255, 255, .055);
     --grid-zero: rgba(255, 255, 255, .2);
     --axis-ink:  #79818D;
@@ -115,6 +117,7 @@
   --s-orb15:    #35A9BC;
   --s-momentum: #7F6EE0;
   --s-tfb50:    #C9548F;
+  --s-sma20:    #E58150;
   --grid:      rgba(255, 255, 255, .055);
   --grid-zero: rgba(255, 255, 255, .2);
   --axis-ink:  #79818D;
