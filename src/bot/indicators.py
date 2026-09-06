@@ -6,13 +6,11 @@ from pandas import DataFrame, Series
 from pandas_ta_classic.trend.adx import adx as ta_adx
 from pandas_ta_classic.volatility.atr import atr as ta_atr
 
+from .config import settings
 from .frames import last_close
 
 
-PERIOD = 14
-
-
-def latest_atr(frame: DataFrame, period: int = PERIOD) -> float:
+def latest_atr(frame: DataFrame, period: int = settings.indicators.period) -> float:
     values = ta_atr(
         frame["high"],
         frame["low"],
@@ -53,7 +51,7 @@ def adx(frame: DataFrame) -> object:
         frame["high"],
         frame["low"],
         frame["close"],
-        length=PERIOD,
+        length=settings.indicators.period,
         talib=False,
     )
 

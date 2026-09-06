@@ -6,11 +6,11 @@ from pandas import DataFrame, Series
 from pandas_ta_classic.momentum.rsi import rsi as ta_rsi
 from pandas_ta_classic.overlap.sma import sma as ta_sma
 
+from bot.config import settings
 from bot.earnings import is_earnings_blocked, is_earnings_exit_due
 from bot.exchange import TRADING_ZONE
 from bot.frames import frame_since, last_close
 from bot.indicators import (
-    PERIOD,
     finite_row,
     finite_value,
     indicator_series,
@@ -22,16 +22,11 @@ from bot.universe import UNIVERSE
 from .base import Candidate, Holding, Portfolio, Rule, Session, Strategy, ranked
 
 
-EARNINGS_EXIT_LEAD_MINUTES = 10
-AVERAGE_SESSIONS = 20
-EXIT_RSI_MAX = 50.0
-
-
 def is_market_rising(frame: DataFrame) -> bool:
     close = frame["close"]
-    if close.count() < AVERAGE_SESSIONS:
+    if close.count() < settings.daily.average_sessions:
         return False
-    average = ta_sma(close, length=AVERAGE_SESSIONS, talib=False)
+    average = ta_sma(close, length=settings.daily.average_sessions, talib=False)
     if not isinstance(average, Series):
         return False
     row = finite_row([finite_value(close), finite_value(average)])
@@ -43,17 +38,18 @@ def is_market_rising(frame: DataFrame) -> bool:
 
 def does_signal_exit(frame: DataFrame) -> bool:
     close = frame["close"]
-    if close.count() < AVERAGE_SESSIONS:
+    if close.count() < settings.daily.average_sessions:
         return False
-    average = ta_sma(close, length=AVERAGE_SESSIONS, talib=False)
-    strength = indicator_series(ta_rsi(close, length=PERIOD, talib=False), f"RSI_{PERIOD}", 1)
+    average = ta_sma(close, length=settings.daily.average_sessions, talib=False)
+    period = settings.indicators.period
+    strength = indicator_series(ta_rsi(close, length=period, talib=False), f"RSI_{period}", 1)
     if not isinstance(average, Series) or strength is None:
         return False
     row = finite_row([finite_value(close), finite_value(average), finite_value(strength)])
     if row is None:
         return False
     latest, latest_average, strength_now = row
-    return latest < latest_average or strength_now < EXIT_RSI_MAX
+    return latest < latest_average or strength_now < settings.daily.exit_rsi_max
 
 
 class Daily(Strategy):
@@ -145,13 +141,13 @@ class Daily(Strategy):
         now, closes = session.now, session.closes
         if (
             self.does_heed_earnings
-            and now >= closes - timedelta(minutes=EARNINGS_EXIT_LEAD_MINUTES)
+            and now >= closes - timedelta(minutes=settings.earnings.exit_lead_minutes)
             and self._is_earnings_exit_due(holding.symbol, now.date())
         ):
             self.portfolio.exit(holding)
             return
         frame = self.portfolio.daily_frame(holding.symbol, now)
-        if frame is None or len(frame) < AVERAGE_SESSIONS:
+        if frame is None or len(frame) < settings.daily.average_sessions:
             return
         since = frame_since(frame, holding.entered_at.astimezone(TRADING_ZONE))
         last = last_close(frame)
@@ -199,7 +195,9 @@ class Daily(Strategy):
 
     @classmethod
     def describe(cls, per_trade: float, opens: datetime, closes: datetime) -> list[Rule]:
-        earnings_exit = f"{closes - timedelta(minutes=EARNINGS_EXIT_LEAD_MINUTES):%H:%M}"
+        lead_minutes = settings.earnings.exit_lead_minutes
+        period = settings.indicators.period
+        earnings_exit = f"{closes - timedelta(minutes=lead_minutes):%H:%M}"
         return [
             Rule(field="Market", value=cls.market_rule, source=cls.market_source),
             Rule(
@@ -227,7 +225,7 @@ class Daily(Strategy):
             Rule(field="Entry", value=cls.entry_rule, source=cls.entry_source),
             Rule(
                 field="Stop Loss",
-                value=f"{cls.stop_atr_multiple:g}x the {PERIOD}-period ATR below the entry "
+                value=f"{cls.stop_atr_multiple:g}x the {period}-period ATR below the entry "
                 f"price, then trailing {cls.stop_atr_multiple:g}x ATR below the highest close "
                 "reached since entry. The stop only ever moves up.",
                 source="strategies/daily.py · manage",
@@ -242,14 +240,14 @@ class Daily(Strategy):
             Rule(
                 field="Exit Rule",
                 value="Closed when the price falls through the trailing stop, or when the close "
-                f"drops below its 20-day average, or RSI ({PERIOD}) falls under 50. Either "
-                "one is enough on its own.",
+                f"drops below its 20-day average, or RSI ({period}) falls under "
+                f"{settings.daily.exit_rsi_max:g}. Either one is enough on its own.",
                 source="strategies/daily.py · does_signal_exit",
             ),
             Rule(
                 field="Emergency Exit",
                 value=(
-                    f"Closed {EARNINGS_EXIT_LEAD_MINUTES} minutes before the closing bell "
+                    f"Closed {lead_minutes} minutes before the closing bell "
                     f"({earnings_exit} on a full session) on the session before the company "
                     "reports earnings, unless that calendar cannot be read, in which case the "
                     "position is left alone. The daily loss limit closes all positions and "

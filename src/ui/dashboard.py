@@ -16,20 +16,21 @@ from pandas import DataFrame, DatetimeIndex, Timedelta
 from pydantic import ValidationError
 from starlette.responses import FileResponse
 
+from bot.config import settings
 from bot.exchange import TRADING_ZONE, session_bounds, session_starts
 from bot.frames import regular_session
-from bot.indicators import PERIOD, latest_atr
+from bot.indicators import latest_atr
 from bot.strategies.breakout import Breakout, range_marks, range_stop
 from bot.strategies.daily import Daily
 from bot.strategies.registry import strategy_class
 from bot.types import (
-    POSITION_FRACTION_CAP,
+    BENCHMARK_SYMBOL,
     STATE_SIGNATURE_SALT,
     Direction,
+    RiskSection,
     StateEvent,
     StateSnapshot,
     StrategyName,
-    TradingConfiguration,
     is_strategy_name,
 )
 
@@ -249,27 +250,15 @@ ASSET_MEDIA_TYPES = {
     "theme.js": "text/javascript",
     "favicon.svg": "image/svg+xml",
 }
-LEDGER_TTL_SECONDS = 60
-PULSE_TTL_SECONDS = 2
-BENCHMARK_SYMBOL = "SPY"
 NO_STORE = {"Cache-Control": "no-store"}
 IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
-HEARTBEAT_TIMEOUT = timedelta(seconds=15)
-SIGNATURE_WINDOW_SECONDS = 30
-STATE_BODY_BYTES_MAX = 65_536
 STATE_SIGNATURE_ENVELOPE_BYTES = 51
-STATE_REQUEST_BYTES_MAX = STATE_BODY_BYTES_MAX + STATE_SIGNATURE_ENVELOPE_BYTES
 CHART_TIMEFRAMES: dict[str, TimeframeRules] = {
     "5Min": {"bar": "5Min", "pad_days": 1, "span_max": 10, "warmup_days": 5},
     "1Hour": {"bar": "1Hour", "pad_days": 7, "span_max": 90, "warmup_days": 46},
     "1Day": {"bar": "1Day", "pad_days": 120, "span_max": 900, "warmup_days": 300},
 }
-SMA_LENGTHS = (20, 50, 200)
-CHART_TTL_SECONDS = 120
-CHART_CACHE_MAX = 64
 SESSION_SOURCE = "30Min"
-SESSION_SOURCE_BARS_MAX = 1000
-LEVELS_HISTORY_DAYS = 90
 DASHBOARD_HEADERS = {
     "Cache-Control": "private, no-cache",
     "Content-Security-Policy": (
@@ -325,7 +314,7 @@ def chart_window(timeframe: str, opened: date, closed: date) -> tuple[datetime, 
 
 
 def bars_atr(bars: list[Bar]) -> float | None:
-    if len(bars) <= PERIOD:
+    if len(bars) <= settings.indicators.period:
         return None
     frame = _bar_frame(bars).rename(columns={"h": "high", "l": "low", "c": "close"})
     return latest_atr(frame)
@@ -373,15 +362,15 @@ def read_response(data: Any, max_age: int, **metadata: Any) -> JSONResponse:
 async def build_ledger(
     alpaca: AlpacaReadClient,
     market: AlpacaMarketDataClient,
-    fallback_configuration: TradingConfiguration,
+    fallback_configuration: RiskSection,
     snapshot: StateSnapshot | None,
     stale: bool,
 ) -> Ledger:
     async with asyncio.TaskGroup() as reads:
         account_read = reads.create_task(alpaca.account())
-        positions_read = reads.create_task(alpaca.raw_positions())
-        fills_read = reads.create_task(alpaca.raw_fills())
-        orders_read = reads.create_task(alpaca.raw_closed_orders())
+        positions_read = reads.create_task(alpaca.positions())
+        fills_read = reads.create_task(alpaca.fills())
+        orders_read = reads.create_task(alpaca.closed_orders())
         daily_read = reads.create_task(alpaca.equity("1A", "1D"))
         intraday_read = reads.create_task(alpaca.equity("1D", "5Min"))
         clock_read = reads.create_task(alpaca.clock())
@@ -427,15 +416,8 @@ async def build_ledger(
         buyingPower=round(account.buying_power, 2),
         marketValue=round(sum(row["value"] for row in rows), 2),
         unrealised=round(sum(row["unreal"] for row in rows), 2),
-        positionCapPct=round(
-            100
-            * min(
-                POSITION_FRACTION_CAP,
-                configuration.position_fraction_max,
-            ),
-            2,
-        ),
-        dailyLossLimitPct=round(100 * configuration.risk_per_day_max, 2),
+        positionCapPct=round(100 * configuration.position_fraction_max, 2),
+        dailyLossLimitPct=round(100 * configuration.per_day_max, 2),
         bot=bot_state(snapshot, stale),
         strategies=strategy_labels(),
         windows=entry_windows(),
@@ -453,7 +435,7 @@ async def build_ledger(
 async def build_pulse(alpaca: AlpacaReadClient) -> Pulse:
     async with asyncio.TaskGroup() as reads:
         account_read = reads.create_task(alpaca.account())
-        positions_read = reads.create_task(alpaca.raw_positions())
+        positions_read = reads.create_task(alpaca.positions())
 
     account = account_read.result()
     positions = positions_read.result()
@@ -485,20 +467,28 @@ def bot_state(snapshot: StateSnapshot | None, stale: bool) -> BotState:
 
 def dashboard_router(configuration: WebSettings, state_store: StateStore) -> APIRouter:
     router = APIRouter()
-    mode = configuration.broker_mode.upper().encode()
+    mode = configuration.broker.mode.upper().encode()
     dashboard_html = DASHBOARD_HTML.replace(b"{{ BROKER_MODE }}", mode)
     for plain, fingerprinted in ASSET_REWRITES.items():
         dashboard_html = dashboard_html.replace(plain, fingerprinted)
     signer = TimestampSigner(
-        configuration.state_export_secret.get_secret_value(),
+        configuration.export.secret.get_secret_value(),
         salt=STATE_SIGNATURE_SALT,
         digest_method=hashlib.sha256,
     )
 
-    ledger_cache = ReadCache[Ledger](LEDGER_TTL_SECONDS)
-    pulse_cache = ReadCache[Pulse](PULSE_TTL_SECONDS)
-    bar_cache = KeyedCache[list[BarRow]](CHART_TTL_SECONDS, CHART_CACHE_MAX)
-    levels_cache = KeyedCache[Levels](CHART_TTL_SECONDS, CHART_CACHE_MAX)
+    dashboard_section = configuration.dashboard
+    heartbeat_timeout = timedelta(seconds=configuration.web.heartbeat_timeout_seconds)
+    signature_window_seconds = configuration.web.signature_window_seconds
+    state_body_bytes_max = configuration.web.state_body_bytes_max
+    state_request_bytes_max = state_body_bytes_max + STATE_SIGNATURE_ENVELOPE_BYTES
+
+    ledger_cache = ReadCache[Ledger](dashboard_section.ledger_ttl_seconds)
+    pulse_cache = ReadCache[Pulse](dashboard_section.pulse_ttl_seconds)
+    chart_ttl = dashboard_section.chart_ttl_seconds
+    chart_cache_max = dashboard_section.chart_cache_max
+    bar_cache = KeyedCache[list[BarRow]](chart_ttl, chart_cache_max)
+    levels_cache = KeyedCache[Levels](chart_ttl, chart_cache_max)
 
     def alpaca(request: Request) -> AlpacaReadClient:
         return request.state.alpaca
@@ -508,7 +498,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
 
     def read_state() -> tuple[StateSnapshot | None, bool]:
         snapshot = state_store.read()
-        stale = snapshot is None or datetime.now(UTC) - snapshot.heartbeat_at > HEARTBEAT_TIMEOUT
+        stale = snapshot is None or datetime.now(UTC) - snapshot.heartbeat_at > heartbeat_timeout
         return snapshot, stale
 
     @router.get("/")
@@ -553,12 +543,13 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 cached = bar_cache.fresh(key)
                 if cached is None:
                     if timeframe == "1Hour":
-                        half = await market(request).bars_paged(
+                        half = await market(request).bars(
                             symbol,
                             SESSION_SOURCE,
                             start.isoformat(),
                             end.isoformat(),
-                            limit=SESSION_SOURCE_BARS_MAX,
+                            limit=dashboard_section.session_source_bars_max,
+                            pages_max=dashboard_section.session_source_pages_max,
                         )
                         cached = session_hour_bars(half)
                     else:
@@ -577,7 +568,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "displayFrom": display.isoformat(),
-                "smaLengths": list(SMA_LENGTHS),
+                "smaLengths": list(dashboard_section.sma_lengths),
                 "bars": cached,
             },
             60,
@@ -621,17 +612,17 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 )
                 found = opening_range(opening_bars, opens, minutes)
                 if found is not None:
-                    levels = breakout_levels(breakout, direction, entry, *found)
-                    payload["range"] = levels["range"]
-                    payload["stop"] = levels["stop"]
-                    payload["targets"] = levels["targets"]
+                    found_levels = breakout_levels(breakout, direction, entry, *found)
+                    payload["range"] = found_levels["range"]
+                    payload["stop"] = found_levels["stop"]
+                    payload["targets"] = found_levels["targets"]
             elif found_class is not None and issubclass(found_class, Daily):
                 history = await market(request).bars(
                     symbol,
                     "1Day",
-                    (opened_on - timedelta(days=LEVELS_HISTORY_DAYS)).isoformat(),
+                    (opened_on - timedelta(days=dashboard_section.levels_history_days)).isoformat(),
                     datetime.combine(opened_on, dtime(0, 0), TRADING_ZONE).isoformat(),
-                    limit=LEVELS_HISTORY_DAYS,
+                    limit=dashboard_section.levels_history_days,
                 )
                 average_range = bars_atr(history)
                 if average_range is not None:
@@ -646,7 +637,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         snapshot, _ = read_state()
         reported = snapshot is not None
         active_configuration = (
-            snapshot.configuration if snapshot else configuration.trading_configuration
+            snapshot.configuration if snapshot else configuration.risk
         )
         return read_response(strategy_rules(active_configuration, configured=reported), 60)
 
@@ -661,7 +652,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                     cached = await build_ledger(
                         alpaca(request),
                         market(request),
-                        configuration.trading_configuration,
+                        configuration.risk,
                         snapshot,
                         stale,
                     )
@@ -692,27 +683,27 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         size = 0
         async for chunk in request.stream():
             size += len(chunk)
-            if size > STATE_REQUEST_BYTES_MAX:
+            if size > state_request_bytes_max:
                 return error_response("State snapshot is too large", 413)
             chunks.append(chunk)
         try:
             body, signed_at = signer.unsign(
                 b"".join(chunks),
-                max_age=SIGNATURE_WINDOW_SECONDS,
+                max_age=signature_window_seconds,
                 return_timestamp=True,
             )
         except SignatureExpired:
             return error_response("State signature has expired", 401)
         except BadSignature:
             return error_response("State signature is invalid", 401)
-        if len(body) > STATE_BODY_BYTES_MAX:
+        if len(body) > state_body_bytes_max:
             return error_response("State snapshot is too large", 413)
         try:
             snapshot = StateSnapshot.model_validate_json(body)
         except ValidationError:
             return error_response("State snapshot is invalid", 422)
         drift = abs((snapshot.heartbeat_at - signed_at).total_seconds())
-        if snapshot.started_at > snapshot.heartbeat_at or drift > SIGNATURE_WINDOW_SECONDS:
+        if snapshot.started_at > snapshot.heartbeat_at or drift > signature_window_seconds:
             return error_response("State snapshot is invalid", 422)
         if not state_store.publish(snapshot):
             return error_response("State snapshot is not new", 409)

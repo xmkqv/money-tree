@@ -3,12 +3,11 @@ from functools import lru_cache
 from importlib import import_module
 from typing import Any, cast
 
+from .config import settings
 from .exchange import XNYS
 
 
 yfinance = cast(Any, import_module("yfinance"))
-
-EARNINGS_BLOCK_DAYS = 5
 
 
 @lru_cache(maxsize=512)
@@ -25,7 +24,7 @@ def next_earnings(symbol: str, day: date) -> date | None:
 
 def is_earnings_blocked(symbol: str, day: date) -> bool:
     upcoming = next_earnings(symbol, day)
-    return upcoming is not None and 0 <= (upcoming - day).days <= EARNINGS_BLOCK_DAYS
+    return upcoming is not None and 0 <= (upcoming - day).days <= settings.earnings.block_days
 
 
 def is_earnings_exit_due(symbol: str, day: date) -> bool:

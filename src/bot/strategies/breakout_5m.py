@@ -1,3 +1,5 @@
+from bot.config import settings
+
 from .breakout import Breakout
 
 
@@ -5,8 +7,9 @@ class Breakout5m(Breakout):
     key = "breakout_5m"
     code = "o"
     variation = "5m"
-    opening_minutes = 5
-    volume_multiple = 1.3
-    target_multiples = (1.5, 2.5, 4.0)
-    entry_extension_max = None
-    risk_fraction_max = 0.0015
+    is_paused = settings.breakout_5m.is_paused
+    opening_minutes = settings.breakout_5m.opening_minutes
+    volume_multiple = settings.breakout_5m.volume_multiple
+    target_multiples = settings.breakout_5m.target_multiples
+    entry_extension_max = settings.breakout_5m.entry_extension_max
+    risk_fraction_max = settings.breakout_5m.risk_fraction_max

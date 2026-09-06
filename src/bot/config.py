@@ -1,43 +1,126 @@
 from pathlib import Path
-from typing import Self
+from typing import Annotated, Self
 
-from pydantic import AnyHttpUrl, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .types import (
     STRATEGY_KEYS,
-    BrokerMode,
-    DataFeedName,
-    RequiredSecret,
-    RiskLimit,
-    SigningSecret,
+    BrokerSection,
+    ExportSection,
+    OptionalRiskLimit,
+    RiskSection,
+    SettingsSection,
     StrategyName,
-    TradingConfiguration,
     is_strategy_name,
 )
 
 
+type Count = Annotated[int, Field(gt=0)]
+type Amount = Annotated[float, Field(gt=0)]
+type Fraction = Annotated[float, Field(gt=0, le=1)]
+
+
+class UniverseSection(SettingsSection):
+    cache: Path
+    market_cap_usd_min: Amount
+    price_usd_min: Amount
+    turnover_usd_min: Amount
+    history_days: Count
+
+
+class PortfolioSection(SettingsSection):
+    symbols_per_request: Count
+    orders_per_request: Count
+    preparation_attempts_max: Count
+    pending_ttl_minutes: Count
+
+
+class EarningsSection(SettingsSection):
+    block_days: Count
+    exit_lead_minutes: Count
+
+
+class IndicatorSection(SettingsSection):
+    period: Count
+
+
+class BreakoutSection(SettingsSection):
+    range_fraction_min: Fraction
+    long_stop_fraction: Fraction
+    mid_fraction: Fraction
+    short_stop_fraction: Fraction
+    stop_fraction_min: Fraction
+    stop_fraction_max: Fraction
+    positions_max: Count
+    history_sessions: Count
+    signal_candles_max: Count
+    trail_atr_multiple: Amount
+    trail_bars_min: Count
+    scan_minutes: Count
+    close_lead_minutes: Count
+    confirm_history_days: Count
+    trail_history_days: Count
+
+
+class BreakoutVariationSection(SettingsSection):
+    opening_minutes: Count
+    volume_multiple: Amount
+    target_multiples: tuple[float, float, float]
+    entry_extension_max: OptionalRiskLimit
+    risk_fraction_max: OptionalRiskLimit
+    is_paused: bool
+
+
+class DailySection(SettingsSection):
+    average_sessions: Count
+    exit_rsi_max: Amount
+
+
+class DailySmaSection(SettingsSection):
+    trend_sessions: Count
+    trend_sessions_long: Count
+    rsi_min: Amount
+    adx_min: Amount
+    stop_atr_multiple: Amount
+    does_heed_earnings: bool
+    risk_fraction_max: OptionalRiskLimit
+    positions_max: Count
+    is_paused: bool
+
+
+class DailyTfbSection(SettingsSection):
+    trend_sessions: Count
+    turnover_sessions: Count
+    adx_min: Amount
+    average_lag_sessions: Count
+    stop_atr_multiple: Amount
+    does_heed_earnings: bool
+    risk_fraction_max: Fraction
+    positions_max: Count
+    is_paused: bool
+
+
 class BotSettings(BaseSettings):
-    model_config = SettingsConfigDict(extra="ignore", frozen=True)
+    model_config = SettingsConfigDict(env_nested_delimiter="__", extra="ignore", frozen=True)
 
     strategies: str
-    alpaca_api_key: RequiredSecret
-    alpaca_api_secret: RequiredSecret
-    broker_mode: BrokerMode
-    alpaca_data_feed: DataFeedName
-    alpaca_daily_feed: DataFeedName
-    universe_cache: Path
-    state_export_url: AnyHttpUrl
-    state_export_secret: SigningSecret
-    fractional_orders: bool
-    risk_per_day_max: RiskLimit
-    risk_per_trade_max: RiskLimit
-    position_fraction_max: RiskLimit
+    broker: BrokerSection
+    risk: RiskSection
+    export: ExportSection
+    universe: UniverseSection
+    portfolio: PortfolioSection
+    earnings: EarningsSection
+    indicators: IndicatorSection
+    breakout: BreakoutSection
+    breakout_5m: BreakoutVariationSection
+    breakout_10m: BreakoutVariationSection
+    daily: DailySection
+    daily_sma: DailySmaSection
+    daily_tfb: DailyTfbSection
 
     @model_validator(mode="after")
-    def validate_limits(self) -> Self:
-        if self.risk_per_trade_max > self.risk_per_day_max:
-            raise ValueError("risk per trade must not exceed risk per day")
+    def validate_strategies(self) -> Self:
         values = [value.strip() for value in self.strategies.split(",") if value.strip()]
         if not values:
             raise ValueError("STRATEGIES must select at least one strategy")
@@ -52,15 +135,6 @@ class BotSettings(BaseSettings):
     def strategy_names(self) -> list[StrategyName]:
         values = [item.strip() for item in self.strategies.split(",")]
         return [value for value in values if is_strategy_name(value)]
-
-    @property
-    def trading_configuration(self) -> TradingConfiguration:
-        return TradingConfiguration(
-            fractional_orders=self.fractional_orders,
-            position_fraction_max=self.position_fraction_max,
-            risk_per_day_max=self.risk_per_day_max,
-            risk_per_trade_max=self.risk_per_trade_max,
-        )
 
 
 settings = BotSettings()  # pyright: ignore[reportCallIssue]

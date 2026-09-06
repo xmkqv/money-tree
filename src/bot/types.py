@@ -1,6 +1,20 @@
-from typing import Annotated, Literal, TypeIs
+from typing import Annotated, Literal, Self, TypeIs
 
-from pydantic import UUID4, AwareDatetime, BaseModel, ConfigDict, Field, SecretStr
+from pydantic import (
+    UUID4,
+    AnyHttpUrl,
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    SecretStr,
+    model_validator,
+)
+
+
+def parse_none(value: object) -> object:
+    return None if value == "none" else value
 
 
 type RiskLimit = Annotated[float, Field(gt=0, le=1)]
@@ -12,10 +26,10 @@ type StrategyName = Literal["breakout_5m", "breakout_10m", "daily_sma", "daily_t
 type DataFeedName = Literal["sip", "delayed_sip", "iex"]
 type BrokerMode = Literal["live", "paper"]
 type Direction = Literal[-1, 1]
+type OptionalRiskLimit = Annotated[RiskLimit | None, BeforeValidator(parse_none)]
 
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
-POSITIONS_MAX = 10
-POSITION_FRACTION_CAP = 0.10
+BENCHMARK_SYMBOL = "SPY"
 EVENTS_MAX = 50
 STRATEGY_KEYS: tuple[StrategyName, ...] = (
     "breakout_5m",
@@ -37,11 +51,37 @@ class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
-class TradingConfiguration(_StrictModel):
+class SettingsSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+class BrokerSection(SettingsSection):
+    mode: BrokerMode
+    data_feed: DataFeedName
+    daily_feed: DataFeedName
+    api_key: RequiredSecret
+    api_secret: RequiredSecret
+
+
+class RiskSection(SettingsSection):
+    per_day_max: RiskLimit
+    per_trade_max: RiskLimit
+    position_fraction_max: Annotated[float, Field(gt=0, le=0.10)]
+    positions_max: Annotated[int, Field(gt=0)]
+    notional_usd_min: Annotated[float, Field(gt=0)]
     fractional_orders: bool
-    position_fraction_max: RiskLimit
-    risk_per_day_max: RiskLimit
-    risk_per_trade_max: RiskLimit
+
+    @model_validator(mode="after")
+    def validate_limits(self) -> Self:
+        if self.per_trade_max > self.per_day_max:
+            raise ValueError("risk per trade must not exceed risk per day")
+        return self
+
+
+class ExportSection(SettingsSection):
+    url: AnyHttpUrl
+    secret: SigningSecret
+    interval_seconds: Annotated[int, Field(gt=0)]
 
 
 class StateEvent(_StrictModel):
@@ -60,5 +100,5 @@ class StateSnapshot(_StrictModel):
     paused: list[StrategyName] = Field(default_factory=no_strategies, max_length=len(STRATEGY_KEYS))
     started_at: AwareDatetime
     heartbeat_at: AwareDatetime
-    configuration: TradingConfiguration
+    configuration: RiskSection
     events: list[StateEvent] = Field(max_length=EVENTS_MAX)

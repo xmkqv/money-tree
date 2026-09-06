@@ -1,11 +1,11 @@
 from datetime import date, datetime
 from typing import TypedDict
 
+from bot.config import settings
 from bot.exchange import upcoming_session_bounds
 from bot.strategies.base import RULE_FIELDS, Strategy
-from bot.strategies.breakout import BREAKOUT_POSITIONS_MAX
 from bot.strategies.registry import STRATEGIES
-from bot.types import POSITIONS_MAX, TradingConfiguration
+from bot.types import RiskSection
 from bot.universe import percent
 
 
@@ -37,31 +37,29 @@ def entry_windows() -> dict[str, EntryWindow]:
     return {cls.key: _window(*cls.entry_window(opens, closes)) for cls in STRATEGIES}
 
 
-def strategy_rules(configuration: TradingConfiguration, *, configured: bool) -> StrategyRules:
+def strategy_rules(risk: RiskSection, *, configured: bool) -> StrategyRules:
     opens, closes = upcoming_session_bounds(date.today())
     return StrategyRules(
         fields=list(RULE_FIELDS),
-        strategies=[
-            _card(cls, configuration.risk_per_trade_max, opens, closes) for cls in STRATEGIES
-        ],
-        portfolio=portfolio_rules(configuration.risk_per_day_max),
+        strategies=[_card(cls, risk.per_trade_max, opens, closes) for cls in STRATEGIES],
+        portfolio=portfolio_rules(risk),
         configured=configured,
     )
 
 
-def portfolio_rules(daily_loss: float) -> list[Row]:
+def portfolio_rules(risk: RiskSection) -> list[Row]:
     return [
         Row(
             field="Position cap",
-            value=f"At most {POSITIONS_MAX} positions open at once, counting orders already "
+            value=f"At most {risk.positions_max} positions open at once, counting orders already "
             "placed but not yet filled.",
             source="portfolio.py · enter",
         ),
         Row(
             field="Breakout cap",
-            value=f"At most {BREAKOUT_POSITIONS_MAX} breakout positions open at once across "
-            "both intraday strategies. The two strategies share one allowance, because every "
-            "breakout is the same bet on the same half hour.",
+            value=f"At most {settings.breakout.positions_max} breakout positions open at once "
+            "across both intraday strategies. The two strategies share one allowance, because "
+            "every breakout is the same bet on the same half hour.",
             source="strategies/breakout.py · cap_keys",
         ),
         Row(
@@ -78,7 +76,7 @@ def portfolio_rules(daily_loss: float) -> list[Row]:
         ),
         Row(
             field="Daily loss limit",
-            value=f"If equity falls {percent(daily_loss)} below the previous close, every "
+            value=f"If equity falls {percent(risk.per_day_max)} below the previous close, every "
             "position is closed and no new trade is opened until the next session.",
             source="portfolio.py · _is_daily_loss_reached",
         ),

@@ -8,8 +8,6 @@ from bot.types import BrokerMode
 
 
 DATA_API_URL = "https://data.alpaca.markets"
-PAGE_ROWS_MAX = 100
-PAGES_MAX = 40
 
 
 class _Payload(BaseModel):
@@ -92,29 +90,31 @@ def alpaca_api_url(broker_mode: BrokerMode) -> str:
 
 
 class AlpacaReadClient:
-    def __init__(self, client: httpx.AsyncClient) -> None:
+    def __init__(self, client: httpx.AsyncClient, page_rows_max: int, pages_max: int) -> None:
         self._client = client
+        self._page_rows_max = page_rows_max
+        self._pages_max = pages_max
 
     async def account(self) -> Account:
         return Account.model_validate(await self._get("/v2/account"))
 
-    async def raw_positions(self) -> list[Position]:
+    async def positions(self) -> list[Position]:
         return positions_adapter.validate_python(await self._get("/v2/positions"))
 
     async def clock(self) -> Clock:
         return Clock.model_validate(await self._get("/v2/clock"))
 
-    async def raw_fills(self, after: str | None = None) -> list[Fill]:
+    async def fills(self, after: str | None = None) -> list[Fill]:
         collected: list[Fill] = []
         token: str | None = None
-        for _ in range(PAGES_MAX):
+        for _ in range(self._pages_max):
             page = fills_adapter.validate_python(
                 await self._get(
                     "/v2/account/activities",
                     {
                         "activity_types": "FILL",
                         "direction": "desc",
-                        "page_size": PAGE_ROWS_MAX,
+                        "page_size": self._page_rows_max,
                         "page_token": token,
                         "after": after,
                     },
@@ -124,21 +124,21 @@ class AlpacaReadClient:
                 break
             collected.extend(page)
             token = page[-1].id
-            if len(page) < PAGE_ROWS_MAX:
+            if len(page) < self._page_rows_max:
                 break
         return collected
 
-    async def raw_closed_orders(self, after: str | None = None) -> list[ClosedOrder]:
+    async def closed_orders(self, after: str | None = None) -> list[ClosedOrder]:
         collected: list[ClosedOrder] = []
         seen: set[str] = set()
         until: str | None = None
-        for _ in range(PAGES_MAX):
+        for _ in range(self._pages_max):
             page = closed_orders_adapter.validate_python(
                 await self._get(
                     "/v2/orders",
                     {
                         "status": "closed",
-                        "limit": PAGE_ROWS_MAX,
+                        "limit": self._page_rows_max,
                         "direction": "desc",
                         "until": until,
                         "after": after,
@@ -151,7 +151,7 @@ class AlpacaReadClient:
             collected.extend(fresh)
             seen.update(order.id for order in fresh)
             until = page[-1].submitted_at
-            if len(page) < PAGE_ROWS_MAX:
+            if len(page) < self._page_rows_max:
                 break
         return collected
 
@@ -189,6 +189,7 @@ class AlpacaMarketDataClient:
         start: str,
         end: str | None = None,
         limit: int = 1000,
+        pages_max: int = 1,
     ) -> list[Bar]:
         params = {
             "timeframe": timeframe,
@@ -198,24 +199,6 @@ class AlpacaMarketDataClient:
         }
         if end is not None:
             params["end"] = end
-        return await self._page(symbol, params, pages_max=1)
-
-    async def bars_paged(
-        self,
-        symbol: str,
-        timeframe: str,
-        start: str,
-        end: str,
-        limit: int = 1000,
-        pages_max: int = 6,
-    ) -> list[Bar]:
-        params = {
-            "timeframe": timeframe,
-            "start": start,
-            "end": end,
-            "limit": str(limit),
-            "feed": "iex",
-        }
         return await self._page(symbol, params, pages_max=pages_max)
 
     async def _page(self, symbol: str, params: dict[str, str], pages_max: int) -> list[Bar]:

@@ -6,7 +6,8 @@ from typing import ClassVar, Protocol
 
 from pandas import DataFrame
 
-from bot.types import POSITIONS_MAX, Direction, EventLevel, StrategyName
+from bot.config import settings
+from bot.types import Direction, EventLevel, StrategyName
 
 
 RULE_FIELDS = (
@@ -103,7 +104,7 @@ class Strategy(ABC):
     kind: ClassVar[str]
     is_paused: ClassVar[bool] = False
     is_stop_resting: ClassVar[bool] = False
-    positions_max: ClassVar[int] = POSITIONS_MAX
+    positions_max: ClassVar[int] = settings.risk.positions_max
     risk_fraction_max: ClassVar[float | None] = None
 
     def __init__(self, portfolio: Portfolio) -> None:

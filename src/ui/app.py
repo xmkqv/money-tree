@@ -12,7 +12,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .alpaca import DATA_API_URL, AlpacaMarketDataClient, AlpacaReadClient, alpaca_api_url
 from .auth import RailwayOAuthClient
-from .config import RailwayOAuthSettings, WebSettings
+from .config import LoginSettings, WebSettings
 from .dashboard import NO_STORE, StateStore, dashboard_router, error_response
 
 
@@ -60,15 +60,15 @@ def create_app() -> FastAPI:
     configuration = WebSettings()  # pyright: ignore[reportCallIssue]
 
     credentials = {
-        "APCA-API-KEY-ID": configuration.alpaca_api_key.get_secret_value(),
-        "APCA-API-SECRET-KEY": configuration.alpaca_api_secret.get_secret_value(),
+        "APCA-API-KEY-ID": configuration.broker.api_key.get_secret_value(),
+        "APCA-API-SECRET-KEY": configuration.broker.api_secret.get_secret_value(),
     }
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, object]]:
         async with (
             httpx.AsyncClient(
-                base_url=alpaca_api_url(configuration.broker_mode),
+                base_url=alpaca_api_url(configuration.broker.mode),
                 headers=credentials,
                 timeout=httpx.Timeout(connect=2, read=10, write=5, pool=5),
             ) as trading,
@@ -79,7 +79,11 @@ def create_app() -> FastAPI:
             ) as data,
         ):
             yield {
-                "alpaca": AlpacaReadClient(trading),
+                "alpaca": AlpacaReadClient(
+                    trading,
+                    configuration.dashboard.page_rows_max,
+                    configuration.dashboard.pages_max,
+                ),
                 "market": AlpacaMarketDataClient(data),
             }
 
@@ -89,9 +93,9 @@ def create_app() -> FastAPI:
     app.add_middleware(SessionGuardMiddleware)
     app.add_middleware(
         SessionMiddleware,
-        secret_key=configuration.session_secret.get_secret_value(),
+        secret_key=configuration.web.session_secret.get_secret_value(),
         session_cookie="money_tree_session",
-        max_age=configuration.session_ttl_seconds,
+        max_age=configuration.web.session_ttl_seconds,
         same_site="lax",
         https_only=configuration.mode == "production",
     )
@@ -116,7 +120,7 @@ def create_app() -> FastAPI:
                 return RedirectResponse("/", status_code=303, headers=NO_STORE)
 
         case "production":
-            oauth = RailwayOAuthSettings()  # pyright: ignore[reportCallIssue]
+            oauth = LoginSettings().login  # pyright: ignore[reportCallIssue]
             oauth_client = RailwayOAuthClient(oauth, configuration.railway_oauth_redirect_uri)
 
             @app.get("/login")

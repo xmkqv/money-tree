@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import cast
 
 from .config import settings
-from .types import StrategyName
+from .strategies.breakout import Breakout
+from .strategies.registry import strategy_class
+from .types import BENCHMARK_SYMBOL, StrategyName
 
 
 ARTIFACT_NAMES = {
@@ -36,18 +38,17 @@ def run(
 
     from .portfolio import Portfolio
 
-    parameters: dict[str, object] = settings.trading_configuration.model_dump()
-    parameters["strategies"] = [strategy_name]
+    parameters: dict[str, object] = {"strategies": [strategy_name]}
     if symbols:
         parameters["symbols"] = symbols
     datasource = YahooDataBacktesting
     datasource_configuration: dict[str, str | bool] | None = None
     datasource_options: dict[str, object] = {}
-    if strategy_name in {"breakout_5m", "breakout_10m"}:
+    if strategy_class(strategy_name).family == Breakout.family:
         datasource = AlpacaBacktesting
         datasource_configuration = {
-            "API_KEY": settings.alpaca_api_key.get_secret_value(),
-            "API_SECRET": settings.alpaca_api_secret.get_secret_value(),
+            "API_KEY": settings.broker.api_key.get_secret_value(),
+            "API_SECRET": settings.broker.api_secret.get_secret_value(),
             "PAPER": True,
         }
         datasource_options = {"timestep": "minute", "warm_up_trading_days": 60}
@@ -62,7 +63,7 @@ def run(
             end,
             config=datasource_configuration,
             parameters=parameters,
-            benchmark_asset="SPY",
+            benchmark_asset=BENCHMARK_SYMBOL,
             budget=100_000.0,
             show_plot=report_mode,
             show_tearsheet=False,

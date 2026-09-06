@@ -24,3 +24,7 @@ for _strategy in STRATEGIES:
 
 def strategy_class(key: StrategyName) -> type[Strategy]:
     return STRATEGIES_BY_KEY[key]
+
+
+def family_keys(family: str) -> frozenset[StrategyName]:
+    return frozenset(cls.key for cls in STRATEGIES if cls.family == family)

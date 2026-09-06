@@ -10,20 +10,20 @@ from uuid import uuid4
 import httpx
 from itsdangerous import TimestampSigner
 
+from .config import settings
 from .types import (
     EVENTS_MAX,
     STATE_SIGNATURE_SALT,
     EventLevel,
+    RiskSection,
     RunStatus,
     StateEvent,
     StateSnapshot,
     StrategyName,
-    TradingConfiguration,
 )
 
 
 logger = logging.getLogger(__name__)
-EXPORT_INTERVAL_SECONDS = 5
 
 
 class StateExporter:
@@ -33,7 +33,7 @@ class StateExporter:
         secret: str,
         strategies: list[StrategyName],
         paused: list[StrategyName],
-        configuration: TradingConfiguration,
+        configuration: RiskSection,
     ) -> None:
         self.url = url
         self.signer = TimestampSigner(
@@ -108,7 +108,7 @@ class StateExporter:
         with httpx.Client(timeout=1.0) as client:
             while True:
                 try:
-                    snapshot = self.pending.get(timeout=EXPORT_INTERVAL_SECONDS)
+                    snapshot = self.pending.get(timeout=settings.export.interval_seconds)
                 except queue.Empty:
                     if self.stopping.is_set():
                         return

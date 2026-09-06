@@ -1,10 +1,8 @@
 from decimal import ROUND_DOWN, Decimal
 from math import ceil, floor, isfinite
 
+from .config import settings
 from .types import Direction
-
-
-NOTIONAL_USD_MIN = 1.0
 
 
 def entry_quantity(
@@ -25,7 +23,7 @@ def entry_quantity(
     quantity = equity * position_fraction_max / price
     if risk_per_trade_max is not None:
         quantity = min(quantity, equity * risk_per_trade_max / stop_distance)
-    if quantity * price < NOTIONAL_USD_MIN:
+    if quantity * price < settings.risk.notional_usd_min:
         return Decimal(0)
     return quantity_value(quantity, fractional_orders)
 

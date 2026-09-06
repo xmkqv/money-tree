@@ -1,6 +1,4 @@
-MARKET_CAP_USD_MIN = 500_000_000.0
-PRICE_USD_MIN = 5.0
-TURNOVER_USD_MIN = 20_000_000.0
+from .config import settings
 
 
 def millions(value: float) -> str:
@@ -13,7 +11,8 @@ def percent(fraction: float) -> str:
 
 
 UNIVERSE = (
-    f"US equities screened daily: market cap {millions(MARKET_CAP_USD_MIN)} or more, share "
-    f"price ${PRICE_USD_MIN:.0f} or more, 3-month average daily turnover "
-    f"{millions(TURNOVER_USD_MIN)} or more, and tradable and fractionable at Alpaca."
+    f"US equities screened daily: market cap {millions(settings.universe.market_cap_usd_min)} or "
+    f"more, share price ${settings.universe.price_usd_min:.0f} or more, 3-month average daily "
+    f"turnover {millions(settings.universe.turnover_usd_min)} or more, and tradable and "
+    "fractionable at Alpaca."
 )

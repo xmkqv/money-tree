@@ -6,7 +6,7 @@ from authlib.common.security import generate_token
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import TypeAdapter
 
-from .config import RailwayOAuthSettings
+from .config import LoginSection
 
 
 AUTHORIZATION_URL = "https://backboard.railway.com/oauth/auth"
@@ -43,7 +43,7 @@ class _OAuthClient(Protocol):
 
 
 class RailwayOAuthClient:
-    def __init__(self, oauth: RailwayOAuthSettings, redirect_uri: str) -> None:
+    def __init__(self, oauth: LoginSection, redirect_uri: str) -> None:
         self._oauth = oauth
         self._redirect_uri = redirect_uri
 
