@@ -1,31 +1,18 @@
 # env
 
-[environments](https://mise.jdx.dev/configuration/environments.html)
-
 - the environment is the sole declaration of variables
+- the env mode determines the environment projection, i.e. loaded variables
+- env mode ∈ { development, production }
+- in mise, env mode depends on mise env via --env flag
+- shared config is declared in mise.toml whereas mode-specific config is declared in config files
 
 ```invs
-configuration = mise.{mise_env}.toml
-secrets = .env.{mise_env}
-```
-
-## MISE_ENV = development | production
-
-- the development environment is the shell default
-- the production environment is activated per invocation
-- the root checks that an environment is selected, before any consumer runs
-
-```sh:rc
-export MISE_ENV=development
+config ← mise.toml + mise.{mode}.toml
+secrets ← .env.{mode}
 ```
 
 ```sh:command
-mise --env production run //:deploy HEAD
-```
-
-```toml:root
-[env]
-MISE_ENV = "{% if mise_env %}{{ mise_env | join(sep='') }}{% else %}{{ throw(message='no environment selected: rerun with --env development or --env production') }}{% endif %}"
+mise --env production run ...
 ```
 
 ## tools
@@ -43,9 +30,22 @@ bun = ...
 ...
 ```
 
-## tasks
+## config
 
-[file tasks](https://mise.jdx.dev/tasks/file-tasks.html)
+- any variable is assigned exactly once
+- variables can be namespaced like {NAMESPACE}__{NAME}
+
+```mise.toml/mise.{mode}.toml
+[env]
+{NAME} = ...
+...
+
+{NAME} = '' # empty value declares an unassigned variable, i.e. like a .env.example declaration
+
+_.file = { path = ".env.{ENV_MODE}", redact = true } # env mode dependent secret loading
+```
+
+## tasks
 
 - a module declares its own tasks
 - task name ∈ { setup, build, serve, stop, check, test, deploy }
@@ -69,39 +69,8 @@ depends = ["//lib/db:reset", ":start"]
 run = "bun run test"
 ```
 
-## configuration
+# refs
 
-- an environment file is complete, i.e. no environment file is a base for another
-- a variable is assigned exactly once
-
-```toml:development
-[env]
-SITE_URL = "http://127.0.0.1:5173"
-CLERK_PUBLISHABLE_KEY = "pk_test_…"
-```
-
-```toml:production
-[env]
-SITE_URL = "https://…"
-CLERK_PUBLISHABLE_KEY = "pk_live_…"
-CLOUDFLARE_ACCOUNT_ID = "…"
-```
-
-## secrets
-
-- an environment file declares each secret it consumes with an empty value, grouped by concern
-- an environment file loads its secrets last, i.e. the secrets file overrides the declarations
-- production secrets extend development secrets
-- no tracked file is named `.env*`
-- [secrets](https://mise.jdx.dev/environments/secrets/)
-
-```toml:production:example
-[env]
-CLERK_SECRET_KEY = ""
-## deployment
-CLOUDFLARE_API_TOKEN = ""
-## release
-APPLE_API_KEY_ID = ""
-
-_.file = { path = ".env.production", redact = true }
-```
+[file tasks]: https://mise.jdx.dev/tasks/file-tasks.html
+[secrets]: https://mise.jdx.dev/environments/secrets/
+[environments]: https://mise.jdx.dev/configuration/environments.html

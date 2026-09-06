@@ -65,14 +65,10 @@ general:
 - errors are `VerbObjectError`
 - tests are outcome then condition
 - generics are role-based
-- environment variables are unnamespaced
-- configuration keys order general to specific
 - commands are noun-verb
 
 ## bugs
 
-- bugs reify as failing tests
-- if there are no failing tests, the assumption is that there are no bugs
-- if tests do not exactly match spec intent, then there are silent bugs
-- a green test suite we can trust ≡ the code and tests match the spec
-- a green test suite we can trust → the code is ready to be pushed to production
+- bugs are reported as failing tests
+- iff code is faithful to spec, no failing tests ≡ no bugs
+- a green suite whose code is not faithful to spec may as well be toilet paper
