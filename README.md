@@ -25,21 +25,21 @@ mise run check
 Backtest a daily strategy and write a run directory.
 
 ```sh
-mise exec -- uv run mt report --strategy sma --symbols SPY --start 2023-01-01 --end 2024-01-01
-# runs/sma-20230101-20240101
+mise exec -- uv run mt report --strategy daily_sma --symbols SPY --start 2023-01-01 --end 2024-01-01
+# runs/daily_sma-20230101-20240101
 ```
 
 Backtest an intraday strategy.
 
 ```sh
-mise exec -- uv run mt backtest --strategy orb --symbols SPY --start 2023-01-01 --end 2024-01-01
+mise exec -- uv run mt backtest --strategy breakout_5m --symbols SPY --start 2023-01-01 --end 2024-01-01
 ```
 
 Trade. The mode selects paper or live.
 
 ```sh
-mise exec -- uv run mt trade --strategies orb
-mise --env production exec -- uv run mt trade --strategies orb
+mise exec -- uv run mt trade --strategies breakout_5m
+mise --env production exec -- uv run mt trade --strategies breakout_5m
 ```
 
 Serve the dashboard and stop it. A push to main deploys.
