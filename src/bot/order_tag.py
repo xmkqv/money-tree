@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from typing import Literal
 from uuid import uuid4
 
+from .strategies.registry import STRATEGIES, STRATEGIES_BY_CODE
 from .types import StrategyName
 
 
@@ -20,15 +21,7 @@ ORDER_TAG_PREFIX = "mt"
 ORDER_TAG_PARTS = 6
 RISK_FRACTION_SCALE = 1_000_000
 ORDER_KINDS: frozenset[OrderKind] = frozenset({"e", "s", "x"})
-STRATEGY_CODES: dict[StrategyName, str] = {
-    "orb": "o",
-    "sma": "s",
-    "tfb_50": "t",
-    "orb_momentum": "m",
-}
-STRATEGIES_BY_CODE: dict[str, StrategyName] = {
-    code: strategy for strategy, code in STRATEGY_CODES.items()
-}
+STRATEGY_CODES: dict[StrategyName, str] = {cls.key: cls.code for cls in STRATEGIES}
 
 
 def order_tag(strategy: StrategyName, kind: OrderKind, signal: str, risk_fraction: float) -> str:
@@ -42,7 +35,8 @@ def find_order_tag(value: str) -> OrderTag | None:
     parts = value.split("-")
     if len(parts) != ORDER_TAG_PARTS or parts[0] != ORDER_TAG_PREFIX:
         return None
-    strategy = STRATEGIES_BY_CODE.get(parts[1])
+    found = STRATEGIES_BY_CODE.get(parts[1])
+    strategy = None if found is None else found.key
     kind = parts[2]
     if strategy is None or kind not in ORDER_KINDS or not parts[4].isdigit():
         return None

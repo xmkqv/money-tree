@@ -17,6 +17,7 @@ from .types import (
     RunStatus,
     StateEvent,
     StateSnapshot,
+    StrategyName,
     TradingConfiguration,
 )
 
@@ -30,8 +31,8 @@ class StateExporter:
         self,
         url: str,
         secret: str,
-        strategies: list[str],
-        paused: list[str],
+        strategies: list[StrategyName],
+        paused: list[StrategyName],
         configuration: TradingConfiguration,
     ) -> None:
         self.url = url
@@ -63,7 +64,7 @@ class StateExporter:
         level: EventLevel,
         message: str,
         *,
-        strategy: str | None = None,
+        strategy: StrategyName | None = None,
     ) -> None:
         with self.lock:
             self.status = status

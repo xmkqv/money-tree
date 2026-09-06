@@ -4,7 +4,7 @@ from pydantic import AnyHttpUrl, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .types import (
-    STRATEGY_LABELS,
+    STRATEGY_KEYS,
     DataFeedName,
     RequiredSecret,
     RiskLimit,
@@ -39,7 +39,7 @@ class BotSettings(BaseSettings):
             raise ValueError("STRATEGIES must select at least one strategy")
         if len(values) != len(set(values)):
             raise ValueError("STRATEGIES must not contain duplicates")
-        unknown = set(values).difference(STRATEGY_LABELS)
+        unknown = set(values).difference(STRATEGY_KEYS)
         if unknown:
             raise ValueError(f"unknown strategies: {', '.join(sorted(unknown))}")
         return self
