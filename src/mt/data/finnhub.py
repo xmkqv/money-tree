@@ -52,7 +52,7 @@ def earnings_dates(start: date, end: date) -> dict[str, date]:
 
 def _get(path: str, params: dict[str, str]) -> object:
     token = settings.finnhub.api_key.get_secret_value()
-    with httpx.Client(base_url=API_URL, timeout=TIMEOUT) as client:
+    with httpx.Client(base_url=API_URL, timeout=TIMEOUT, follow_redirects=True) as client:
         response = client.get(path, params=params, headers={"X-Finnhub-Token": token})
         response.raise_for_status()
         return response.json()
