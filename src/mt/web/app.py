@@ -11,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from mt.config.settings import LoginSettings, WebSettings
-from mt.data.alpaca import PAST_API_URL, AlpacaLiveClient, AlpacaPastClient, alpaca_api_url
+from mt.data.alpaca import PAST_API_URL, AlpacaLiveClient, AlpacaPastClient, live_api_url
 from mt.data.http import http_timeout
 
 from .auth import RailwayOAuthClient
@@ -71,7 +71,7 @@ def create_app() -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, object]]:
         async with (
             httpx.AsyncClient(
-                base_url=alpaca_api_url(configuration.broker.mode),
+                base_url=live_api_url(configuration.broker.mode),
                 headers=credentials,
                 timeout=http_timeout(configuration.broker.timeout),
             ) as live,

@@ -84,7 +84,7 @@ fills_adapter = TypeAdapter(list[Fill])
 closed_orders_adapter = TypeAdapter(list[ClosedOrder])
 
 
-def alpaca_api_url(broker_mode: BrokerMode) -> str:
+def live_api_url(broker_mode: BrokerMode) -> str:
     target = BaseURL.TRADING_PAPER if broker_mode == "paper" else BaseURL.TRADING_LIVE
     return target.value
 
