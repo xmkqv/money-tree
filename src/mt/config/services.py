@@ -24,17 +24,17 @@ def secret_keys() -> set[str]:
     return {key for key, value in declared.items() if value == ""}
 
 
-def read_keys(model: type[BaseModel], prefix: str) -> Iterator[str]:
+def iter_keys(model: type[BaseModel], prefix: str) -> Iterator[str]:
     for name, field in model.model_fields.items():
         annotation = field.annotation
         if isinstance(field.validation_alias, str):
             yield field.validation_alias
         elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
-            yield from read_keys(annotation, f"{prefix}{name.upper()}__")
+            yield from iter_keys(annotation, f"{prefix}{name.upper()}__")
         else:
             yield f"{prefix}{name.upper()}"
 
 
 def service_keys(service: ServiceName) -> list[str]:
-    read = {key for model in SERVICE_SETTINGS[service] for key in read_keys(model, "")}
+    read = {key for model in SERVICE_SETTINGS[service] for key in iter_keys(model, "")}
     return sorted(secret_keys() & read)
