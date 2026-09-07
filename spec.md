@@ -32,9 +32,9 @@ vendor[broker]               vendor[broker]
 
 ```text:types
 live ≔ the account as vendor[broker] holds it now: equity, cash, positions, orders, fills, quotes, listing
-past ≔ what the market already did: completed bars, the index, earnings dates, read up to an instant
+past ≔ what the market already did: completed bars, earnings dates, read up to an instant
 listing ≔ which symbols vendor[broker] trades, fractions, and shorts
-screen ≔ today's market clearing the universe floors; runs only when trading
+screen ≔ today's market: common stocks clearing the screen floors; runs only when trading
 replay ≔ a run against vendor[engine]'s simulated account
 ```
 
@@ -77,7 +77,7 @@ range(p) ≔ opening range low + p · opening range size
 SMA(n), ATR(n), RSI(n), ADX ≔ standard indicators over n candles, n ≔ the indicator period unless stated
 whole shares ≔ each leg rounds down to a whole share; a slice under one share is skipped
 rescan ≔ the candidates of the day are offered again on every iteration to the close
-market ≔ US stocks clearing the universe floors on market cap, share price, and daily turnover
+market ≔ US stocks clearing the screen floors on share price and daily turnover
 sorting ≔ last completed session close · volume, highest first, when candidates exceed room
 position size ≔ the position fraction cap of account
 ```
@@ -129,7 +129,7 @@ exit
 | stop     | highest close since entry − its ATR multiple · ATR                           | entry − its ATR multiple · ATR, then highest close since entry − the same |
 
 ```text:surface
-market state ≔ SPX > SMA(average sessions) · direction ≔ long
+market state ≔ the benchmark symbol > SMA(average sessions) · direction ≔ long
 
 entry
     window ≔ market open to close, rescan
@@ -173,7 +173,7 @@ cron:export[the export interval]()
           configuration, events capped}
 
 backtest(strategy, symbols, start, end)
-    universe ≔ the given symbols
+    market ≔ the given symbols
     quote ≔ vendor[broker] minute bars after the warm-up for breakout · Yahoo daily bars for daily
     past ≔ as when trading, bounded by the engine clock
     budget ≔ the backtest budget · benchmark ≔ the benchmark symbol
@@ -185,7 +185,7 @@ report(strategy, symbols, start, end) → runs/{strategy}-{start}-{end}/
 - the book reads live through vendor[engine]; the engine answers from vendor[broker] when trading and from its simulation when replaying
 - listing is the one live read outside the engine; a replay lists every given symbol
 - every past read is bounded by the engine clock, never the wall clock
-- a replay's universe is its given symbols; the screen never runs inside a replay
+- a replay's market is its given symbols; the screen never runs inside a replay
 - a live-wire field is never read off an engine entity
 
 # web
@@ -219,7 +219,7 @@ GET  /api/levels           past · symbol, strategy, side, entry, opened → ope
 - vendor[host] runs one project of two services: web serves the dashboard, bot runs the trader
 - the bot reaches web over the project's private endpoint
 - web is healthy when `/healthz` answers
-- deploying sets every variable a service reads, then ships both services at one revision
+- deploying sets every secret a service reads, then ships both services at one revision
 
 ---
 
