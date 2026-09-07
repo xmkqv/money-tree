@@ -35,9 +35,8 @@ stocks_adapter = TypeAdapter(list[Stock])
 
 
 def stocks() -> frozenset[str]:
-    payload = _get("/stock/symbol", {"exchange": "US"})
-    listed = stocks_adapter.validate_python(payload)
-    return frozenset(stock.symbol for stock in listed if stock.type == COMMON_STOCK)
+    payload = stocks_adapter.validate_python(_get("/stock/symbol", {"exchange": "US"}))
+    return frozenset(stock.symbol for stock in payload if stock.type == COMMON_STOCK)
 
 
 def earnings_dates(start: date, end: date) -> dict[str, date]:
