@@ -54,7 +54,7 @@ class RiskSection(SettingsSection):
     fractional_orders: bool
 
     @model_validator(mode="after")
-    def validate_limits(self) -> Self:
+    def check_limits(self) -> Self:
         if self.per_trade_max > self.per_day_max:
             raise ValueError("risk per trade must not exceed risk per day")
         return self
@@ -99,7 +99,7 @@ class BacktestSection(SettingsSection):
     end_at: datetime
 
     @model_validator(mode="after")
-    def validate_span(self) -> Self:
+    def check_span(self) -> Self:
         if self.end_at <= self.start_at:
             raise ValueError("backtest end must follow its start")
         return self
@@ -202,7 +202,7 @@ class DashboardSection(SettingsSection):
     pulse_poll_seconds: Count
 
     @model_validator(mode="after")
-    def validate_chart_timeframes(self) -> Self:
+    def check_chart_timeframes(self) -> Self:
         if set(self.chart_timeframes) != set(CHART_TIMEFRAMES):
             raise ValueError(f"chart timeframes must be {', '.join(CHART_TIMEFRAMES)}")
         return self
