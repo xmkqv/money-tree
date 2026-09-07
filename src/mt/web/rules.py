@@ -285,7 +285,7 @@ def _breakout_rows(
             f"true range. At least {breakout.trail_bars_min} completed {minutes}-minute "
             "candles "
             "must be available. Prior sessions count towards that total, so the trade "
-            "normally starts with enough. The level rests as a resting order at the broker. It "
+            "normally starts with enough. The level rests as an order at the broker. It "
             "is replaced whenever it moves, and re-sent if it stops covering the whole "
             "position. A level the market has already reached cannot rest as an order. When "
             "the stop lands at or beyond the last price, the whole position is closed at "
