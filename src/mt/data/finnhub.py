@@ -17,7 +17,7 @@ class _Payload(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True)
 
 
-class Listing(_Payload):
+class Stock(_Payload):
     symbol: str
     type: str
 
@@ -31,13 +31,13 @@ class _Calendar(_Payload):
     releases: list[Release] = Field(alias="earningsCalendar")
 
 
-listings_adapter = TypeAdapter(list[Listing])
+stocks_adapter = TypeAdapter(list[Stock])
 
 
 def stocks() -> frozenset[str]:
     payload = _get("/stock/symbol", {"exchange": "US"})
-    listings = listings_adapter.validate_python(payload)
-    return frozenset(listing.symbol for listing in listings if listing.type == COMMON_STOCK)
+    listed = stocks_adapter.validate_python(payload)
+    return frozenset(stock.symbol for stock in listed if stock.type == COMMON_STOCK)
 
 
 def earnings_dates(start: date, end: date) -> dict[str, date]:
