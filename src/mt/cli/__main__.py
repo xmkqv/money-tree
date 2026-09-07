@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from mt.config.services import SERVICE_SETTINGS, ServiceName, service_keys
 from mt.config.settings import settings
-from mt.strategies.keys import STRATEGY_KEYS, StrategyKey, strategy_selection
+from mt.strategies.keys import STRATEGY_KEYS, StrategyKey, strategy_selection_adapter
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -34,7 +34,7 @@ def _parse_symbols(value: str) -> list[str]:
 
 def _parse_strategies(value: str) -> list[StrategyKey]:
     try:
-        return list(strategy_selection.validate_python(value))
+        return list(strategy_selection_adapter.validate_python(value))
     except ValidationError as error:
         names = ", ".join(sorted(STRATEGY_KEYS))
         raise typer.BadParameter(f"strategies must be unique keys from: {names}") from error

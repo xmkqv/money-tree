@@ -13,7 +13,7 @@ def run(strategy_keys: list[StrategyKey]) -> None:
 
     from .portfolio import Portfolio
 
-    paused: list[StrategyKey] = [name for name in strategy_keys if strategy_class(name).is_paused]
+    paused: list[StrategyKey] = [key for key in strategy_keys if strategy_class(key).is_paused]
     exporter = StateExporter(
         str(settings.export.url),
         settings.export.secret.get_secret_value(),

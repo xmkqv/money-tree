@@ -34,4 +34,4 @@ type StrategySelection = Annotated[
     Field(min_length=1),
 ]
 
-strategy_selection: TypeAdapter[tuple[StrategyKey, ...]] = TypeAdapter(StrategySelection)
+strategy_selection_adapter: TypeAdapter[tuple[StrategyKey, ...]] = TypeAdapter(StrategySelection)
