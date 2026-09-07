@@ -20,8 +20,8 @@ SERVICE_SETTINGS: dict[ServiceName, tuple[type[BaseSettings], ...]] = {
 
 def secret_keys() -> set[str]:
     path = Path(environ["MISE_PROJECT_ROOT"]) / f"mise.{environ['MISE_ENV']}.toml"
-    declared: dict[str, object] = loads(path.read_text())["env"]
-    return {key for key, value in declared.items() if value == ""}
+    declared: dict[str, str] = loads(path.read_text())["vars"]
+    return set(declared["secrets"].split())
 
 
 def iter_keys(model: type[BaseModel], prefix: str) -> Iterator[str]:

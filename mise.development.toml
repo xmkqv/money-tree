@@ -1,17 +1,15 @@
+[vars]
+secrets = """
+BROKER__API_KEY
+BROKER__API_SECRET
+FINNHUB__API_KEY
+WEB__SESSION_SECRET
+EXPORT__SECRET
+"""
+
 [env]
 PORT = "8000"
 WEB__BASE_URL = "http://127.0.0.1:8000"
 EXPORT__URL = "http://127.0.0.1:8000/internal/state"
-
-## broker
-BROKER__API_KEY = ""
-BROKER__API_SECRET = ""
-FINNHUB__API_KEY = ""
-
-## web
-WEB__SESSION_SECRET = ""
-
-## export
-EXPORT__SECRET = ""
 
 _.file = { path = ".env.development", redact = true }
