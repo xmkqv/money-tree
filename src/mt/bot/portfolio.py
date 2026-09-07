@@ -74,7 +74,7 @@ class Portfolio(LumibotStrategy):
         self._baseline_equity = 0.0
         self._locked_on: date | None = None
         self._daily_frames: dict[str, DataFrame] = {}
-        self._eligible_symbols: list[str] = []
+        self._market_symbols: list[str] = []
         self._prepared_on: date | None = None
         self._preparation_attempts = 0
         self._preparation_attempts_on: date | None = None
@@ -144,14 +144,14 @@ class Portfolio(LumibotStrategy):
                 ladder.original_quantity = max(ladder.original_quantity, remaining)
             self.protect(holding, remaining)
 
-    def eligible_symbols(self) -> list[str]:
-        return self._eligible_symbols
+    def market_symbols(self) -> list[str]:
+        return self._market_symbols
 
     def daily_frame(self, symbol: str, now: datetime) -> DataFrame | None:
         frame = self._daily_frames.get(symbol)
         return None if frame is None else self._completed(frame, now)
 
-    def market_frame(self, now: datetime) -> DataFrame | None:
+    def benchmark_frame(self, now: datetime) -> DataFrame | None:
         return self.daily_frame(settings.benchmark_symbol, now)
 
     def minute_frames(
@@ -362,11 +362,11 @@ class Portfolio(LumibotStrategy):
             )
         except Exception as error:
             self._daily_frames = {}
-            self._eligible_symbols = []
+            self._market_symbols = []
             self._record("screen.unavailable", "error", f"Stock screen unavailable: {error}")
             return
         self._daily_frames = daily_frames
-        self._eligible_symbols = list(symbols)
+        self._market_symbols = list(symbols)
         self._prepared_on = day
 
     def _screen(self, now: datetime) -> list[str]:

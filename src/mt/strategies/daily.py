@@ -21,7 +21,7 @@ from mt.indicators import (
 from .base import Candidate, Holding, Portfolio, Session, Strategy, ranked
 
 
-def is_market_rising(frame: DataFrame) -> bool:
+def is_benchmark_rising(frame: DataFrame) -> bool:
     close = frame["close"]
     if close.count() < settings.daily.average_sessions:
         return False
@@ -70,7 +70,7 @@ class Daily(Strategy):
     def does_enter(cls, frame: DataFrame) -> bool: ...
 
     @classmethod
-    def is_eligible(cls, frame: DataFrame) -> bool:
+    def does_clear(cls, frame: DataFrame) -> bool:
         return True
 
     def begin(self, day: date) -> None:
@@ -79,13 +79,13 @@ class Daily(Strategy):
 
     def run(self, session: Session) -> None:
         now = session.now
-        market = self.portfolio.market_frame(now)
-        if market is None:
+        benchmark = self.portfolio.benchmark_frame(now)
+        if benchmark is None:
             return
-        if not is_market_rising(market):
+        if not is_benchmark_rising(benchmark):
             self.portfolio.record(
                 self,
-                "market.stalled",
+                "benchmark.stalled",
                 "warning",
                 f"{settings.benchmark_symbol} is not above its "
                 f"{settings.daily.average_sessions}-day average",
@@ -111,7 +111,7 @@ class Daily(Strategy):
         now = session.now
         candidates: list[Candidate] = []
         for symbol, frame in self._ranked(now):
-            if not self.is_eligible(frame) or not self.does_enter(frame):
+            if not self.does_clear(frame) or not self.does_enter(frame):
                 continue
             if self.does_heed_earnings and not self._is_earnings_clear(symbol, now.date()):
                 continue
@@ -123,7 +123,7 @@ class Daily(Strategy):
                 self,
                 f"scan.emptied.{now.date()}",
                 "info",
-                f"{self.name()} found no candidate: no eligible name passed its screen and setup",
+                f"{self.name()} found no candidate: no symbol passed its screen and setup",
             )
         return candidates
 
@@ -152,7 +152,7 @@ class Daily(Strategy):
     def _ranked(self, now: datetime) -> list[tuple[str, DataFrame]]:
         rows = [
             (symbol, frame)
-            for symbol in self.portfolio.eligible_symbols()
+            for symbol in self.portfolio.market_symbols()
             if (frame := self.portfolio.daily_frame(symbol, now)) is not None
         ]
         return ranked(

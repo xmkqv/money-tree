@@ -25,7 +25,7 @@ class DailyTfb(Daily):
     does_heed_earnings = settings.daily_tfb.does_heed_earnings
 
     @classmethod
-    def is_eligible(cls, frame: DataFrame) -> bool:
+    def does_clear(cls, frame: DataFrame) -> bool:
         if frame.empty:
             return False
         if last_close(frame) < settings.screen.price_usd_min:

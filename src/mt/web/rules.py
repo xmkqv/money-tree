@@ -42,7 +42,7 @@ def percent(fraction: float) -> str:
     return f"{text}%"
 
 
-UNIVERSE = (
+MARKET = (
     f"US common stocks screened daily: share price ${settings.screen.price_usd_min:.0f} or "
     f"more, turnover {millions(settings.screen.turnover_usd_min)} or more averaged across the "
     f"last {settings.screen.turnover_sessions} completed sessions, and tradable and "
@@ -57,7 +57,7 @@ class DailyProse:
     confirmation: str
     entry: str
     entry_source: str
-    market: str = UNIVERSE
+    market: str = MARKET
     market_source: str = "portfolio.py · _screen"
     risk_source: str = "portfolio.py · enter"
 
@@ -90,14 +90,14 @@ DAILY_PROSE: dict[StrategyKey, DailyProse] = {
     ),
     "daily_tfb": DailyProse(
         market=(
-            f"{UNIVERSE} This strategy screens that list again on its own floors: share price "
+            f"{MARKET} This strategy screens that list again on its own floors: share price "
             f"${settings.screen.price_usd_min:.0f} or more, and turnover of "
             f"{millions(settings.screen.turnover_usd_min)} or more averaged across the last "
             f"{settings.daily_tfb.turnover_sessions} completed sessions. Turnover here is "
             "the value traded in each session, which is that session's close times its share "
             "volume. A symbol whose sessions cannot be read does not pass."
         ),
-        market_source="portfolio.py · _screen, strategies/daily_tfb.py · is_eligible",
+        market_source="portfolio.py · _screen, strategies/daily_tfb.py · does_clear",
         setup=(
             f"The closing price is above its {settings.daily_tfb.trend_sessions}-day average, "
             f"that average is higher than it was {settings.daily_tfb.average_lag_sessions} "
@@ -110,7 +110,7 @@ DAILY_PROSE: dict[StrategyKey, DailyProse] = {
         entry=(
             "Market buy at the open, then retried every iteration until the close. The "
             "setup is cut from completed sessions, so the day's list is scanned once and "
-            "re-offered. A name that could not be funded at the open is taken later in the "
+            "re-offered. A symbol that could not be funded at the open is taken later in the "
             "day if room frees up. It may have missed out because no slot was left, because "
             "no affordable size was available, or because another strategy held it. Upcoming "
             "earnings do not block an entry for this strategy."
@@ -171,7 +171,7 @@ def _breakout_rows(
         "against. "
         "If fewer are available there is no confirmation, and the breakout is passed over. "
         "The reading is taken at the signal candle's close rather than at the moment the "
-        "scan runs, so a breakout found a pass late is still confirmed on the volume that "
+        "scan runs, so a breakout found on a late pass is still confirmed on the volume that "
         "made it. Each session is measured between its own opening and closing bell, so a "
         "half day is compared as a half day."
     )
@@ -195,7 +195,7 @@ def _breakout_rows(
     )
 
     return [
-        Row(field="Market", value=UNIVERSE, source="portfolio.py · _screen"),
+        Row(field="Market", value=MARKET, source="portfolio.py · _screen"),
         Row(
             field="Sentiment",
             value="None. This strategy takes signals whatever the wider market is doing.",
@@ -390,7 +390,7 @@ def _daily_rows(cls: type[Daily], per_trade: float, closes: datetime) -> list[Ro
                 if cls.does_heed_earnings
                 else "The daily loss limit closes all positions and stops new entries for "
                 "the rest of the day. Earnings do not close a position for this strategy. "
-                "It holds through the report and leaves on its threshold or its exit rule."
+                "It holds through the report and leaves on its stop or its exit rule."
             ),
             source="strategies/daily.py · manage, portfolio.py · _is_daily_loss_reached",
         ),

@@ -174,7 +174,7 @@ class Breakout(Strategy):
         opening_end, scan_end = self.entry_window(session.opens, session.closes)
         if now.minute % self.opening_minutes or not opening_end <= now <= scan_end:
             return
-        if not self.portfolio.eligible_symbols():
+        if not self.portfolio.market_symbols():
             return
         if self.is_capped():
             self.portfolio.record(
@@ -315,7 +315,7 @@ class Breakout(Strategy):
     def _unscanned(self, day: date) -> list[str]:
         return [
             symbol
-            for symbol in self.portfolio.eligible_symbols()
+            for symbol in self.portfolio.market_symbols()
             if symbol not in self._scanned and not self.portfolio.is_taken(self, symbol, day)
         ]
 
