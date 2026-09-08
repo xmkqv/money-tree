@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TypedDict
 
-import httpx
-
 from mt.config.sections import RiskSection
 from mt.config.values import StrategyKey, Symbol
 from mt.data.alpaca import (
@@ -22,7 +20,7 @@ from mt.snapshot import StateSnapshot
 from mt.strategies.order_tag import UNATTRIBUTED, find_order_tag
 
 from .pulse import BotState, PulsePosition, bot_state, pulse_positions
-from .strategies import EntryWindow, entry_windows, strategy_labels
+from .strategies import EntryWindow, StrategyLabel, entry_windows, strategy_labels
 
 
 class FillRow(TypedDict):
@@ -74,10 +72,64 @@ class Day(TypedDict):
     before: float
 
 
+class PositionRow(PulsePosition):
+    strategy: str
+    opened: str
+    inDate: str | None
+    inMinute: int | None
+    fills: list[FillRow]
+
+
+class EquityDay(TypedDict):
+    date: str
+    equity: float
+
+
+class IntradayPoint(TypedDict):
+    t: str
+    equity: float
+
+
+class BenchmarkClose(TypedDict):
+    date: str
+    close: float
+
+
+class Ledger(TypedDict):
+    asOf: str
+    today: str
+    accountNumber: str
+    status: str
+    marketOpen: bool
+    nextOpen: str
+    invested: float
+    funded: str
+    equity: float
+    lastEquity: float
+    cash: float
+    buyingPower: float
+    marketValue: float
+    unrealised: float
+    positionCapPct: float
+    dailyLossLimitPct: float
+    bot: BotState
+    strategies: list[StrategyLabel]
+    windows: dict[str, EntryWindow]
+    positions: list[PositionRow]
+    trades: list[Cycle]
+    days: list[Day]
+    totals: Totals
+    equityDaily: list[EquityDay]
+    intraday: list[IntradayPoint]
+    intradayDate: str
+    benchmarkSymbol: str
+    benchmark: list[BenchmarkClose]
+
+
 @dataclass(slots=True)
 class _Tally:
     direction: int
-    opened: datetime
+    opened_at: datetime
     strategy: StrategyKey | None
     in_quantity: float = 0.0
     in_value: float = 0.0
@@ -86,12 +138,10 @@ class _Tally:
     fills: list[FillRow] = field(default_factory=list[FillRow])
 
 
-EPSILON = 1e-9
-
-
 def match_cycles(
     fills: list[Fill],
     orders: list[ClosedOrder],
+    flat_quantity_max: float,
 ) -> tuple[list[Cycle], dict[str, OpenCycle]]:
     strategies: dict[str, StrategyKey | None] = {
         order.id: _order_strategy(order.client_order_id or "") for order in orders
@@ -112,7 +162,7 @@ def match_cycles(
         if cycle is None:
             cycle = tallies[symbol] = _Tally(
                 direction=1 if signed > 0 else -1,
-                opened=when,
+                opened_at=when,
                 strategy=strategies.get(fill.order_id),
             )
 
@@ -135,7 +185,7 @@ def match_cycles(
             cycle.out_quantity += quantity
             cycle.out_value += quantity * price
 
-        if abs(held[symbol]) > EPSILON:
+        if abs(held[symbol]) > flat_quantity_max:
             continue
 
         cycles.append(
@@ -149,9 +199,9 @@ def match_cycles(
                 pnl=round((cycle.out_value - cycle.in_value) * cycle.direction, 2),
                 date=when.date().isoformat(),
                 minute=_clock_minute(when),
-                inDate=cycle.opened.date().isoformat(),
-                inMinute=_clock_minute(cycle.opened),
-                heldMin=max(0, int((when - cycle.opened).total_seconds() // 60)),
+                inDate=cycle.opened_at.date().isoformat(),
+                inMinute=_clock_minute(cycle.opened_at),
+                heldMin=max(0, int((when - cycle.opened_at).total_seconds() // 60)),
                 fills=cycle.fills,
             )
         )
@@ -160,9 +210,9 @@ def match_cycles(
     still_open = {
         symbol: OpenCycle(
             strategy=cycle.strategy or UNATTRIBUTED,
-            opened=f"{cycle.opened:%-d %b}",
-            inDate=cycle.opened.date().isoformat(),
-            inMinute=_clock_minute(cycle.opened),
+            opened=f"{cycle.opened_at:%-d %b}",
+            inDate=cycle.opened_at.date().isoformat(),
+            inMinute=_clock_minute(cycle.opened_at),
             fills=cycle.fills,
         )
         for symbol, cycle in tallies.items()
@@ -218,65 +268,12 @@ def _clock_minute(when: datetime) -> int:
     return when.hour * 60 + when.minute
 
 
-class PositionRow(PulsePosition):
-    strategy: str
-    opened: str
-    inDate: str | None
-    inMinute: int | None
-    fills: list[FillRow]
-
-
-class EquityDay(TypedDict):
-    date: str
-    equity: float
-
-
-class IntradayPoint(TypedDict):
-    t: str
-    equity: float
-
-
-class BenchmarkClose(TypedDict):
-    date: str
-    close: float
-
-
-class Ledger(TypedDict):
-    asOf: str
-    today: str
-    accountNumber: str
-    status: str
-    marketOpen: bool
-    nextOpen: str
-    invested: float
-    funded: str
-    equity: float
-    lastEquity: float
-    cash: float
-    buyingPower: float
-    marketValue: float
-    unrealised: float
-    positionCapPct: float
-    dailyLossLimitPct: float
-    bot: BotState
-    strategies: list[dict[str, str]]
-    windows: dict[str, EntryWindow]
-    positions: list[PositionRow]
-    trades: list[Cycle]
-    days: list[Day]
-    totals: Totals
-    equityDaily: list[EquityDay]
-    intraday: list[IntradayPoint]
-    intradayDate: str
-    benchmarkSymbol: str
-    benchmark: list[BenchmarkClose]
-
-
 async def build_ledger(
     live: AlpacaLiveClient,
     past: AlpacaPastClient,
     benchmark: Symbol,
     fallback_configuration: RiskSection,
+    flat_quantity_max: float,
     snapshot: StateSnapshot | None,
     stale: bool,
 ) -> Ledger:
@@ -293,7 +290,7 @@ async def build_ledger(
     positions = positions_read.result()
     clock = clock_read.result()
 
-    cycles, open_cycles = match_cycles(fills_read.result(), orders_read.result())
+    cycles, open_cycles = match_cycles(fills_read.result(), orders_read.result(), flat_quantity_max)
     equity_daily = _equity_series(daily_read.result())
     intraday_points, intraday_date = _intraday_series(intraday_read.result())
 
@@ -310,10 +307,7 @@ async def build_ledger(
     configuration = snapshot.configuration if snapshot else fallback_configuration
     benchmark_start = funded or today
 
-    try:
-        bars = await past.daily_bars(benchmark, benchmark_start)
-    except httpx.HTTPError:
-        bars = []
+    bars = await past.daily_bars(benchmark, benchmark_start)
 
     return Ledger(
         asOf=datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
@@ -347,27 +341,25 @@ async def build_ledger(
     )
 
 
-def _funded_points(points: list[EquityPoint]) -> list[tuple[datetime, float]]:
+def _zoned_points(points: list[EquityPoint]) -> list[tuple[datetime, float]]:
     return [
-        (datetime.fromtimestamp(point.timestamp, TRADING_ZONE), point.equity)
-        for point in points
-        if point.equity
+        (datetime.fromtimestamp(point.timestamp, TRADING_ZONE), point.equity) for point in points
     ]
 
 
 def _equity_series(points: list[EquityPoint]) -> list[EquityDay]:
     return [
         EquityDay(date=when.date().isoformat(), equity=round(value, 2))
-        for when, value in _funded_points(points)
+        for when, value in _zoned_points(points)
     ]
 
 
 def _intraday_series(points: list[EquityPoint]) -> tuple[list[IntradayPoint], str]:
-    funded = _funded_points(points)
+    zoned = _zoned_points(points)
     rows = [
-        IntradayPoint(t=when.strftime("%H:%M"), equity=round(value, 2)) for when, value in funded
+        IntradayPoint(t=when.strftime("%H:%M"), equity=round(value, 2)) for when, value in zoned
     ]
-    return rows, funded[0][0].date().isoformat() if funded else ""
+    return rows, zoned[0][0].date().isoformat() if zoned else ""
 
 
 def _position_rows(

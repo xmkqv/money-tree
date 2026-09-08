@@ -27,28 +27,23 @@ from .cache import Cache
 from .ledger import Ledger, build_ledger
 from .levels import Levels, add_breakout_levels, opening_range
 from .pulse import Pulse, bot_state, build_pulse
-from .state import STATE_SIGNATURE_ENVELOPE_BYTES, StateStore
+from .state import StateStore
 from .strategies import strategy_rules
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
-DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.html").read_bytes()
-ASSET_MEDIA_TYPES = {
-    "dashboard.css": "text/css",
-    "dashboard.js": "text/javascript",
-    "theme.js": "text/javascript",
-    "favicon.svg": "image/svg+xml",
+ASSET_NAMES = ("dashboard.css", "dashboard.js", "theme.js", "favicon.svg")
+ASSET_ROUTES = {
+    f"{path.stem}.{hashlib.sha256(path.read_bytes()).hexdigest()[:12]}{path.suffix}": path
+    for path in (ASSET_DIRECTORY / name for name in ASSET_NAMES)
 }
+ASSET_REWRITES = {
+    f"/assets/{path.name}".encode(): f"/assets/{served}".encode()
+    for served, path in ASSET_ROUTES.items()
+}
+DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.html").read_bytes()
 NO_STORE = {"Cache-Control": "no-store"}
-
-
 IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
-
-
-LEDGER_KEY = "ledger"
-PULSE_KEY = "pulse"
-
-
 DASHBOARD_HEADERS = {
     "Cache-Control": "private, no-cache",
     "Content-Security-Policy": (
@@ -58,6 +53,8 @@ DASHBOARD_HEADERS = {
         "object-src 'none'; base-uri 'none'; frame-ancestors 'none'"
     ),
 }
+LEDGER_KEY = "ledger"
+PULSE_KEY = "pulse"
 
 
 def error_response(
@@ -92,7 +89,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
     heartbeat_timeout = timedelta(seconds=configuration.web.heartbeat_timeout_seconds)
     signature_window_seconds = configuration.web.signature_window_seconds
     state_body_bytes_max = configuration.web.state_body_bytes_max
-    state_request_bytes_max = state_body_bytes_max + STATE_SIGNATURE_ENVELOPE_BYTES
+    state_request_bytes_max = state_body_bytes_max + len(signer.sign(b""))
 
     ledger_cache = Cache[Ledger](dashboard_section.ledger_ttl_seconds)
     pulse_cache = Cache[Pulse](dashboard_section.pulse_ttl_seconds)
@@ -119,11 +116,10 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
 
     @router.get("/assets/{filename}")
     async def asset(filename: str) -> Response:
-        served = ASSET_ROUTES.get(filename)
-        if served is None:
+        path = ASSET_ROUTES.get(filename)
+        if path is None:
             return error_response("Asset was not found", 404)
-        path, media_type = served
-        return FileResponse(path, media_type=media_type, headers=IMMUTABLE)
+        return FileResponse(path, headers=IMMUTABLE)
 
     @router.get("/api/session")
     async def session(request: Request) -> JSONResponse:
@@ -157,40 +153,30 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
 
         rules = dashboard_section.chart_timeframes[timeframe]
         start, display, end = chart_window(rules, opened_on, closed_on)
+
+        async def build() -> list[BarRow]:
+            if timeframe == "1Hour":
+                half = await past(request).bars(
+                    symbol,
+                    dashboard_section.session_source,
+                    start.isoformat(),
+                    end.isoformat(),
+                    limit=dashboard_section.session_source_bars_max,
+                    pages_max=dashboard_section.session_source_pages_max,
+                )
+                return session_hour_bars(half)
+            read = await past(request).bars(symbol, timeframe, start.isoformat(), end.isoformat())
+            return [bar_row(bar) for bar in read]
+
         key = f"{symbol}|{timeframe}|{start.isoformat()}|{end.isoformat()}"
-        cached = bar_cache.fresh(key)
-        if cached is None:
-            async with bar_cache.lock:
-                cached = bar_cache.fresh(key)
-                if cached is None:
-                    if timeframe == "1Hour":
-                        half = await past(request).bars(
-                            symbol,
-                            dashboard_section.session_source,
-                            start.isoformat(),
-                            end.isoformat(),
-                            limit=dashboard_section.session_source_bars_max,
-                            pages_max=dashboard_section.session_source_pages_max,
-                        )
-                        cached = session_hour_bars(half)
-                    else:
-                        cached = [
-                            bar_row(bar)
-                            for bar in await past(request).bars(
-                                symbol,
-                                timeframe,
-                                start.isoformat(),
-                                end.isoformat(),
-                            )
-                        ]
-                    bar_cache.store(key, cached)
+        rows = await bar_cache.get_or_build(key, build)
         return read_response(
             {
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "displayFrom": display.isoformat(),
                 "smaLengths": list(dashboard_section.sma_lengths),
-                "bars": cached,
+                "bars": rows,
             },
             dashboard_section.chart_max_age_seconds,
         )
@@ -209,21 +195,14 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         except ValueError:
             return error_response("The open date is invalid", 422)
 
-        key = f"levels|{symbol}|{strategy}|{side}|{entry}|{opened}"
-        cached = levels_cache.fresh(key)
-        if cached is not None:
-            return read_response(cached, dashboard_section.levels_max_age_seconds)
-
-        direction: Direction = 1 if side == "long" else -1
-        payload = Levels(strategy=strategy, reconstructed=True)
-        bounds = session_bounds(opened_on)
-        found_class = strategy_class(strategy) if is_strategy_key(strategy) else None
-
-        async with levels_cache.lock:
+        async def build() -> Levels:
+            direction: Direction = 1 if side == "long" else -1
+            payload = Levels(strategy=strategy, reconstructed=True)
+            bounds = session_bounds(opened_on)
+            found_class = strategy_class(strategy) if is_strategy_key(strategy) else None
             if found_class is not None and issubclass(found_class, Breakout) and bounds:
-                breakout = found_class
                 opens = bounds[0]
-                minutes = breakout.opening_minutes
+                minutes = found_class.opening_minutes
                 span = dashboard_section.levels_range_multiple * minutes
                 opening_bars = await past(request).bars(
                     symbol,
@@ -234,7 +213,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 )
                 found = opening_range(opening_bars, opens, minutes)
                 if found is not None:
-                    add_breakout_levels(payload, breakout, direction, entry, *found)
+                    add_breakout_levels(payload, found_class, direction, entry, *found)
             elif found_class is not None and issubclass(found_class, Daily):
                 past_bars = await past(request).bars(
                     symbol,
@@ -248,7 +227,10 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                     distance = found_class.stop_atr_multiple * average_range
                     payload["stop"] = round(entry - direction * distance, 4)
                     payload["atr"] = round(average_range, 4)
-            levels_cache.store(key, payload)
+            return payload
+
+        key = f"levels|{symbol}|{strategy}|{side}|{entry}|{opened}"
+        payload = await levels_cache.get_or_build(key, build)
         return read_response(payload, dashboard_section.levels_max_age_seconds)
 
     @router.get("/api/strategies")
@@ -264,20 +246,18 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
     @router.get("/api/ledger")
     async def ledger(request: Request) -> JSONResponse:
         snapshot, stale = read_state()
-        cached = ledger_cache.fresh(LEDGER_KEY)
-        if cached is None:
-            async with ledger_cache.lock:
-                cached = ledger_cache.fresh(LEDGER_KEY)
-                if cached is None:
-                    cached = await build_ledger(
-                        live(request),
-                        past(request),
-                        benchmark_symbol,
-                        configuration.risk,
-                        snapshot,
-                        stale,
-                    )
-                    ledger_cache.store(LEDGER_KEY, cached)
+        cached = await ledger_cache.get_or_build(
+            LEDGER_KEY,
+            lambda: build_ledger(
+                live(request),
+                past(request),
+                benchmark_symbol,
+                configuration.risk,
+                dashboard_section.flat_quantity_max,
+                snapshot,
+                stale,
+            ),
+        )
         return read_response(
             {**cached, "bot": bot_state(snapshot, stale)},
             dashboard_section.ledger_max_age_seconds,
@@ -285,13 +265,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
 
     @router.get("/api/pulse")
     async def pulse(request: Request) -> JSONResponse:
-        cached = pulse_cache.fresh(PULSE_KEY)
-        if cached is None:
-            async with pulse_cache.lock:
-                cached = pulse_cache.fresh(PULSE_KEY)
-                if cached is None:
-                    cached = await build_pulse(live(request))
-                    pulse_cache.store(PULSE_KEY, cached)
+        cached = await pulse_cache.get_or_build(PULSE_KEY, lambda: build_pulse(live(request)))
 
         held = ledger_cache.fresh(LEDGER_KEY)
         if held is not None and {row["symbol"] for row in held["positions"]} != {
@@ -334,18 +308,3 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         return Response(status_code=204, headers=NO_STORE)
 
     return router
-
-
-def _fingerprint_assets() -> tuple[dict[str, tuple[Path, str]], dict[bytes, bytes]]:
-    routes: dict[str, tuple[Path, str]] = {}
-    rewrites: dict[bytes, bytes] = {}
-    for name, media_type in ASSET_MEDIA_TYPES.items():
-        path = ASSET_DIRECTORY / name
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()[:12]
-        served = f"{path.stem}.{digest}{path.suffix}"
-        routes[served] = (path, media_type)
-        rewrites[f"/assets/{name}".encode()] = f"/assets/{served}".encode()
-    return routes, rewrites
-
-
-ASSET_ROUTES, ASSET_REWRITES = _fingerprint_assets()

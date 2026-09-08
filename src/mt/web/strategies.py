@@ -18,6 +18,12 @@ class StrategyCard(TypedDict):
     rows: list[Row]
 
 
+class StrategyLabel(TypedDict):
+    id: str
+    short: str
+    label: str
+
+
 class StrategyRules(TypedDict):
     fields: list[str]
     strategies: list[StrategyCard]
@@ -33,17 +39,13 @@ def entry_windows() -> dict[str, EntryWindow]:
     return {cls.key: _window(*cls.entry_window(opens, closes)) for cls in STRATEGIES}
 
 
-def strategy_labels() -> list[dict[str, str]]:
+def strategy_labels() -> list[StrategyLabel]:
     labels = [
-        {"id": cls.key, "short": cls.name(), "label": f"{cls.name()} · {KINDS[cls.family]}"}
+        StrategyLabel(id=cls.key, short=cls.name(), label=f"{cls.name()} · {KINDS[cls.family]}")
         for cls in STRATEGIES
     ]
     labels.append(
-        {
-            "id": UNATTRIBUTED,
-            "short": "Untagged",
-            "label": f"No {ORDER_TAG_PREFIX}- order tag",
-        }
+        StrategyLabel(id=UNATTRIBUTED, short="Untagged", label=f"No {ORDER_TAG_PREFIX}- order tag")
     )
     return labels
 

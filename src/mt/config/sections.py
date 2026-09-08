@@ -194,6 +194,7 @@ class DashboardSection(SettingsSection):
     session_source_pages_max: Count
     page_rows_max: Count
     pages_max: Count
+    flat_quantity_max: Amount
     sma_lengths: tuple[int, ...] = Field(min_length=1)
     ledger_max_age_seconds: MaxAge
     chart_max_age_seconds: MaxAge

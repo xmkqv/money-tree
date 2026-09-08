@@ -1,9 +1,6 @@
 from mt.snapshot import StateSnapshot
 
 
-STATE_SIGNATURE_ENVELOPE_BYTES = 51
-
-
 class StateStore:
     def __init__(self) -> None:
         self._snapshot: StateSnapshot | None = None

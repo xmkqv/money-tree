@@ -1,6 +1,7 @@
 import asyncio
 import time
 from collections import OrderedDict
+from collections.abc import Awaitable, Callable
 
 
 class Cache[Value]:
@@ -9,6 +10,17 @@ class Cache[Value]:
         self._entries_max = entries_max
         self._entries: OrderedDict[str, tuple[float, Value]] = OrderedDict()
         self._lock = asyncio.Lock()
+
+    async def get_or_build(self, key: str, build: Callable[[], Awaitable[Value]]) -> Value:
+        value = self.fresh(key)
+        if value is not None:
+            return value
+        async with self._lock:
+            value = self.fresh(key)
+            if value is None:
+                value = await build()
+                self.store(key, value)
+        return value
 
     def fresh(self, key: str) -> Value | None:
         entry = self._entries.get(key)
@@ -25,7 +37,3 @@ class Cache[Value]:
 
     def drop(self, key: str) -> None:
         self._entries.pop(key, None)
-
-    @property
-    def lock(self) -> asyncio.Lock:
-        return self._lock
