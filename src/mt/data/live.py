@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
 from alpaca.common.enums import Sort
@@ -9,10 +10,14 @@ from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest
 from mt.config.settings import settings
 
 
-class Live(Protocol):
-    def is_shortable(self, symbol: str) -> bool: ...
+@dataclass(frozen=True, slots=True)
+class Listing:
+    symbols: frozenset[str]
+    shorts: frozenset[str]
 
-    def listing(self) -> frozenset[str]: ...
+
+class Live(Protocol):
+    def listing(self) -> Listing: ...
 
     def positions(self) -> list[Position]: ...
 
@@ -27,15 +32,16 @@ class BrokerLive:
             paper=settings.broker.mode == "paper",
         )
 
-    def is_shortable(self, symbol: str) -> bool:
-        return bool(cast(Any, self._api.get_asset(symbol)).shortable)
-
-    def listing(self) -> frozenset[str]:
+    def listing(self) -> Listing:
         request = GetAssetsRequest(asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE)
-        return frozenset(
-            str(asset.symbol)
+        assets = [
+            asset
             for asset in cast(list[Any], self._api.get_all_assets(request))
             if bool(asset.tradable) and bool(asset.fractionable)
+        ]
+        return Listing(
+            frozenset(str(asset.symbol) for asset in assets),
+            frozenset(str(asset.symbol) for asset in assets if bool(asset.shortable)),
         )
 
     def positions(self) -> list[Position]:
@@ -55,11 +61,8 @@ class EngineLive:
     def __init__(self, symbols: list[str]) -> None:
         self._listing = frozenset(symbols)
 
-    def is_shortable(self, symbol: str) -> bool:
-        return symbol in self._listing
-
-    def listing(self) -> frozenset[str]:
-        return self._listing
+    def listing(self) -> Listing:
+        return Listing(self._listing, self._listing)
 
     def positions(self) -> list[Position]:
         return []

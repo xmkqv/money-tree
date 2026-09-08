@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -111,10 +112,8 @@ class AlpacaLiveClient:
         return Clock.model_validate(await self._get("/v2/clock"))
 
     async def fills(self, after: str | None = None) -> list[Fill]:
-        collected: list[Fill] = []
-        token: str | None = None
-        for _ in range(self._pages_max):
-            page = fills_adapter.validate_python(
+        async def read(token: str | None) -> list[Fill]:
+            return fills_adapter.validate_python(
                 await self._get(
                     "/v2/account/activities",
                     {
@@ -126,20 +125,12 @@ class AlpacaLiveClient:
                     },
                 )
             )
-            if not page:
-                break
-            collected.extend(page)
-            token = page[-1].id
-            if len(page) < self._page_rows_max:
-                break
-        return collected
+
+        return await self._pages(read, lambda fill: fill.id)
 
     async def closed_orders(self, after: str | None = None) -> list[ClosedOrder]:
-        collected: list[ClosedOrder] = []
-        seen: set[str] = set()
-        until: str | None = None
-        for _ in range(self._pages_max):
-            page = closed_orders_adapter.validate_python(
+        async def read(until: str | None) -> list[ClosedOrder]:
+            return closed_orders_adapter.validate_python(
                 await self._get(
                     "/v2/orders",
                     {
@@ -151,15 +142,9 @@ class AlpacaLiveClient:
                     },
                 )
             )
-            fresh = [order for order in page if order.id not in seen]
-            if not fresh:
-                break
-            collected.extend(fresh)
-            seen.update(order.id for order in fresh)
-            until = page[-1].submitted_at
-            if len(page) < self._page_rows_max:
-                break
-        return collected
+
+        orders = await self._pages(read, lambda order: order.submitted_at)
+        return list({order.id: order for order in orders}.values())
 
     async def equity(self, period: str, timeframe: str) -> list[EquityPoint]:
         params: dict[str, object] = {"period": period, "timeframe": timeframe}
@@ -173,6 +158,21 @@ class AlpacaLiveClient:
             for timestamp, equity in zip(history.timestamp, history.equity, strict=True)
             if equity
         ]
+
+    async def _pages[Row](
+        self,
+        read: Callable[[str | None], Awaitable[list[Row]]],
+        cursor: Callable[[Row], str],
+    ) -> list[Row]:
+        collected: list[Row] = []
+        token: str | None = None
+        for _ in range(self._pages_max):
+            page = await read(token)
+            collected.extend(page)
+            if len(page) < self._page_rows_max:
+                break
+            token = cursor(page[-1])
+        return collected
 
     async def _get(self, path: str, params: dict[str, object] | None = None) -> Any:
         query = {key: str(value) for key, value in (params or {}).items() if value is not None}

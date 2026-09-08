@@ -4,11 +4,11 @@ from typing import Any, cast
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
-from alpaca.data.timeframe import TimeFrame
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from pandas import DataFrame
 
 from mt.config.settings import settings
-from mt.config.values import DataFeedName
+from mt.config.values import DataFeedName, Timeframe
 from mt.frames import normalize_ohlcv
 
 
@@ -22,7 +22,7 @@ class Past:
     def bars(
         self,
         symbols: list[str],
-        timeframe: TimeFrame,
+        timeframe: Timeframe,
         start: datetime,
         end: datetime,
         feed: DataFeedName,
@@ -34,7 +34,7 @@ class Past:
                 symbol_or_symbols=symbols[offset : offset + page],
                 start=start.astimezone(UTC),
                 end=end.astimezone(UTC),
-                timeframe=timeframe,
+                timeframe=_timeframe(timeframe),
                 adjustment=Adjustment.ALL,
                 feed=DataFeed(feed),
             )
@@ -52,3 +52,8 @@ class Past:
                     raise TypeError(f"bars for {symbol} are not a frame")
                 frames[symbol] = normalize_ohlcv(frame, {"high", "low", "close", "volume"})
         return frames
+
+
+def _timeframe(value: Timeframe) -> TimeFrame:
+    unit = value.lstrip("0123456789")
+    return TimeFrame(int(value.removesuffix(unit)), TimeFrameUnit(unit))

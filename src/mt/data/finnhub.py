@@ -10,7 +10,12 @@ from .http import Payload, http_timeout
 
 API_URL = "https://finnhub.io/api/v1"
 COMMON_STOCK = "Common Stock"
-TIMEOUT = http_timeout(settings.finnhub.timeout)
+CLIENT = httpx.Client(
+    base_url=API_URL,
+    timeout=http_timeout(settings.finnhub.timeout),
+    follow_redirects=True,
+    headers={"X-Finnhub-Token": settings.finnhub.api_key.get_secret_value()},
+)
 
 
 class Stock(Payload):
@@ -47,8 +52,6 @@ def earnings_dates(start: date, end: date) -> dict[str, date]:
 
 
 def _get(path: str, params: dict[str, str]) -> object:
-    token = settings.finnhub.api_key.get_secret_value()
-    with httpx.Client(base_url=API_URL, timeout=TIMEOUT, follow_redirects=True) as client:
-        response = client.get(path, params=params, headers={"X-Finnhub-Token": token})
-        response.raise_for_status()
-        return response.json()
+    response = CLIENT.get(path, params=params)
+    response.raise_for_status()
+    return response.json()

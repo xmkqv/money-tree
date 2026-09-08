@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, cast
 
-from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from lumibot.strategies import Strategy as LumibotStrategy
 from pandas import DataFrame, DatetimeIndex
 
@@ -72,6 +71,7 @@ class Portfolio(LumibotStrategy):
         self._locked_at: date | None = None
         self._daily_frames: dict[str, DataFrame] = {}
         self._market_symbols: list[str] = []
+        self._shorts: frozenset[str] = frozenset()
         self._prepared_at: date | None = None
         self._preparation_attempts = 0
         self._preparation_attempts_at: date | None = None
@@ -154,8 +154,7 @@ class Portfolio(LumibotStrategy):
     def minute_frames(
         self, symbols: list[str], start: datetime, now: datetime, minutes: int
     ) -> dict[str, DataFrame]:
-        timeframe = TimeFrame(minutes, cast(TimeFrameUnit, TimeFrameUnit.Minute))
-        frames = self.past.bars(symbols, timeframe, start, now, settings.past.intraday_feed)
+        frames = self.past.bars(symbols, f"{minutes}Min", start, now, settings.past.intraday_feed)
         return {symbol: self._completed(frame, now, minutes) for symbol, frame in frames.items()}
 
     def last_price(self, symbol: str) -> float:
@@ -345,16 +344,11 @@ class Portfolio(LumibotStrategy):
         first = day - timedelta(days=settings.portfolio.past_days)
         start = datetime.combine(first, time(), TRADING_ZONE)
         try:
-            symbols = self._given or self._screen(now)
+            listing = self.live.listing()
+            symbols = self._given or self._screen(now, listing.symbols)
             held = set(self._holdings)
             requested = sorted(set(symbols).union({settings.benchmark_symbol}, held))
-            daily_frames = self.past.bars(
-                requested,
-                cast(TimeFrame, TimeFrame.Day),
-                start,
-                now,
-                settings.past.daily_feed,
-            )
+            daily_frames = self.past.bars(requested, "1Day", start, now, settings.past.daily_feed)
         except Exception as error:
             self._daily_frames = {}
             self._market_symbols = []
@@ -362,19 +356,14 @@ class Portfolio(LumibotStrategy):
             return
         self._daily_frames = daily_frames
         self._market_symbols = list(symbols)
+        self._shorts = listing.shorts
         self._prepared_at = day
 
-    def _screen(self, now: datetime) -> list[str]:
-        symbols = sorted(self.live.listing() & stocks())
+    def _screen(self, now: datetime, listing: frozenset[str]) -> list[str]:
+        symbols = sorted(listing & stocks())
         first = now.date() - timedelta(days=settings.screen.past_days)
         start = datetime.combine(first, time(), TRADING_ZONE)
-        frames = self.past.bars(
-            symbols,
-            cast(TimeFrame, TimeFrame.Day),
-            start,
-            now,
-            settings.past.daily_feed,
-        )
+        frames = self.past.bars(symbols, "1Day", start, now, settings.past.daily_feed)
         return sorted(symbol for symbol, frame in frames.items() if self._does_clear(frame, now))
 
     def _does_clear(self, frame: DataFrame, now: datetime) -> bool:
@@ -404,7 +393,7 @@ class Portfolio(LumibotStrategy):
             or direction * (price - stop) <= 0
         ):
             return False
-        if direction == -1 and not self.live.is_shortable(symbol):
+        if direction == -1 and symbol not in self._shorts:
             self.record(
                 strategy,
                 f"short.refused.{symbol}.{now.date()}",
