@@ -32,11 +32,12 @@ build-backend = "hatchling.build"
 dev = [
     "pandas-stubs>=2.3",
     "pyright>=1.1",
+    "pytest>=8",
     "ruff>=0.16",
 ]
 
 [tool.pyright]
-include = ["src"]
+include = ["src", "tests"]
 pythonVersion = "3.13"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
@@ -51,7 +52,12 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
-known-first-party = ["mt"]
+known-first-party = ["mt", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["*.py"]
+pythonpath = ["."]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/mt", "LICENSE", "README.md", "pyproject.toml"]

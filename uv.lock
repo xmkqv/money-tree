@@ -3026,6 +3026,7 @@ dependencies = [
 dev = [
     { name = "pandas-stubs" },
     { name = "pyright" },
+    { name = "pytest" },
     { name = "ruff" },
 ]
 
@@ -3051,6 +3052,7 @@ requires-dist = [
 dev = [
     { name = "pandas-stubs", specifier = ">=2.3" },
     { name = "pyright", specifier = ">=1.1" },
+    { name = "pytest", specifier = ">=8" },
     { name = "ruff", specifier = ">=0.16" },
 ]
 

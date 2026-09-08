@@ -177,7 +177,11 @@ DAILY_TFB__IS_PAUSED = "false"
 run = ["mise install", "uv sync --locked"]
 
 [tasks.check]
-run = ["uv run ruff check src", "uv run pyright"]
+run = ["uv run ruff check src tests", "uv run pyright"]
+
+[tasks.test]
+depends = ["check"]
+run = "uv run pytest"
 
 [tasks.build]
 depends = ["check"]
