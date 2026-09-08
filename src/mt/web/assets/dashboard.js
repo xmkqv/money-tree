@@ -50,15 +50,15 @@ const STRATEGY_COLOURS = {
 
 const clockLabel = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
 const dparts = d => d.split("-").map(Number);
-const dateOf = d => { const [y, m, day] = dparts(d); return new Date(y, m - 1, day); };
-const mondayOf = d => {
-  const at = dateOf(d);
+const parseDate = d => { const [y, m, day] = dparts(d); return new Date(y, m - 1, day); };
+const weekStart = d => {
+  const at = parseDate(d);
   at.setDate(at.getDate() - ((at.getDay() + 6) % 7));
   return at.getFullYear() + "-" + (at.getMonth() + 1) + "-" + at.getDate();
 };
 
 let LEDGER, ACCOUNT, STRATEGIES, STRAT_BY_ID, OPEN_POSITIONS, ALL_TRADES, tradesByDate;
-let SESSION = {}, LEDGER, SESSIONS, LAST_SESSION, DAY_PNL, WEEK_PNL, BENCH, BENCH_SYMBOL, DAILY, INTRADAY, LATEST;
+let SESSION = {}, TOTALS, SESSIONS, LAST_SESSION, DAY_PNL, WEEK_PNL, BENCH, BENCH_SYMBOL, DAILY, INTRADAY, LATEST;
 let FIRST_MONTH, LAST_MONTH, FIRST_IX, LAST_IX;
 let STRATEGY_PERIODS = {};
 let monthCache = new Map();
@@ -191,7 +191,7 @@ function derive(ledger) {
 
   ALL_TRADES = ledger.trades.map(t => {
     const [y, m, day] = dparts(t.date);
-    return { ...t, y, m: m - 1, day, weekday: dateOf(t.date).getDay() };
+    return { ...t, y, m: m - 1, day, weekday: parseDate(t.date).getDay() };
   }).reverse();
 
   tradesByDate = new Map();
@@ -200,17 +200,17 @@ function derive(ledger) {
     tradesByDate.get(t.date).push(t);
   }
 
-  LEDGER = statsFor(ALL_TRADES);
-  ACCOUNT.closed = LEDGER.n;
-  ACCOUNT.wins = LEDGER.wins;
-  ACCOUNT.losses = LEDGER.losses;
-  ACCOUNT.winRate = LEDGER.winRate;
+  TOTALS = statsFor(ALL_TRADES);
+  ACCOUNT.closed = TOTALS.n;
+  ACCOUNT.wins = TOTALS.wins;
+  ACCOUNT.losses = TOTALS.losses;
+  ACCOUNT.winRate = TOTALS.winRate;
 
   SESSIONS = ledger.days.map(d => ({
     ...d,
     pct: d.before ? (d.pnl / d.before) * 100 : 0,
-    label: dateOf(d.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
-    long: dateOf(d.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" }),
+    label: parseDate(d.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+    long: parseDate(d.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" }),
   }));
 
   LAST_SESSION = SESSIONS[SESSIONS.length - 1] || { date: ledger.equityDaily.at(-1).date, pnl: 0, before: ledger.equity, pct: 0, trades: 0, wins: 0 };
@@ -250,8 +250,8 @@ function derive(ledger) {
   LAST_IX = Math.max(FIRST_IX, monthIndex(LAST_MONTH.y, LAST_MONTH.m));
 
   DAILY = ledger.equityDaily.map((r, i) => ({
-    label: dateOf(r.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
-    long: dateOf(r.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }),
+    label: parseDate(r.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+    long: parseDate(r.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }),
     value: Math.round((r.equity - ledger.invested) * 100) / 100,
     before: i ? Math.round((ledger.equityDaily[i - 1].equity - ledger.invested) * 100) / 100 : 0,
   }));
@@ -262,7 +262,7 @@ function derive(ledger) {
   const opening = ledger.intraday.length ? ledger.intraday[0].equity : ledger.equity;
   INTRADAY = ledger.intraday.map((r, i) => ({
     label: r.t,
-    long: (ledger.intradayDate ? dateOf(ledger.intradayDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) + ", " : "") + r.t,
+    long: (ledger.intradayDate ? parseDate(ledger.intradayDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) + ", " : "") + r.t,
     value: Math.round((r.equity - ledger.invested) * 100) / 100,
     before: Math.round(((i ? ledger.intraday[i - 1].equity : opening) - ledger.invested) * 100) / 100,
   }));
@@ -541,10 +541,10 @@ function periodCell(label, pnl, pct, benchPct) {
 
 
 const SWITCH_STATE = {
-  online:  { label: "Online",  hint: "Enabled — this engine is allowed to trade" },
-  paused:  { label: "Paused",  hint: "Paused by us — it manages what it holds, opens nothing new" },
-  offline: { label: "Offline", hint: "Not on the bot's roster — this engine is not running at all" },
-  unknown: { label: "Unknown", hint: "The bot has not reported, so its roster is unknown" },
+  online:  { label: "Online",  hint: "This strategy is selected and can open positions" },
+  paused:  { label: "Paused",  hint: "This strategy manages existing holdings and opens no new positions" },
+  offline: { label: "Unselected", hint: "This strategy is not selected; existing holdings are still managed" },
+  unknown: { label: "Unknown", hint: "The bot has not reported its selected strategies" },
 };
 
 const SESSION_STATE = {
@@ -1315,9 +1315,9 @@ function tile(k, v, cls, sub) {
 
 function renderHistory() {
   document.getElementById("hs-span").textContent =
-    SESSIONS[0].long + " – " + SESSIONS[SESSIONS.length - 1].long;
+    SESSIONS.length ? SESSIONS[0].long + " – " + SESSIONS.at(-1).long : "No closed trades";
 
-  const L = LEDGER;
+  const L = TOTALS;
   const tiles = document.getElementById("hs-tiles");
   tiles.replaceChildren(
     tile("Realised P&L", signedMoney(L.net), tone(L.net), "closed round trips"),
@@ -1439,7 +1439,7 @@ function renderLog() {
   const days = [...new Set(rows.map(t => t.date))].sort();
   const shade = rows.map(t => days.indexOf(t.date) % 2 === 1);
 
-  const weeks = rows.map(t => mondayOf(t.date));
+  const weeks = rows.map(t => weekStart(t.date));
 
   buildTable(table,
     ["Date", "In time", "Out time", "Symbol", "Strategy", "Entry", "Exit", "P&L"],
@@ -1621,7 +1621,7 @@ function paintRail() {
     has.strategy ? "Stop and targets are reconstructed from the rules." : "";
 }
 
-function railToggle(key, label, token, enabled, why) {
+function railToggle(key, label, tokenName, enabled, why) {
   const row = document.createElement("label");
   row.className = "tc-toggle" + (enabled ? "" : " off");
   const box = document.createElement("input");
@@ -1631,17 +1631,13 @@ function railToggle(key, label, token, enabled, why) {
   box.addEventListener("change", () => { TC_SHOW[key] = box.checked; drawTradeChart(); });
   const swatch = document.createElement("span");
   swatch.className = "tc-swatch";
-  if (token) swatch.style.background = tokenValue(token);
+  if (tokenName) swatch.style.background = token(tokenName);
   else swatch.classList.add("plain");
   const text = document.createElement("span");
   text.textContent = label;
   row.append(box, swatch, text);
   if (why) row.title = why;
   return row;
-}
-
-function tokenValue(name) {
-  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
 function paintTradeFacts() {
@@ -1905,10 +1901,10 @@ function drawTradeChart() {
   ).join("");
 
   const smaEnds = [];
-  const smaLines = SMA_SET.map(({ length, token }) => {
+  const smaLines = SMA_SET.map(({ length, token: tokenName }) => {
     const values = averages[length];
     if (!values) return "";
-    const colour = tokenValue(token);
+    const colour = token(tokenName);
     let path = "", lastY = null;
     shown.forEach((_, k) => {
       const i = k + lo;
@@ -2209,7 +2205,7 @@ function renderRuleStates() {
   if (warning) {
     const down = bot.reported && !bot.running;
     warning.textContent = !bot.reported
-      ? "The bot has not reported, so which engines are enabled is unknown."
+      ? "The bot has not reported its selected strategies."
       : down
         ? "The bot has stopped reporting — the switches below are from its last report."
         : "";
