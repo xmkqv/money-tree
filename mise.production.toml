@@ -5,8 +5,8 @@ BROKER__API_SECRET
 FINNHUB__API_KEY
 WEB__SESSION_SECRET
 EXPORT__SECRET
-LOGIN__RAILWAY_OAUTH_CLIENT_SECRET
-LOGIN__ALLOWED_RAILWAY_EMAILS
+LOGIN__OAUTH_CLIENT_SECRET
+LOGIN__ALLOWED_EMAILS
 RAILWAY_TOKEN
 """
 
@@ -16,6 +16,6 @@ WEB__BASE_URL = "https://money-tree-web-production.up.railway.app"
 EXPORT__URL = "http://money-tree-web.railway.internal:8080/internal/state"
 
 ## login
-LOGIN__RAILWAY_OAUTH_CLIENT_ID = "rlwy_oaci_29D1XXdSqj23u2HgdYlbq8ch"
+LOGIN__OAUTH_CLIENT_ID = "rlwy_oaci_29D1XXdSqj23u2HgdYlbq8ch"
 
 _.file = { path = ".env.production", redact = true }

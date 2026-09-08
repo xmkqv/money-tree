@@ -71,19 +71,18 @@ def portfolio_rules(risk: RiskSection) -> list[Row]:
         Row(
             field="Breakout cap",
             value=f"At most {settings.breakout.positions_max} breakout positions open at once "
-            "across both intraday strategies. The two strategies share one allowance, because "
-            "every breakout is the same bet on the same half hour.",
+            "across both breakout strategies, including pending entries.",
             source="strategies/breakout.py · cap_keys",
         ),
         Row(
             field="Exposure",
-            value="The total value held never exceeds account equity, so the account never "
-            "trades on borrowed money.",
+            value="An entry is skipped if its estimated value would put gross exposure "
+            "above account equity. Exposure includes pending entries.",
             source="portfolio.py · enter",
         ),
         Row(
-            field="One owner per stock",
-            value="Only one strategy holds a given stock at a time; the others skip it while "
+            field="One owner per symbol",
+            value="Only one strategy holds a symbol at a time; the others skip it while "
             "that position is open.",
             source="portfolio.py · _is_owned",
         ),
@@ -91,7 +90,7 @@ def portfolio_rules(risk: RiskSection) -> list[Row]:
             field="Daily loss limit",
             value=f"If equity falls {percent(risk.per_day_max)} below the session's opening "
             "value, every position is closed and no new trade is opened until the next session.",
-            source="portfolio.py · _is_daily_loss_reached",
+            source="portfolio.py · _emergency_exit",
         ),
     ]
 

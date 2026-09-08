@@ -8,23 +8,23 @@ from .broker import alpaca_broker
 from .export import StateExporter
 
 
-def run(strategy_keys: list[StrategyKey]) -> None:
+def trade(strategies: list[StrategyKey]) -> None:
     from lumibot.traders import Trader
 
     from .portfolio import Portfolio
 
-    paused: list[StrategyKey] = [key for key in strategy_keys if strategy_class(key).is_paused]
+    paused: list[StrategyKey] = [key for key in strategies if strategy_class(key).is_paused]
     exporter = StateExporter(
         str(settings.export.url),
         settings.export.secret.get_secret_value(),
-        strategy_keys,
+        strategies,
         paused,
         settings.risk,
     )
     exporter.start()
     exporter.publish("starting", "run.started", "info", "Trading run is starting")
     try:
-        parameters: dict[str, object] = {"strategies": strategy_keys}
+        parameters: dict[str, object] = {"strategies": strategies}
         strategy = Portfolio(broker=alpaca_broker(), parameters=parameters, name="Portfolio")
         strategy.exporter = exporter
         trader = Trader()

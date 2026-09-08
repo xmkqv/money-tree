@@ -16,8 +16,8 @@ class Row(TypedDict):
 
 
 RULE_FIELDS = (
-    "Market",
-    "Sentiment",
+    "Symbols",
+    "Market condition",
     "Direction",
     "Range",
     "Setup",
@@ -42,7 +42,7 @@ def percent(fraction: float) -> str:
     return f"{text}%"
 
 
-MARKET = (
+SYMBOLS = (
     f"US common stocks screened daily: share price ${settings.screen.price_usd_min:.0f} or "
     f"more, turnover {millions(settings.screen.turnover_usd_min)} or more averaged across the "
     f"last {settings.screen.turnover_sessions} completed sessions, and tradable and "
@@ -57,8 +57,8 @@ class DailyProse:
     confirmation: str
     entry: str
     entry_source: str
-    market: str = MARKET
-    market_source: str = "portfolio.py · _screen"
+    symbols: str = SYMBOLS
+    symbols_source: str = "portfolio.py · _screen"
     risk_source: str = "portfolio.py · enter"
 
 
@@ -83,21 +83,19 @@ DAILY_PROSE: dict[StrategyKey, DailyProse] = {
             "goes in at the open of the third. Market buy, retried every iteration until the "
             f"close. Skipped if the company reports earnings within "
             f"{settings.earnings.block_days} days. A "
-            "company with no earnings date on file can still be bought. A company whose calendar "
-            "cannot be read at all is left for that session."
+            "company with no earnings date on file can still be bought."
         ),
         entry_source="strategies/daily_sma.py · does_enter, strategies/daily.py · run",
     ),
     "daily_tfb": DailyProse(
-        market=(
-            f"{MARKET} This strategy screens that list again on its own floors: share price "
-            f"${settings.screen.price_usd_min:.0f} or more, and turnover of "
+        symbols=(
+            f"{SYMBOLS} This strategy screens that list again on turnover: "
             f"{millions(settings.screen.turnover_usd_min)} or more averaged across the last "
             f"{settings.daily_tfb.turnover_sessions} completed sessions. Turnover here is "
             "the value traded in each session, which is that session's close times its share "
             "volume. A symbol whose sessions cannot be read does not pass."
         ),
-        market_source="portfolio.py · _screen, strategies/daily_tfb.py · does_clear",
+        symbols_source="portfolio.py · _screen, strategies/daily_tfb.py · does_clear",
         setup=(
             f"The closing price is above its {settings.daily_tfb.trend_sessions}-day average, "
             f"that average is higher than it was {settings.daily_tfb.trend_lag_sessions} "
@@ -160,13 +158,11 @@ def _breakout_rows(
     first_entry = f"{opens + timedelta(minutes=2 * minutes):%H:%M}"
     scan_end = f"{opens + timedelta(minutes=breakout.scan_minutes):%H:%M}"
     exit_at = f"{closes - timedelta(minutes=breakout.close_lead_minutes):%H:%M}"
-    exit_before = f"{closes - timedelta(minutes=breakout.close_lead_minutes - 1):%H:%M}"
 
     confirmation = (
         f"Volume traded up to the signal candle's close is at least "
         f"{cls.volume_multiple:g}x the "
-        f"{breakout.past_sessions}-session average at the same time of day, and that "
-        f"average session turns over at least {millions(settings.screen.turnover_usd_min)}. "
+        f"{breakout.past_sessions}-session average at the same time of day. "
         f"All {breakout.past_sessions} earlier sessions must be available to compare "
         "against. "
         "If fewer are available there is no confirmation, and the breakout is passed over. "
@@ -195,18 +191,17 @@ def _breakout_rows(
     )
 
     return [
-        Row(field="Market", value=MARKET, source="portfolio.py · _screen"),
+        Row(field="Symbols", value=SYMBOLS, source="portfolio.py · _screen"),
         Row(
-            field="Sentiment",
+            field="Market condition",
             value="None. This strategy takes signals whatever the wider market is doing.",
             source="strategies/breakout.py · run",
         ),
         Row(
             field="Direction",
             value="Long and short. A short is skipped when the broker will not lend the "
-            "stock. A short is sized in whole shares, because a broker lends whole shares "
-            "only, so every order on a short leg is rounded down to a whole number. Longs "
-            "use fractional quantities when the account allows them.",
+            "stock. Every order is sized in whole shares and rounded down, so a leg worth "
+            "less than one share is skipped.",
             source="portfolio.py · enter, protect, exit",
         ),
         Row(
@@ -231,8 +226,8 @@ def _breakout_rows(
             f"candle. It must be one of the last {breakout.signal_candles_max} completed "
             f"candles, which is {breakout.signal_candles_max * minutes} minutes of the move. "
             "An older close "
-            "has already run, and is passed over. Once either breakout strategy has traded "
-            "a stock, both leave it alone for the rest of the session. The range itself "
+            "has already run, and is passed over. Once this strategy has traded a stock, it "
+            "leaves it alone for the rest of the session. The range itself "
             f"must be at least {percent(breakout.range_fraction_min)} of the price, and the "
             f"stop cut from it must fall between {percent(breakout.stop_fraction_min)} and "
             f"{percent(breakout.stop_fraction_max)} of the price. A narrower range puts the "
@@ -274,9 +269,10 @@ def _breakout_rows(
         ),
         Row(
             field="Stop Loss",
-            value=f"{percent(breakout.long_stop_fraction)} of the way back into "
-            f"the opening range for a long, {percent(breakout.short_stop_fraction)} "
-            "for a short. Once the first target is hit, the stop trails "
+            value=f"Measured from the opening range low to its high: "
+            f"{percent(breakout.long_stop_fraction)} for a long, "
+            f"{percent(breakout.short_stop_fraction)} for a short. "
+            "Once the first target is hit, the stop trails "
             f"{breakout.trail_atr_multiple:g}x the {period}-period ATR behind the best price "
             f"the trade has seen, and never moves back past the entry price. That "
             f"ATR({period}) "
@@ -303,25 +299,21 @@ def _breakout_rows(
         Row(
             field="Exit Rule",
             value="Scaled out in three: half the position as first filled at the first "
-            "target, a quarter of it at the second, the remainder at the third. On a short "
-            "each slice is rounded down to whole shares, and a slice worth less than a "
-            "single "
-            "share is skipped. The resting stop still covers the position, and the next "
+            "target, a quarter of it at the second, the remainder at the third. Each slice "
+            "is rounded down to whole shares, and a slice worth less than a single share "
+            "is skipped. The resting stop still covers the position, and the next "
             "target or the closing deadline takes it. The trailing stop takes whatever is "
             "left if price turns first.",
             source="strategies/breakout.py · manage",
         ),
         Row(
             field="Emergency Exit",
-            value=f"Everything is closed before {exit_before}. The exit is sent at "
-            f"{exit_at}, "
-            f"which is {breakout.close_lead_minutes} minutes before the closing bell the "
-            "exchange "
-            "calendar gives for the session, so the market order fills in time and a half "
-            "day "
-            "closes on its own clock. This strategy never holds overnight. The daily loss "
+            value=f"A market exit is submitted from {exit_at}, "
+            f"{breakout.close_lead_minutes} minutes before the session close. "
+            "The exchange calendar sets the close, including shortened sessions. "
+            "The daily loss "
             "limit closes all positions and stops new entries for the rest of the day.",
-            source="strategies/breakout.py · manage, portfolio.py · _is_daily_loss_reached",
+            source="strategies/breakout.py · manage, portfolio.py · _emergency_exit",
         ),
     ]
 
@@ -333,10 +325,10 @@ def _daily_rows(cls: type[Daily], per_trade: float, closes: datetime) -> list[Ro
     average_sessions = settings.daily.average_sessions
     earnings_exit = f"{closes - timedelta(minutes=lead_minutes):%H:%M}"
     return [
-        Row(field="Market", value=prose.market, source=prose.market_source),
+        Row(field="Symbols", value=prose.symbols, source=prose.symbols_source),
         Row(
-            field="Sentiment",
-            value=f"{settings.benchmark_symbol} must be trading above its own "
+            field="Market condition",
+            value=f"The last completed close of {settings.benchmark_symbol} must be above its "
             f"{average_sessions}-day average. If it is not, no daily strategy takes a "
             "position that day.",
             source="strategies/daily.py · run",
@@ -354,7 +346,7 @@ def _daily_rows(cls: type[Daily], per_trade: float, closes: datetime) -> list[Ro
             value="Ranked by the value traded in the last completed session, which is its "
             "close times its share volume, highest first. When more symbols qualify on the "
             "same morning than there is room to hold, the busiest take the slots. A symbol "
-            "whose session cannot be read ranks last but still trades.",
+            "with no readable sessions is left out.",
             source="strategies/daily.py · _ranked",
         ),
         Row(field="Entry", value=prose.entry, source=prose.entry_source),
@@ -374,9 +366,10 @@ def _daily_rows(cls: type[Daily], per_trade: float, closes: datetime) -> list[Ro
         ),
         Row(
             field="Exit Rule",
-            value="Closed when the price falls through the trailing stop, or when the close "
+            value="An exit is submitted when the completed daily close falls below the stop, "
+            "or when the close "
             f"drops below its {average_sessions}-day average, or RSI ({period}) falls under "
-            f"{settings.daily.exit_rsi_max:g}. Either one is enough on its own.",
+            f"{settings.daily.exit_rsi_max:g}. Any condition is sufficient.",
             source="strategies/daily.py · does_signal_exit",
         ),
         Row(
@@ -384,14 +377,13 @@ def _daily_rows(cls: type[Daily], per_trade: float, closes: datetime) -> list[Ro
             value=(
                 f"Closed {lead_minutes} minutes before the closing bell "
                 f"({earnings_exit} on a full session) on the session before the company "
-                "reports earnings, unless that calendar cannot be read, in which case the "
-                "position is left alone. The daily loss limit closes all positions and "
+                "reports earnings. The daily loss limit closes all positions and "
                 "stops new entries for the rest of the day."
                 if cls.does_heed_earnings
                 else "The daily loss limit closes all positions and stops new entries for "
                 "the rest of the day. Earnings do not close a position for this strategy. "
                 "It holds through the report and leaves on its stop or its exit rule."
             ),
-            source="strategies/daily.py · manage, portfolio.py · _is_daily_loss_reached",
+            source="strategies/daily.py · manage, portfolio.py · _emergency_exit",
         ),
     ]

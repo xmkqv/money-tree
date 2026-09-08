@@ -21,7 +21,7 @@ from mt.indicators import (
 from .base import Candidate, Holding, Portfolio, Session, Strategy, ranked
 
 
-def is_benchmark_rising(frame: DataFrame) -> bool:
+def is_market_favorable(frame: DataFrame) -> bool:
     close = frame["close"]
     if close.count() < settings.daily.average_sessions:
         return False
@@ -81,10 +81,10 @@ class Daily(Strategy):
         benchmark = self.portfolio.benchmark_frame(now)
         if benchmark is None:
             return
-        if not is_benchmark_rising(benchmark):
+        if not is_market_favorable(benchmark):
             self.portfolio.record(
                 self,
-                "benchmark.stalled",
+                "benchmark.blocked",
                 "warning",
                 f"{settings.benchmark_symbol} is not above its "
                 f"{settings.daily.average_sessions}-day average",
@@ -112,7 +112,7 @@ class Daily(Strategy):
         for symbol, frame in self._ranked(now):
             if not self.does_clear(frame) or not self.does_enter(frame):
                 continue
-            if self.does_heed_earnings and not self._is_earnings_clear(symbol, now.date()):
+            if self.does_heed_earnings and is_earnings_blocked(symbol, now.date()):
                 continue
             last = last_close(frame)
             stop = last - self.stop_atr_multiple * latest_atr(frame, settings.indicators.period)
@@ -131,7 +131,7 @@ class Daily(Strategy):
         if (
             self.does_heed_earnings
             and now >= closes - timedelta(minutes=settings.earnings.exit_lead_minutes)
-            and self._is_earnings_exit_due(holding.symbol, now.date())
+            and is_earnings_exit_due(holding.symbol, now.date())
         ):
             self.portfolio.exit(holding)
             return
@@ -150,33 +150,11 @@ class Daily(Strategy):
     def _ranked(self, now: datetime) -> list[tuple[str, DataFrame]]:
         rows = [
             (symbol, frame)
-            for symbol in self.portfolio.market_symbols()
+            for symbol in self.portfolio.symbols()
             if (frame := self.portfolio.daily_frame(symbol, now)) is not None
         ]
         return ranked(
             rows,
             symbol=lambda row: row[0],
             turnover=lambda row: latest_turnover_usd(row[1]),
-        )
-
-    def _is_earnings_clear(self, symbol: str, day: date) -> bool:
-        try:
-            return not is_earnings_blocked(symbol, day)
-        except Exception as error:
-            self._record_earnings_failed(symbol, error)
-            return False
-
-    def _is_earnings_exit_due(self, symbol: str, day: date) -> bool:
-        try:
-            return is_earnings_exit_due(symbol, day)
-        except Exception as error:
-            self._record_earnings_failed(symbol, error)
-            return False
-
-    def _record_earnings_failed(self, symbol: str, error: Exception) -> None:
-        self.portfolio.record(
-            self,
-            f"earnings.failed.{symbol}",
-            "error",
-            f"Earnings calendar unavailable for {symbol}: {type(error).__name__}",
         )

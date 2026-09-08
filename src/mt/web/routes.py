@@ -253,7 +253,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 past(request),
                 benchmark_symbol,
                 configuration.risk,
-                dashboard_section.flat_quantity_max,
+                dashboard_section,
                 snapshot,
             ),
         )

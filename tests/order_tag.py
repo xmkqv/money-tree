@@ -22,7 +22,7 @@ def is_none_when_code_is_unknown(world: World) -> None:
 CASES = [
     Case(
         "round_trips_when_well_formed",
-        "a tag reads back its strategy, kind, signal, and risk fraction",
+        "a tag reads back its strategy, kind, symbol, and risk fraction",
         round_trips_when_well_formed,
     ),
     Case(

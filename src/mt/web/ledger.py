@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TypedDict
 
-from mt.config.sections import RiskSection
+from mt.config.sections import DashboardSection, RiskSection
 from mt.config.values import StrategyKey, Symbol
 from mt.data.alpaca import (
     AlpacaLiveClient,
@@ -268,7 +268,7 @@ async def build_ledger(
     past: AlpacaPastClient,
     benchmark: Symbol,
     fallback_configuration: RiskSection,
-    flat_quantity_max: float,
+    dashboard: DashboardSection,
     snapshot: StateSnapshot | None,
 ) -> Ledger:
     async with asyncio.TaskGroup() as reads:
@@ -276,15 +276,21 @@ async def build_ledger(
         positions_read = reads.create_task(live.positions())
         fills_read = reads.create_task(live.fills())
         orders_read = reads.create_task(live.closed_orders())
-        daily_read = reads.create_task(live.equity("1A", "1D"))
-        intraday_read = reads.create_task(live.equity("1D", "5Min"))
+        daily_read = reads.create_task(
+            live.equity(dashboard.equity_daily_period, dashboard.equity_daily_timeframe)
+        )
+        intraday_read = reads.create_task(
+            live.equity(dashboard.equity_intraday_period, dashboard.equity_intraday_timeframe)
+        )
         clock_read = reads.create_task(live.clock())
 
     account = account_read.result()
     positions = positions_read.result()
     clock = clock_read.result()
 
-    cycles, open_cycles = match_cycles(fills_read.result(), orders_read.result(), flat_quantity_max)
+    cycles, open_cycles = match_cycles(
+        fills_read.result(), orders_read.result(), dashboard.flat_quantity_max
+    )
     equity_daily = _equity_series(daily_read.result())
     intraday_points, intraday_date = _intraday_series(intraday_read.result())
 

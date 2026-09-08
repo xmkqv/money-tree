@@ -48,6 +48,8 @@ type Mode = Literal["development", "production"]
 type BrokerMode = Literal["live", "paper"]
 type DataFeedName = Literal["sip", "delayed_sip", "iex"]
 type Timeframe = Annotated[str, Field(pattern=r"^\d+(Min|Hour|Day)$")]
+type EquityPeriod = Annotated[str, Field(pattern=r"^\d+[DWMA]$")]
+type EquityTimeframe = Annotated[str, Field(pattern=r"^\d+(Min|H|D)$")]
 type ChartTimeframe = Literal["5Min", "1Hour", "1Day"]
 type StrategySelection = Annotated[
     tuple[StrategyKey, ...],

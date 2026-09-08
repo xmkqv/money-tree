@@ -13,8 +13,9 @@ from mt.data.past import Past
 from mt.exchange import TRADING_ZONE, session_bounds
 from mt.frames import last_close
 from mt.indicators import average_turnover_usd
-from mt.position import Direction, entry_quantity, is_fractional_allowed, round_quantity, round_stop
-from mt.strategies.base import Candidate, EventLevel, Holding, Session, Strategy
+from mt.position import Direction, entry_quantity, round_quantity, round_stop
+from mt.snapshot import EventLevel
+from mt.strategies.base import Candidate, Holding, Session, Strategy
 from mt.strategies.order_tag import find_order_tag, order_tag
 from mt.strategies.registry import STRATEGIES
 
@@ -70,11 +71,9 @@ class Portfolio(LumibotStrategy):
         self._session_baseline = 0.0
         self._locked_at: date | None = None
         self._daily_frames: dict[str, DataFrame] = {}
-        self._market_symbols: list[str] = []
+        self._symbols: list[str] = []
         self._shorts: frozenset[str] = frozenset()
         self._prepared_at: date | None = None
-        self._preparation_attempts = 0
-        self._preparation_attempts_at: date | None = None
         self._restored = False
 
     def before_market_opens(self) -> None:
@@ -91,7 +90,8 @@ class Portfolio(LumibotStrategy):
         self._restore()
         self._begin_day(now.date())
         self._reconcile(now)
-        if self._is_daily_loss_reached(now.date()):
+        self._emergency_exit(now.date())
+        if self._locked_at == now.date():
             return
         self._prepare(now)
         for holding in list(self._holdings.values()):
@@ -141,8 +141,8 @@ class Portfolio(LumibotStrategy):
                 ladder.original_quantity = max(ladder.original_quantity, remaining)
             self.protect(holding, remaining)
 
-    def market_symbols(self) -> list[str]:
-        return self._market_symbols
+    def symbols(self) -> list[str]:
+        return self._symbols
 
     def daily_frame(self, symbol: str, now: datetime) -> DataFrame | None:
         frame = self._daily_frames.get(symbol)
@@ -206,18 +206,16 @@ class Portfolio(LumibotStrategy):
         for strategy in self._strategies.values():
             strategy.begin(day)
 
-    def _is_daily_loss_reached(self, day: date) -> bool:
+    def _emergency_exit(self, day: date) -> None:
         if self._locked_at == day:
-            return True
-        limit = settings.risk.per_day_max
-        if self._equity() > self._session_baseline * (1.0 - limit):
-            return False
+            return
+        if self._equity() > self._session_baseline * (1.0 - settings.risk.per_day_max):
+            return
         self.cancel_open_orders()
         for holding in list(self._holdings.values()):
             self.exit(holding)
         self._locked_at = day
         self._record("day.locked", "warning", "Daily loss limit reached")
-        return True
 
     def _restore(self) -> None:
         if self._restored:
@@ -335,27 +333,14 @@ class Portfolio(LumibotStrategy):
         day = now.date()
         if self._prepared_at == day:
             return
-        if self._preparation_attempts_at != day:
-            self._preparation_attempts_at = day
-            self._preparation_attempts = 0
-        if self._preparation_attempts >= settings.portfolio.preparation_attempts_max:
-            return
-        self._preparation_attempts += 1
         first = day - timedelta(days=settings.portfolio.past_days)
         start = datetime.combine(first, time(), TRADING_ZONE)
-        try:
-            listing = self.live.listing()
-            symbols = self._given or self._screen(now, listing.symbols)
-            held = set(self._holdings)
-            requested = sorted(set(symbols).union({settings.benchmark_symbol}, held))
-            daily_frames = self.past.bars(requested, "1Day", start, now, settings.past.daily_feed)
-        except Exception as error:
-            self._daily_frames = {}
-            self._market_symbols = []
-            self._record("screen.failed", "error", f"Stock screen unavailable: {error}")
-            return
-        self._daily_frames = daily_frames
-        self._market_symbols = list(symbols)
+        listing = self.live.listing()
+        symbols = self._given or self._screen(now, listing.symbols)
+        held = set(self._holdings)
+        requested = sorted(set(symbols).union({settings.benchmark_symbol}, held))
+        self._daily_frames = self.past.bars(requested, "1Day", start, now, settings.past.daily_feed)
+        self._symbols = list(symbols)
         self._shorts = listing.shorts
         self._prepared_at = day
 
@@ -415,8 +400,6 @@ class Portfolio(LumibotStrategy):
                 f"{symbol} entry skipped: portfolio position capacity reached",
             )
             return False
-        if equity <= 0:
-            return False
         risk_fraction = strategy.risk_fraction_max
         if risk_fraction is None:
             risk_fraction = settings.risk.per_trade_max
@@ -427,7 +410,6 @@ class Portfolio(LumibotStrategy):
             settings.risk.position_fraction_max,
             risk_fraction,
             settings.risk.notional_usd_min,
-            is_fractional_allowed(direction, settings.risk.does_allow_fractions),
         )
         notional = float(quantity) * price
         if quantity <= 0 or gross + notional > equity:
@@ -489,10 +471,7 @@ class Portfolio(LumibotStrategy):
             )
             self.exit(holding)
             return
-        size = round_quantity(
-            amount,
-            is_fractional_allowed(holding.direction, settings.risk.does_allow_fractions),
-        )
+        size = round_quantity(amount)
         if size <= 0 or self._stops.get(holding.symbol) == (stop, float(size)):
             return
         self._cancel(holding.symbol, stops_only=True)
@@ -519,10 +498,7 @@ class Portfolio(LumibotStrategy):
         if amount <= 0:
             self._release(holding.symbol)
             return
-        size = round_quantity(
-            amount,
-            is_fractional_allowed(holding.direction, settings.risk.does_allow_fractions),
-        )
+        size = round_quantity(amount)
         if size <= 0:
             return
         self._cancel(holding.symbol)

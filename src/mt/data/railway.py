@@ -53,8 +53,8 @@ class RailwayOAuthClient:
         return cast(
             _OAuthClient,
             AsyncOAuth2Client(
-                self._login.railway_oauth_client_id,
-                self._login.railway_oauth_client_secret.get_secret_value(),
+                self._login.oauth_client_id,
+                self._login.oauth_client_secret.get_secret_value(),
                 scope="openid email",
                 redirect_uri=self._redirect_uri,
                 code_challenge_method="S256",

@@ -2,16 +2,14 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import ClassVar, Literal, Protocol
+from typing import ClassVar, Protocol
 
 from pandas import DataFrame
 
 from mt.config.settings import settings
 from mt.config.values import STRATEGY_KEYS, StrategyKey
 from mt.position import Direction
-
-
-type EventLevel = Literal["info", "warning", "error"]
+from mt.snapshot import EventLevel
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +49,7 @@ class Holding:
 
 
 class Portfolio(Protocol):
-    def market_symbols(self) -> list[str]: ...
+    def symbols(self) -> list[str]: ...
 
     def daily_frame(self, symbol: str, now: datetime) -> DataFrame | None: ...
 

@@ -63,7 +63,7 @@ class WebSettings(BaseSettings):
     dashboard: DashboardSection
 
     @property
-    def railway_oauth_redirect_uri(self) -> str:
+    def oauth_redirect_uri(self) -> str:
         return f"{str(self.web.base_url).rstrip('/')}/auth/callback"
 
 

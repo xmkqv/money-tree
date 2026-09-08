@@ -1,6 +1,7 @@
 min_version = "2026.8.11"
 
 [tools]
+node = "26.7.0"
 python = "3.13.15"
 uv = "0.12.9"
 
@@ -39,7 +40,6 @@ RISK__PER_TRADE_MAX = "0.005"
 RISK__POSITION_FRACTION_MAX = "0.10"
 RISK__POSITIONS_MAX = "10"
 RISK__NOTIONAL_USD_MIN = "1.0"
-RISK__DOES_ALLOW_FRACTIONS = "true"
 
 ## screen
 SCREEN__PRICE_USD_MIN = "5.0"
@@ -51,7 +51,6 @@ SCREEN__PAST_DAYS = "45"
 PORTFOLIO__SYMBOLS_PER_REQUEST = "200"
 PORTFOLIO__ORDERS_PER_REQUEST = "500"
 PORTFOLIO__PAST_DAYS = "390"
-PORTFOLIO__PREPARATION_ATTEMPTS_MAX = "2"
 PORTFOLIO__PENDING_TTL_MINUTES = "5"
 PORTFOLIO__OPENING_LEAD_MINUTES = "30"
 PORTFOLIO__ITERATION_MINUTES = "1"
@@ -106,6 +105,10 @@ DASHBOARD__SESSION_SOURCE_PAGES_MAX = "6"
 DASHBOARD__PAGE_ROWS_MAX = "100"
 DASHBOARD__PAGES_MAX = "40"
 DASHBOARD__FLAT_QUANTITY_MAX = "0.000000001"
+DASHBOARD__EQUITY_DAILY_PERIOD = "1A"
+DASHBOARD__EQUITY_DAILY_TIMEFRAME = "1D"
+DASHBOARD__EQUITY_INTRADAY_PERIOD = "1D"
+DASHBOARD__EQUITY_INTRADAY_TIMEFRAME = "5Min"
 DASHBOARD__SMA_LENGTHS = "[20, 50, 200]"
 DASHBOARD__LEDGER_MAX_AGE_SECONDS = "10"
 DASHBOARD__CHART_MAX_AGE_SECONDS = "60"
@@ -177,19 +180,23 @@ DAILY_TFB__IS_PAUSED = "false"
 [tasks.setup]
 run = ["mise install", "uv sync --locked"]
 
-[tasks.check]
-run = ["uv run ruff check src tests", "uv run pyright"]
-
 [tasks.test]
-depends = ["check"]
-run = "uv run pytest"
+run = [
+  "uv run ruff check src tests",
+  "uv run ruff format --check src tests",
+  "uv run pyright",
+  "uv run pytest",
+  "node --check src/mt/web/assets/dashboard.js",
+  "node --check src/mt/web/assets/theme.js",
+  "node --test tests/dashboard.mjs",
+]
 
 [tasks.build]
-depends = ["check"]
+depends = ["test"]
 run = "uv build"
 
 [tasks.deploy]
-depends = ["check"]
+depends = ["test"]
 run = '''
 set -euo pipefail
 

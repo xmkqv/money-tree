@@ -2,7 +2,6 @@ from pandas import DataFrame, Series
 from pandas_ta_classic.overlap.sma import sma as ta_sma
 
 from mt.config.settings import settings
-from mt.frames import last_close
 from mt.indicators import (
     adx,
     average_turnover_usd,
@@ -25,10 +24,6 @@ class DailyTfb(Daily):
 
     @classmethod
     def does_clear(cls, frame: DataFrame) -> bool:
-        if frame.empty:
-            return False
-        if last_close(frame) < settings.screen.price_usd_min:
-            return False
         sessions = settings.daily_tfb.turnover_sessions
         return average_turnover_usd(frame, sessions) >= settings.screen.turnover_usd_min
 

@@ -10,6 +10,8 @@ from .values import (
     ChartTimeframe,
     Count,
     DataFeedName,
+    EquityPeriod,
+    EquityTimeframe,
     Fraction,
     MaxAge,
     OptionalFraction,
@@ -51,7 +53,6 @@ class RiskSection(SettingsSection):
     position_fraction_max: Fraction
     positions_max: Count
     notional_usd_min: Amount
-    does_allow_fractions: bool
 
     @model_validator(mode="after")
     def check_limits(self) -> Self:
@@ -80,7 +81,6 @@ class PortfolioSection(SettingsSection):
     symbols_per_request: Count
     orders_per_request: Count
     past_days: Count
-    preparation_attempts_max: Count
     pending_ttl_minutes: Count
     opening_lead_minutes: Count
     iteration_minutes: Count
@@ -196,6 +196,10 @@ class DashboardSection(SettingsSection):
     page_rows_max: Count
     pages_max: Count
     flat_quantity_max: Amount
+    equity_daily_period: EquityPeriod
+    equity_daily_timeframe: EquityTimeframe
+    equity_intraday_period: EquityPeriod
+    equity_intraday_timeframe: EquityTimeframe
     sma_lengths: tuple[int, ...] = Field(min_length=1)
     ledger_max_age_seconds: MaxAge
     chart_max_age_seconds: MaxAge
@@ -212,9 +216,7 @@ class DashboardSection(SettingsSection):
 
 
 class LoginSection(SettingsSection):
-    railway_oauth_client_id: str = Field(min_length=1)
-    railway_oauth_client_secret: RequiredSecret
-    allowed_railway_emails: frozenset[Annotated[str, AfterValidator(str.casefold)]] = Field(
-        min_length=1
-    )
+    oauth_client_id: str = Field(min_length=1)
+    oauth_client_secret: RequiredSecret
+    allowed_emails: frozenset[Annotated[str, AfterValidator(str.casefold)]] = Field(min_length=1)
     timeout: TimeoutSection

@@ -12,11 +12,11 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from mt.config.settings import LoginSettings, WebSettings
 from mt.data.alpaca import (
-    PAST_API_URL,
     AlpacaLiveClient,
     AlpacaPastClient,
     credential_headers,
     live_api_url,
+    past_api_url,
 )
 from mt.data.http import http_timeout
 from mt.data.railway import RailwayOAuthClient
@@ -79,7 +79,7 @@ def create_app() -> FastAPI:
                 timeout=http_timeout(configuration.broker.timeout),
             ) as live,
             httpx.AsyncClient(
-                base_url=PAST_API_URL,
+                base_url=past_api_url(),
                 headers=credentials,
                 timeout=http_timeout(configuration.past.timeout),
             ) as past,
@@ -131,7 +131,7 @@ def create_app() -> FastAPI:
 
         case "production":
             oauth = LoginSettings().login  # pyright: ignore[reportCallIssue]
-            oauth_client = RailwayOAuthClient(oauth, configuration.railway_oauth_redirect_uri)
+            oauth_client = RailwayOAuthClient(oauth, configuration.oauth_redirect_uri)
 
             @app.get("/login")
             async def login(request: Request) -> RedirectResponse:
@@ -164,7 +164,7 @@ def create_app() -> FastAPI:
                 if not code:
                     return error_response("OAuth code is missing", 400)
                 identity = await oauth_client.identify(code, verifier)
-                if identity.email.strip().casefold() not in oauth.allowed_railway_emails:
+                if identity.email.strip().casefold() not in oauth.allowed_emails:
                     return error_response("Railway user is not allowed", 403)
                 _start_session(request, identity.subject)
                 return RedirectResponse("/", status_code=303, headers=NO_STORE)

@@ -1,4 +1,3 @@
-import json
 from datetime import datetime
 from typing import Annotated
 
@@ -49,19 +48,6 @@ def _parse_strategy(value: str) -> StrategyKey:
     return selected[0]
 
 
-@app.command("backtest")
-def run_backtest(
-    symbols: Annotated[str, typer.Option()],
-    strategy: Annotated[str, typer.Option()] = settings.strategies[0],
-    start: Annotated[datetime, typer.Option()] = settings.backtest.start_at,
-    end: Annotated[datetime, typer.Option()] = settings.backtest.end_at,
-) -> None:
-    from mt.bot import backtest
-
-    results = backtest.run(_parse_strategy(strategy), _parse_symbols(symbols), start, end)
-    typer.echo(json.dumps(results, default=str, indent=2))
-
-
 @app.command("report")
 def run_report(
     strategy: Annotated[str, typer.Option()] = settings.strategies[0],
@@ -78,6 +64,6 @@ def run_report(
 def run_trade(
     strategies: Annotated[str, typer.Option()] = ",".join(settings.strategies),
 ) -> None:
-    from mt.bot import trade
+    from mt.bot.trade import trade
 
-    trade.run(_parse_strategies(strategies))
+    trade(_parse_strategies(strategies))

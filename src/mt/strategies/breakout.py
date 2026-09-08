@@ -24,7 +24,7 @@ class RangeMarks:
 
 
 @dataclass(frozen=True, slots=True)
-class Break:
+class Signal:
     symbol: str
     direction: Direction
     high: float
@@ -63,7 +63,7 @@ def is_setup_ready(high: float, low: float, close: float) -> bool:
     return settings.breakout.stop_fraction_min <= fraction <= settings.breakout.stop_fraction_max
 
 
-def session_volume(frame: DataFrame, day: date, clock: time) -> float | None:
+def relative_volume(frame: DataFrame, day: date, clock: time) -> float | None:
     sessions = settings.breakout.past_sessions
     regular = regular_session(frame)
     index = cast(DatetimeIndex, regular.index)
@@ -105,13 +105,6 @@ def session_volume(frame: DataFrame, day: date, clock: time) -> float | None:
     return current / clock_average
 
 
-def is_relative_volume_ready(frame: DataFrame, day: date, clock: time, multiple: float) -> bool:
-    if frame.empty:
-        return False
-    ratio = session_volume(frame, day, clock)
-    return ratio is not None and ratio >= multiple
-
-
 class Breakout(Strategy):
     is_stop_resting = True
     positions_max = settings.breakout.positions_max
@@ -123,7 +116,6 @@ class Breakout(Strategy):
     def __init__(self, portfolio: Portfolio) -> None:
         super().__init__(portfolio)
         self._scanned: set[str] = set()
-        self._past_failed_at: date | None = None
 
     @classmethod
     def cap_keys(cls) -> frozenset[StrategyKey]:
@@ -163,8 +155,6 @@ class Breakout(Strategy):
         opening_end, scan_end = self.entry_window(session.opens, session.closes)
         if now.minute % self.opening_minutes or not opening_end <= now <= scan_end:
             return
-        if not self.portfolio.market_symbols():
-            return
         if self.is_capped():
             self.portfolio.record(
                 self,
@@ -175,32 +165,24 @@ class Breakout(Strategy):
             )
             return
         symbols = self._unscanned(now.date())
-        if not symbols or self._past_failed_at == now.date():
+        if not symbols:
             return
-        try:
-            frames = self.portfolio.minute_frames(symbols, session.opens, now, self.opening_minutes)
-        except Exception as error:
-            self._stand_down(now.date(), error)
+        frames = self.portfolio.minute_frames(symbols, session.opens, now, self.opening_minutes)
+        signals = self._signals(frames, session, opening_end)
+        if not signals:
             return
-        breaks = self._breaks(frames, session, opening_end)
-        if not breaks:
-            return
-        breaks = ranked(
-            breaks,
+        signals = ranked(
+            signals,
             symbol=lambda found: found.symbol,
             turnover=lambda found: self._turnover(found.symbol, now),
         )
-        try:
-            histories = self.portfolio.minute_frames(
-                [found.symbol for found in breaks],
-                now - timedelta(days=settings.breakout.confirm_past_days),
-                now,
-                self.opening_minutes,
-            )
-        except Exception as error:
-            self._stand_down(now.date(), error)
-            return
-        for found in breaks:
+        histories = self.portfolio.minute_frames(
+            [found.symbol for found in signals],
+            now - timedelta(days=settings.breakout.confirm_past_days),
+            now,
+            self.opening_minutes,
+        )
+        for found in signals:
             if self.is_capped():
                 return
             frame = histories.get(found.symbol)
@@ -251,21 +233,12 @@ class Breakout(Strategy):
             return
         if ladder.stage == 0:
             return
-        try:
-            recent = self.portfolio.minute_frames(
-                [holding.symbol],
-                now - timedelta(days=settings.breakout.trail_past_days),
-                now,
-                self.opening_minutes,
-            ).get(holding.symbol)
-        except Exception as error:
-            self.portfolio.record(
-                self,
-                f"trail.stalled.{holding.symbol}.{now.date()}",
-                "warning",
-                f"{holding.symbol} trailing stop not updated: {type(error).__name__}",
-            )
-            return
+        recent = self.portfolio.minute_frames(
+            [holding.symbol],
+            now - timedelta(days=settings.breakout.trail_past_days),
+            now,
+            self.opening_minutes,
+        ).get(holding.symbol)
         if recent is None:
             return
         frame = regular_session(recent)
@@ -283,14 +256,11 @@ class Breakout(Strategy):
     def is_confirmed(self, frame: DataFrame, now: datetime) -> bool:
         if frame.empty:
             return False
-        return is_relative_volume_ready(
-            frame,
-            now.date(),
-            cast(Timestamp, frame.index[-1]).time(),
-            self.volume_multiple,
-        )
+        clock = cast(Timestamp, frame.index[-1]).time()
+        ratio = relative_volume(frame, now.date(), clock)
+        return ratio is not None and ratio >= self.volume_multiple
 
-    def is_overextended(self, found: Break, price: float) -> bool:
+    def is_overextended(self, found: Signal, price: float) -> bool:
         limit = self.entry_extension_max
         if limit is None:
             return False
@@ -302,7 +272,7 @@ class Breakout(Strategy):
     def _unscanned(self, day: date) -> list[str]:
         return [
             symbol
-            for symbol in self.portfolio.market_symbols()
+            for symbol in self.portfolio.symbols()
             if symbol not in self._scanned and not self.portfolio.is_taken(self, symbol, day)
         ]
 
@@ -310,25 +280,14 @@ class Breakout(Strategy):
         frame = self.portfolio.daily_frame(symbol, now)
         return 0.0 if frame is None else latest_turnover_usd(frame)
 
-    def _price(self, found: Break) -> float:
+    def _price(self, found: Signal) -> float:
         price = self.portfolio.last_price(found.symbol)
         return price if isfinite(price) and price > 0 else found.close
 
-    def _stand_down(self, day: date, error: Exception) -> None:
-        self._past_failed_at = day
-        detail = f"{type(error).__name__}: {error}"
-        self.portfolio.record(
-            self,
-            f"scan.stood_down.{day}",
-            "error",
-            f"{self.family.capitalize()} scan stood down for the day: "
-            f"past bars unavailable ({detail[:200]})",
-        )
-
-    def _breaks(
+    def _signals(
         self, frames: dict[str, DataFrame], session: Session, opening_end: datetime
-    ) -> list[Break]:
-        breaks: list[Break] = []
+    ) -> list[Signal]:
+        signals: list[Signal] = []
         for symbol, frame in frames.items():
             if frame.empty:
                 continue
@@ -340,21 +299,21 @@ class Breakout(Strategy):
             low = float(cast(Any, opening["low"]).min())
             if not all(isfinite(value) for value in (high, low)):
                 continue
-            signal = self._signal(after, high, low)
-            if signal is None:
+            found = self._first_break(after, high, low)
+            if found is None:
                 continue
-            position, direction, close = signal
+            position, direction, close = found
             self._scanned.add(symbol)
             if not is_setup_ready(high, low, close):
                 continue
             if len(after) - position > settings.breakout.signal_candles_max:
                 continue
-            breaks.append(
-                Break(symbol, direction, high, low, close, cast(Timestamp, after.index[position]))
+            signals.append(
+                Signal(symbol, direction, high, low, close, cast(Timestamp, after.index[position]))
             )
-        return breaks
+        return signals
 
-    def _signal(
+    def _first_break(
         self, candles: DataFrame, high: float, low: float
     ) -> tuple[int, Direction, float] | None:
         for position, value in enumerate(candles["close"].tolist()):

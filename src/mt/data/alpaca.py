@@ -11,9 +11,6 @@ from mt.config.values import BrokerMode, DataFeedName
 from .http import Payload
 
 
-PAST_API_URL = "https://data.alpaca.markets"
-
-
 class Account(Payload):
     account_number: str
     status: str
@@ -87,6 +84,10 @@ closed_orders_adapter = TypeAdapter(list[ClosedOrder])
 def live_api_url(broker_mode: BrokerMode) -> str:
     target = BaseURL.TRADING_PAPER if broker_mode == "paper" else BaseURL.TRADING_LIVE
     return target.value
+
+
+def past_api_url() -> str:
+    return BaseURL.DATA.value
 
 
 def credential_headers(broker: BrokerSection) -> dict[str, str]:
