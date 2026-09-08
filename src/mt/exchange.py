@@ -1,14 +1,12 @@
 from datetime import UTC, date, datetime
 from typing import Any, cast
-from zoneinfo import ZoneInfo
 
 import exchange_calendars
-from lumibot.constants import LUMIBOT_DEFAULT_TIMEZONE
 from pandas import DatetimeIndex
 
 
 XNYS = exchange_calendars.get_calendar("XNYS")
-TRADING_ZONE = ZoneInfo(LUMIBOT_DEFAULT_TIMEZONE)
+TRADING_ZONE = XNYS.tz
 
 
 def session_bounds(day: date) -> tuple[datetime, datetime] | None:
