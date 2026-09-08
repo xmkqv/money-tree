@@ -1,7 +1,6 @@
 ---
 name: humanizer
 description: only-if-asked
-disable-model-invocation: true
 license: MIT
 metadata:
   version: "2.11.2"

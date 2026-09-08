@@ -1,7 +1,6 @@
 ---
 name: checkpoint
 description: only-if-asked
-disable-model-invocation: true
 ---
 
 checkpoint(spec?)

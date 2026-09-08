@@ -1,7 +1,6 @@
 ---
 name: scan
 description: only-if-asked
-disable-model-invocation: true
 ---
 
 scan(fov=infer())

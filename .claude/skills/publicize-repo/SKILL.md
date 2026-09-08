@@ -1,7 +1,6 @@
 ---
 name: publicize-repo
 description: only-if-asked
-disable-model-invocation: true
 argument-hint: "[fov=infer()] [foe=infer()]"
 ---
 

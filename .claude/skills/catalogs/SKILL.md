@@ -1,7 +1,6 @@
 ---
 name: catalogs
 description: only-if-asked
-disable-model-invocation: true
 ---
 
 # rules

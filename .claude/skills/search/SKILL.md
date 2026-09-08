@@ -1,7 +1,6 @@
 ---
 name: search
 description: only-if-asked
-disable-model-invocation: true
 argument-hint: "[deep?] [recent?] [libs?] [docs?]"
 ---
 
