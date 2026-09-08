@@ -10,13 +10,14 @@ scan(fov=infer())
   layers.each(
     fix basic issues
     fix lexicon issues
+    fix dof issues
     log code issues
-    log drift_log()
+    log drift_log
   )
 
 # rules
 
-- authority: guides, spec > code, tests
+- authority: (guides, spec) > (code, tests)
 - auto-fixes consider guides and spec authoratitive over code and tests
 
 ## basic
@@ -25,22 +26,29 @@ scan(fov=infer())
 - grammar
 - simple lint issues
 
-## code
-
-- skills.guides.code.infer()
-- legacy echoes
-- redundant patterns
-- over-engineering
-
-## lexicon (names, forms, and conventions)
+## lexicon
 
 - skills.guides.*
 - voice asd-ste100
 - names consistency
+- idiomaticity
+
+## dof
+
+- duplication
+- redundancy
+- over-engineering
+- spaghetti
+- legacy echoes
+
+## code
+
+- skills.guides.code.infer()
+- spec satisfiability
 
 # drift log
 
-- table:log cols ≔ name, cat, in spec, extends spec, in code
+- table:log cols ≔ name, cat, in spec, in code
 - cat ∈ pattern, function, type, variable, constant, config, secret, {other}
 - count(spec sketches) = count(code sketches)
 - check log.names.each ∈ sketches.names

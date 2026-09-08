@@ -11,8 +11,8 @@ vendors:
 - an organizer refunds an order or cancels a show, and the affected tickets stop admitting
 
 ```sql:types
-type money_minor ≔ int8 check(value ≥ 0)
-type ticket_code ≔ text check(len(value) = 32)
+type money_minor = int8 check(value ≥ 0)
+type ticket_code = text check(len(value) = 32)
 ```
 
 ```sh:surface
@@ -27,7 +27,7 @@ stagepass ticket scan CODE --gate GATE
 
 ```ts:private
 cron:release_holds[1m]()
-    set hold[state=active, expires_at ≤ now()] state ← expired
+    set hold[state=active, expires_at ≤ now()] state = expired
 
 cron:send_reminders[1h]()
     show[state=published, starts_at ∈ now()+1day ± 30min].each(show →
@@ -43,6 +43,7 @@ cron:send_reminders[1h]()
 
 ```sql:types
 enum show_state { draft, published, cancelled, complete }
+
 event(
     id pk
     key nn uq text check(len(key) > 0)
@@ -63,11 +64,11 @@ show(
 publishShow(showId)
     inv:show.state ≠ draft → error
     inv:$venue.seatPlan(show.venue_id) is incomplete → error
-    set show[id=showId] state ← published
+    set show[id=showId] state = published
 
 cancelShow(showId, reason)
     inv:show.state ≠ published → error
-    set show[id=showId] state ← cancelled
+    set show[id=showId] state = cancelled
     order[show_id=showId, state=paid].each(order →
         refundOrder(order.id, reason)
         vendor[mail].send(order.email, cancellation(show, reason))
@@ -79,6 +80,7 @@ cancelShow(showId, reason)
 ```sql:types
 enum hold_state { active, expired, converted }
 enum order_state { pending, paid, refunded }
+
 hold(
     id pk
     show_id nn → show.id
@@ -113,21 +115,21 @@ holdSeats(showId, seatIds, sessionKey) → Hold[]
     inv:show.state ≠ published → error
     inv:any seat ∉ $venue.seatIds(show.venue_id) → error
     inv:any seat has an active hold or a ticket for the show → error
-    create one active hold per seat with expires_at ← now() + 10min
+    create one active hold per seat with expires_at = now() + 10min
 
 buyOrder(holdIds, email, paymentToken) → Order
     inv:holds span more than one show or session → error
     inv:any hold.state ≠ active → error
-    total ≔ sum(show.price) over holds
-    payment_key ≔ vendor[payments].charge(paymentToken, total, event.currency)
+    total = sum(show.price) over holds
+    payment_key = vendor[payments].charge(paymentToken, total, event.currency)
     create paid order with one ticket per hold
-    set hold[id ∈ holdIds] state ← converted
+    set hold[id ∈ holdIds] state = converted
 
 refundOrder(orderId, reason)
     inv:order.state ≠ paid → error
     vendor[payments].refund(order.payment_key)
-    set ticket[order_id=orderId] voided_at ← now()
-    set order[id=orderId] state ← refunded, refund_reason ← reason
+    set ticket[order_id=orderId] voided_at = now()
+    set order[id=orderId] state = refunded, refund_reason = reason
 ```
 
 # entry
@@ -143,14 +145,12 @@ entry(
 
 ```ts:surface
 scanTicket(code, gate) → admitted | duplicate | rejected
-    ticket ≔ ticket[code=code]
+    ticket = ticket[code=code]
     return rejected if ticket is absent, voided, or its show is cancelled
     return duplicate with the first entry if entry[ticket_id=ticket.id] exists
     create entry
     return admitted
 ```
-
----
 
 # refs
 
