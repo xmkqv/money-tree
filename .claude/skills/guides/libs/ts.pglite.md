@@ -4,7 +4,6 @@
 [catalog](../../catalogs/pgsql.md)
 [PGlite documentation](https://pglite.dev/docs)
 
-- use `@electric-sql/pglite@^0.5.4`
 - create the database with `PGlite.create()` so readiness and extension types are established
 - use parameterized queries for external values
 - use IndexedDB for browser persistence
@@ -34,21 +33,40 @@ const result = await database.query<{ id: number; title: string }>(
 
 ## durability
 
-- set `relaxedDurability` for an IndexedDB datadir because a durable flush costs about 20 ms per write
-- expect the flush to follow every query, reads included
-- await `fs.syncToFs(false)` before `close()` because a relaxed flush is scheduled, not awaited
-- hold the write lock across that final flush and the close
-- expect `close()` to return before IndexedDB releases the database
-- drop an IndexedDB datadir only after its close settles
+- a relaxed flush runs after each query and is never awaited, so one can outlive `close()`
+- a relaxed IndexedDB flush can fail with `ErrnoError` 44 when a query unlinks a file mid-flush, and the next flush repairs it
+- an `IdbFs` subclass passed as `fs` can fence flushes at close
+- a durable flush fault at close must still close the filesystem, or the IndexedDB connection stays open and `deleteDatabase` blocks
+- a relaxed flush fault surfaces as an unhandled rejection; the application decides which errno values are transient
 
 ```ts
-const database = await PGlite.create("idb://library", {
-  extensions: { live },
+import { IdbFs, PGlite } from "@electric-sql/pglite";
+
+class LibraryFs extends IdbFs {
+  #closing = false;
+  #inflight: Promise<void> = Promise.resolve();
+
+  override syncToFs(): Promise<void> {
+    if (this.#closing) return Promise.resolve();
+    this.#inflight = super.syncToFs();
+    return this.#inflight;
+  }
+
+  override async closeFs(): Promise<void> {
+    this.#closing = true;
+    await this.#inflight.catch(() => undefined);
+    try {
+      await super.syncToFs();
+    } finally {
+      await super.closeFs();
+    }
+  }
+}
+
+const database = await PGlite.create({
+  fs: new LibraryFs("library"),
   relaxedDurability: true,
 });
-
-await database.fs?.syncToFs(false);
-await database.close();
 ```
 
 ## live queries
@@ -102,4 +120,5 @@ window: 2026-07-02 through 2026-09-06
 - 2026-08-26: [`@electric-sql/pglite@0.5.8`](https://www.npmjs.com/package/@electric-sql/pglite/v/0.5.8) became the latest stable release
 - 2026-09-06: the [benchmarks](https://pglite.dev/benchmarks) measured an IndexedDB small-row insert at 21.0 ms durable against 0.085 ms relaxed
 - 2026-09-06: the [filesystems reference](https://pglite.dev/docs/filesystems) recorded IndexedDB as the browser default and OPFS as unsupported on Safari
-- 2026-09-06: `0.5.8` `pglite.ts` showed `syncToFs()` leaving `doSync()` unawaited under relaxed durability, and `close()` reaching `closeFs()` without awaiting the sync mutex
+- 2026-09-06: `0.5.8` `close()` scheduled one more relaxed flush through the terminate and freed the module without draining it
+- 2026-09-06: `0.5.8` relaxed flushes on IDBFS rejected with errno 44 mid-session with no close in progress
