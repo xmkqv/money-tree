@@ -238,7 +238,7 @@ class Portfolio(LumibotStrategy):
         self._record(
             "feed.announced",
             "info",
-            f"Intraday candles read the Alpaca {settings.past.intraday_feed} feed",
+            f"Intraday candles come from the broker's {settings.past.intraday_feed} feed",
         )
         positions = cast(list[Any], self.live.positions())
         self._restored = True
@@ -488,7 +488,7 @@ class Portfolio(LumibotStrategy):
                 holding.strategy,
                 f"stop.unplaced.{holding.symbol}.{holding.entered_at.date()}",
                 "warning",
-                f"{holding.symbol} has no resting stop yet: position not readable",
+                f"{holding.symbol} has no resting stop yet: quantity or stop price is not positive",
             )
             return
         if (holding.direction == 1 and stop >= price) or (

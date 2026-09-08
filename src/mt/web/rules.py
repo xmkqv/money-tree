@@ -46,7 +46,7 @@ MARKET = (
     f"US common stocks screened daily: share price ${settings.screen.price_usd_min:.0f} or "
     f"more, turnover {millions(settings.screen.turnover_usd_min)} or more averaged across the "
     f"last {settings.screen.turnover_sessions} completed sessions, and tradable and "
-    "fractionable at Alpaca."
+    "fractionable at the broker."
 )
 
 

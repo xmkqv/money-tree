@@ -12,7 +12,7 @@ STRATEGIES_BY_KEY: dict[StrategyKey, type[Strategy]] = {cls.key: cls for cls in 
 STRATEGIES_BY_CODE: dict[str, type[Strategy]] = {cls.code: cls for cls in STRATEGIES}
 
 if tuple(cls.key for cls in STRATEGIES) != STRATEGY_KEYS:
-    raise ValueError("registered strategies must match StrategyKey in order")
+    raise ValueError("registered strategies must match STRATEGY_KEYS in order")
 if len(STRATEGIES_BY_CODE) != len(STRATEGIES):
     raise ValueError("strategy order-tag codes must be unique")
 for _strategy in STRATEGIES:

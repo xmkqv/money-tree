@@ -28,7 +28,7 @@ def split_keys(value: object) -> object:
 
 def check_distinct(values: tuple[StrategyKey, ...]) -> tuple[StrategyKey, ...]:
     if len(set(values)) != len(values):
-        raise ValueError(f"strategy keys must be distinct, from: {', '.join(STRATEGY_KEYS)}")
+        raise ValueError(f"strategy keys must be distinct; choose from: {', '.join(STRATEGY_KEYS)}")
     return values
 
 

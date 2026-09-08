@@ -82,5 +82,5 @@ class RailwayOAuthClient:
             or not isinstance(email, str)
             or not email.strip()
         ):
-            raise ValueError("Railway OAuth identity did not contain a subject and email")
+            raise ValueError("Railway OAuth identity lacks a subject or an email")
         return RailwayIdentity(subject, email)

@@ -18,9 +18,9 @@ def normalize_ohlcv(frame: DataFrame, required: Collection[str]) -> DataFrame:
         column for column in required if not cast(Any, pandas_types).is_numeric_dtype(frame[column])
     )
     if non_numeric:
-        raise ValueError(f"bars required columns must be numeric: {', '.join(non_numeric)}")
+        raise ValueError(f"bar columns must be numeric: {', '.join(non_numeric)}")
     if frame.index.has_duplicates:
-        raise ValueError("bars timestamps must be unique")
+        raise ValueError("bar timestamps must be unique")
     values = frame.copy(deep=True)
     index = cast(DatetimeIndex, values.index)
     pandas_index = cast(Any, index)

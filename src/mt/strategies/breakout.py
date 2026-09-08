@@ -224,8 +224,8 @@ class Breakout(Strategy):
                     f"entry.overextended.{found.symbol}.{now.date()}",
                     "warning",
                     f"{found.symbol} entry skipped: price is more than "
-                    f"{self.entry_extension_max:g} of the opening range beyond the "
-                    "breakout level",
+                    f"{self.entry_extension_max:g} times the opening range size beyond "
+                    "the breakout level",
                 )
                 continue
             stop = range_stop(found.direction, found.high, found.low)

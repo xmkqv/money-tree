@@ -147,7 +147,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
             opened_at = date.fromisoformat(opened)
             closed_at = date.fromisoformat(closed)
         except ValueError:
-            return error_response("Dates are invalid", 422)
+            return error_response("The dates are invalid", 422)
         if closed_at < opened_at:
             return error_response("The close cannot precede the open", 422)
 

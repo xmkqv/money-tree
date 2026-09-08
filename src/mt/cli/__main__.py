@@ -38,7 +38,8 @@ def _parse_strategies(value: str) -> list[StrategyKey]:
         return list(strategy_selection_adapter.validate_python(value))
     except ValidationError as error:
         names = ", ".join(sorted(STRATEGY_KEYS))
-        raise typer.BadParameter(f"strategies must be unique keys from: {names}") from error
+        message = f"strategies must be distinct keys; choose from: {names}"
+        raise typer.BadParameter(message) from error
 
 
 def _parse_strategy(value: str) -> StrategyKey:
