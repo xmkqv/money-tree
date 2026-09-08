@@ -32,13 +32,13 @@ def normalize_ohlcv(frame: DataFrame, required: Collection[str]) -> DataFrame:
 
 def regular_session(frame: DataFrame) -> DataFrame:
     index = cast(DatetimeIndex, frame.index)
-    inside = (time_index(frame) >= session_starts(index)) & (
-        time_index(frame) < session_ends(index)
+    inside = (_time_index(frame) >= session_starts(index)) & (
+        _time_index(frame) < session_ends(index)
     )
     return cast(DataFrame, frame[inside])
 
 
-def time_index(frame: DataFrame) -> Any:
+def _time_index(frame: DataFrame) -> Any:
     return cast(Any, cast(DatetimeIndex, frame.index))
 
 
@@ -47,13 +47,13 @@ def last_close(frame: DataFrame) -> float:
 
 
 def frame_since(frame: DataFrame, start: datetime) -> DataFrame:
-    return cast(DataFrame, frame[time_index(frame) >= start])
+    return cast(DataFrame, frame[_time_index(frame) >= start])
 
 
 def frame_until(frame: DataFrame, cutoff: datetime) -> DataFrame:
-    return cast(DataFrame, frame[time_index(frame) <= cutoff])
+    return cast(DataFrame, frame[_time_index(frame) <= cutoff])
 
 
 def frame_between(frame: DataFrame, start: datetime, end: datetime) -> DataFrame:
-    index = time_index(frame)
+    index = _time_index(frame)
     return cast(DataFrame, frame[(index >= start) & (index < end)])

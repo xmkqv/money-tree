@@ -78,12 +78,12 @@ def bars_atr(bars: list[Bar]) -> float | None:
 
 
 def bar_time(bar: Bar) -> datetime:
-    return datetime.fromisoformat(bar.at.replace("Z", "+00:00")).astimezone(TRADING_ZONE)
+    return datetime.fromisoformat(bar.opened_at.replace("Z", "+00:00")).astimezone(TRADING_ZONE)
 
 
 def bar_row(bar: Bar) -> BarRow:
     return {
-        "t": bar.at,
+        "t": bar.opened_at,
         "o": bar.open,
         "h": bar.high,
         "l": bar.low,

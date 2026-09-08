@@ -26,7 +26,7 @@ def latest_atr(frame: DataFrame) -> float:
     return latest
 
 
-def latest_dollar_volume(frame: DataFrame) -> float:
+def latest_turnover_usd(frame: DataFrame) -> float:
     if frame.empty:
         return 0.0
     volume = float(frame["volume"].iloc[-1])
@@ -36,7 +36,7 @@ def latest_dollar_volume(frame: DataFrame) -> float:
     return volume * close
 
 
-def average_dollar_volume(frame: DataFrame, sessions: int) -> float:
+def average_turnover_usd(frame: DataFrame, sessions: int) -> float:
     closes = frame["close"].tail(sessions)
     volumes = frame["volume"].tail(sessions)
     if len(closes) < sessions or closes.count() < sessions or volumes.count() < sessions:

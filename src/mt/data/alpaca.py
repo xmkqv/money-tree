@@ -55,7 +55,7 @@ class ClosedOrder(Payload):
 
 
 class Bar(Payload):
-    at: str = Field(alias="t")
+    opened_at: str = Field(alias="t")
     open: float = Field(alias="o")
     high: float = Field(alias="h")
     low: float = Field(alias="l")

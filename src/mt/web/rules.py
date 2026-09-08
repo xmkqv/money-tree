@@ -100,7 +100,7 @@ DAILY_PROSE: dict[StrategyKey, DailyProse] = {
         market_source="portfolio.py · _screen, strategies/daily_tfb.py · does_clear",
         setup=(
             f"The closing price is above its {settings.daily_tfb.trend_sessions}-day average, "
-            f"that average is higher than it was {settings.daily_tfb.average_lag_sessions} "
+            f"that average is higher than it was {settings.daily_tfb.trend_lag_sessions} "
             "sessions ago, and the close beats the previous session's high."
         ),
         setup_source="strategies/daily_tfb.py · does_enter",

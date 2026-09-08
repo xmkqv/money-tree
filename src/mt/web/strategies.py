@@ -85,7 +85,7 @@ def portfolio_rules(risk: RiskSection) -> list[Row]:
             field="One owner per stock",
             value="Only one strategy holds a given stock at a time; the others skip it while "
             "that position is open.",
-            source="portfolio.py · _is_claimed",
+            source="portfolio.py · _is_owned",
         ),
         Row(
             field="Daily loss limit",

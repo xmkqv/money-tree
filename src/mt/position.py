@@ -27,10 +27,10 @@ def entry_quantity(
         quantity = min(quantity, equity * risk_per_trade_max / stop_distance)
     if quantity * price < notional_usd_min:
         return Decimal(0)
-    return quantity_value(quantity, is_fractional)
+    return round_quantity(quantity, is_fractional)
 
 
-def quantity_value(quantity: float, is_fractional: bool) -> Decimal:
+def round_quantity(quantity: float, is_fractional: bool) -> Decimal:
     increment = Decimal("0.000000001" if is_fractional else "1")
     return Decimal(str(quantity)).quantize(increment, rounding=ROUND_DOWN)
 

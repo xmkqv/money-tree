@@ -15,7 +15,7 @@ from mt.indicators import (
     finite_value,
     indicator_series,
     latest_atr,
-    latest_dollar_volume,
+    latest_turnover_usd,
 )
 
 from .base import Candidate, Holding, Portfolio, Session, Strategy, ranked
@@ -59,7 +59,7 @@ class Daily(Strategy):
     def __init__(self, portfolio: Portfolio) -> None:
         super().__init__(portfolio)
         self._candidates: list[Candidate] = []
-        self._scanned_on: date | None = None
+        self._scanned_at: date | None = None
 
     @classmethod
     def entry_window(cls, opens: datetime, closes: datetime) -> tuple[datetime, datetime]:
@@ -75,7 +75,7 @@ class Daily(Strategy):
 
     def begin(self, day: date) -> None:
         self._candidates = []
-        self._scanned_on = None
+        self._scanned_at = None
 
     def run(self, session: Session) -> None:
         now = session.now
@@ -91,8 +91,8 @@ class Daily(Strategy):
                 f"{settings.daily.average_sessions}-day average",
             )
             return
-        if self._scanned_on != now.date():
-            self._scanned_on = now.date()
+        if self._scanned_at != now.date():
+            self._scanned_at = now.date()
             self._candidates = self.scan(session)
         for candidate in self._candidates:
             if self.is_capped():
@@ -158,7 +158,7 @@ class Daily(Strategy):
         return ranked(
             rows,
             symbol=lambda row: row[0],
-            turnover=lambda row: latest_dollar_volume(row[1]),
+            turnover=lambda row: latest_turnover_usd(row[1]),
         )
 
     def _is_earnings_clear(self, symbol: str, day: date) -> bool:

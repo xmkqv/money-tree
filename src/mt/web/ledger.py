@@ -233,7 +233,7 @@ def totals(cycles: list[Cycle]) -> Totals:
     )
 
 
-def sessions(cycles: list[Cycle], closes: dict[str, float], opening: float) -> list[Day]:
+def days(cycles: list[Cycle], closes: dict[str, float], opening: float) -> list[Day]:
     grouped: defaultdict[str, list[Cycle]] = defaultdict(list)
     for cycle in cycles:
         grouped[cycle["date"]].append(cycle)
@@ -331,13 +331,13 @@ async def build_ledger(
         windows=entry_windows(),
         positions=rows,
         trades=cycles,
-        days=sessions(cycles, closes, invested),
+        days=days(cycles, closes, invested),
         totals=totals(cycles),
         equityDaily=equity_daily,
         intraday=intraday_points,
         intradayDate=intraday_date,
         benchmarkSymbol=benchmark,
-        benchmark=[BenchmarkClose(date=bar.at[:10], close=bar.close) for bar in bars],
+        benchmark=[BenchmarkClose(date=bar.opened_at[:10], close=bar.close) for bar in bars],
     )
 
 

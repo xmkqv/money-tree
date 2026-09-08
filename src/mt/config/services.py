@@ -35,6 +35,6 @@ def iter_keys(model: type[BaseModel], prefix: str) -> Iterator[str]:
             yield f"{prefix}{name.upper()}"
 
 
-def service_keys(service: ServiceName) -> list[str]:
+def service_secrets(service: ServiceName) -> list[str]:
     read = {key for model in SERVICE_SETTINGS[service] for key in iter_keys(model, "")}
     return sorted(secret_keys() & read)

@@ -9,7 +9,7 @@ from mt.config.settings import settings
 from mt.config.values import StrategyKey
 from mt.exchange import TRADING_ZONE
 from mt.frames import frame_between, frame_since, frame_until, regular_session
-from mt.indicators import latest_atr, latest_dollar_volume
+from mt.indicators import latest_atr, latest_turnover_usd
 from mt.position import Direction, next_stop
 
 from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, family_keys, ranked
@@ -35,7 +35,7 @@ class Break:
     high: float
     low: float
     close: float
-    at: Timestamp
+    signal_at: Timestamp
 
 
 def range_level(high: float, low: float, fraction: float) -> float:
@@ -133,7 +133,7 @@ class Breakout(Strategy):
     def __init__(self, portfolio: Portfolio) -> None:
         super().__init__(portfolio)
         self._scanned: set[str] = set()
-        self._past_failed_on: date | None = None
+        self._past_failed_at: date | None = None
 
     @classmethod
     def cap_keys(cls) -> frozenset[StrategyKey]:
@@ -184,7 +184,7 @@ class Breakout(Strategy):
             )
             return
         symbols = self._unscanned(now.date())
-        if not symbols or self._past_failed_on == now.date():
+        if not symbols or self._past_failed_at == now.date():
             return
         try:
             frames = self.portfolio.minute_frames(symbols, session.opens, now, self.opening_minutes)
@@ -215,7 +215,7 @@ class Breakout(Strategy):
             frame = histories.get(found.symbol)
             if frame is None:
                 continue
-            if not self.is_confirmed(frame_until(frame, found.at), now):
+            if not self.is_confirmed(frame_until(frame, found.signal_at), now):
                 continue
             price = self._price(found)
             if self.is_overextended(found, price):
@@ -319,14 +319,14 @@ class Breakout(Strategy):
 
     def _turnover(self, symbol: str, now: datetime) -> float:
         frame = self.portfolio.daily_frame(symbol, now)
-        return 0.0 if frame is None else latest_dollar_volume(frame)
+        return 0.0 if frame is None else latest_turnover_usd(frame)
 
     def _price(self, found: Break) -> float:
         price = self.portfolio.last_price(found.symbol)
         return price if isfinite(price) and price > 0 else found.close
 
     def _stand_down(self, day: date, error: Exception) -> None:
-        self._past_failed_on = day
+        self._past_failed_at = day
         detail = f"{type(error).__name__}: {error}"
         self.portfolio.record(
             self,

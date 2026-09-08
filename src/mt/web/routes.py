@@ -144,15 +144,15 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         closed: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
     ) -> JSONResponse:
         try:
-            opened_on = date.fromisoformat(opened)
-            closed_on = date.fromisoformat(closed)
+            opened_at = date.fromisoformat(opened)
+            closed_at = date.fromisoformat(closed)
         except ValueError:
             return error_response("Dates are invalid", 422)
-        if closed_on < opened_on:
+        if closed_at < opened_at:
             return error_response("The close cannot precede the open", 422)
 
         rules = dashboard_section.chart_timeframes[timeframe]
-        start, display, end = chart_window(rules, opened_on, closed_on)
+        start, display, end = chart_window(rules, opened_at, closed_at)
 
         async def build() -> list[BarRow]:
             if timeframe == "1Hour":
@@ -191,14 +191,14 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         opened: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
     ) -> JSONResponse:
         try:
-            opened_on = date.fromisoformat(opened)
+            opened_at = date.fromisoformat(opened)
         except ValueError:
             return error_response("The open date is invalid", 422)
 
         async def build() -> Levels:
             direction: Direction = 1 if side == "long" else -1
             payload = Levels(strategy=strategy, reconstructed=True)
-            bounds = session_bounds(opened_on)
+            bounds = session_bounds(opened_at)
             found_class = strategy_class(strategy) if is_strategy_key(strategy) else None
             if found_class is not None and issubclass(found_class, Breakout) and bounds:
                 opens = bounds[0]
@@ -218,8 +218,8 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 past_bars = await past(request).bars(
                     symbol,
                     "1Day",
-                    (opened_on - timedelta(days=dashboard_section.levels_past_days)).isoformat(),
-                    datetime.combine(opened_on, dtime(0, 0), TRADING_ZONE).isoformat(),
+                    (opened_at - timedelta(days=dashboard_section.levels_past_days)).isoformat(),
+                    datetime.combine(opened_at, dtime(0, 0), TRADING_ZONE).isoformat(),
                     limit=dashboard_section.levels_past_days,
                 )
                 average_range = bars_atr(past_bars)

@@ -5,7 +5,7 @@ from mt.config.settings import settings
 from mt.frames import last_close
 from mt.indicators import (
     adx,
-    average_dollar_volume,
+    average_turnover_usd,
     finite_row,
     finite_value,
     indicator_column,
@@ -31,7 +31,7 @@ class DailyTfb(Daily):
         if last_close(frame) < settings.screen.price_usd_min:
             return False
         sessions = settings.daily_tfb.turnover_sessions
-        return average_dollar_volume(frame, sessions) >= settings.screen.turnover_usd_min
+        return average_turnover_usd(frame, sessions) >= settings.screen.turnover_usd_min
 
     @classmethod
     def does_enter(cls, frame: DataFrame) -> bool:
@@ -42,7 +42,7 @@ class DailyTfb(Daily):
         directional = indicator_column(adx(frame), f"ADX_{period}", 1)
         if not isinstance(average_trend, Series) or directional is None:
             return False
-        span = daily_tfb.average_lag_sessions + 1
+        span = daily_tfb.trend_lag_sessions + 1
         if average_trend.tail(span).count() < span:
             return False
         row = finite_row(

@@ -14,8 +14,8 @@ from mt.data.live import BrokerLive, EngineLive, Live
 from mt.data.past import Past
 from mt.exchange import TRADING_ZONE, session_bounds
 from mt.frames import last_close
-from mt.indicators import average_dollar_volume
-from mt.position import Direction, entry_quantity, is_fractional_allowed, quantity_value, round_stop
+from mt.indicators import average_turnover_usd
+from mt.position import Direction, entry_quantity, is_fractional_allowed, round_quantity, round_stop
 from mt.strategies.base import Candidate, EventLevel, Holding, Session, Strategy
 from mt.strategies.order_tag import find_order_tag, order_tag
 from mt.strategies.registry import STRATEGIES
@@ -61,19 +61,19 @@ class Portfolio(LumibotStrategy):
         self._strategies = {cls.key: cls(self) for cls in STRATEGIES}
         self._holdings: dict[str, Holding] = {}
         self._pending: dict[str, Pending] = {}
-        self._claims: dict[str, StrategyKey | None] = {}
+        self._owners: dict[str, StrategyKey | None] = {}
         self._stops: dict[str, tuple[float, float]] = {}
         self._closing: set[str] = set()
         self._events: set[str] = set()
         self._traded: dict[str, set[tuple[date, str]]] = {cls.family: set() for cls in STRATEGIES}
         self._day: date | None = None
-        self._baseline_equity = 0.0
-        self._locked_on: date | None = None
+        self._session_baseline = 0.0
+        self._locked_at: date | None = None
         self._daily_frames: dict[str, DataFrame] = {}
         self._market_symbols: list[str] = []
-        self._prepared_on: date | None = None
+        self._prepared_at: date | None = None
         self._preparation_attempts = 0
-        self._preparation_attempts_on: date | None = None
+        self._preparation_attempts_at: date | None = None
         self._restored = False
 
     def before_market_opens(self) -> None:
@@ -170,10 +170,10 @@ class Portfolio(LumibotStrategy):
         return held + ordered
 
     def is_taken(self, strategy: Strategy, symbol: str, day: date) -> bool:
-        return self._is_claimed(symbol) or (day, symbol) in self._traded[strategy.family]
+        return self._is_owned(symbol) or (day, symbol) in self._traded[strategy.family]
 
-    def record(self, strategy: Strategy, key: str, level: EventLevel, message: str) -> None:
-        self._record(f"{strategy.key}.{key}", level, message, strategy.key)
+    def record(self, strategy: Strategy, kind: str, level: EventLevel, message: str) -> None:
+        self._record(f"{strategy.key}.{kind}", level, message, strategy.key)
 
     def _is_runnable(self, strategy: Strategy) -> bool:
         return strategy.key in self._selected and not strategy.is_paused
@@ -185,16 +185,16 @@ class Portfolio(LumibotStrategy):
 
     def _record(
         self,
-        key: str,
+        kind: str,
         level: EventLevel,
         message: str,
         strategy: StrategyKey | None = None,
     ) -> None:
-        if key in self._events:
+        if kind in self._events:
             return
-        self._events.add(key)
+        self._events.add(kind)
         if self.exporter is not None:
-            self.exporter.publish("running", key, level, message, strategy=strategy)
+            self.exporter.publish("running", kind, level, message, strategy=strategy)
 
     def _equity(self) -> float:
         value = self.get_portfolio_value()
@@ -206,21 +206,21 @@ class Portfolio(LumibotStrategy):
         if day == self._day:
             return
         self._day = day
-        self._baseline_equity = self._equity()
+        self._session_baseline = self._equity()
         self._events.clear()
         for strategy in self._strategies.values():
             strategy.begin(day)
 
     def _is_daily_loss_reached(self, day: date) -> bool:
-        if self._locked_on == day:
+        if self._locked_at == day:
             return True
         limit = settings.risk.per_day_max
-        if self._equity() > self._baseline_equity * (1.0 - limit):
+        if self._equity() > self._session_baseline * (1.0 - limit):
             return False
         self.cancel_open_orders()
         for holding in list(self._holdings.values()):
             self.exit(holding)
-        self._locked_on = day
+        self._locked_at = day
         self._record("day.locked", "warning", "Daily loss limit reached")
         return True
 
@@ -256,7 +256,7 @@ class Portfolio(LumibotStrategy):
             quantity = float(position.qty)
             held = [(order, tag) for order, tag in tagged if str(order.symbol) == symbol]
             if not held or quantity == 0:
-                self._claims[symbol] = None
+                self._owners[symbol] = None
                 continue
             key = held[0][1].strategy
             strategy = self._strategies[key]
@@ -282,9 +282,9 @@ class Portfolio(LumibotStrategy):
             )
             holding.ladder = strategy.ladder(holding, original, abs(quantity))
             self._holdings[symbol] = holding
-            self._claims[symbol] = key
-            traded_on = entered_at.astimezone(TRADING_ZONE).date()
-            self._traded[strategy.family].add((traded_on, symbol))
+            self._owners[symbol] = key
+            traded_at = entered_at.astimezone(TRADING_ZONE).date()
+            self._traded[strategy.family].add((traded_at, symbol))
             if strategy.key not in self._selected:
                 self._record(
                     f"strategy.unselected.{key}",
@@ -336,10 +336,10 @@ class Portfolio(LumibotStrategy):
 
     def _prepare(self, now: datetime) -> None:
         day = now.date()
-        if self._prepared_on == day:
+        if self._prepared_at == day:
             return
-        if self._preparation_attempts_on != day:
-            self._preparation_attempts_on = day
+        if self._preparation_attempts_at != day:
+            self._preparation_attempts_at = day
             self._preparation_attempts = 0
         if self._preparation_attempts >= settings.portfolio.preparation_attempts_max:
             return
@@ -364,7 +364,7 @@ class Portfolio(LumibotStrategy):
             return
         self._daily_frames = daily_frames
         self._market_symbols = list(symbols)
-        self._prepared_on = day
+        self._prepared_at = day
 
     def _screen(self, now: datetime) -> list[str]:
         symbols = sorted(self.live.listing() & stocks())
@@ -385,7 +385,7 @@ class Portfolio(LumibotStrategy):
             return False
         return (
             last_close(completed) >= settings.screen.price_usd_min
-            and average_dollar_volume(completed, settings.screen.turnover_sessions)
+            and average_turnover_usd(completed, settings.screen.turnover_sessions)
             >= settings.screen.turnover_usd_min
         )
 
@@ -402,7 +402,7 @@ class Portfolio(LumibotStrategy):
         direction = candidate.direction
         if (
             not self._is_runnable(strategy)
-            or self._is_claimed(symbol)
+            or self._is_owned(symbol)
             or direction * (price - stop) <= 0
         ):
             return False
@@ -463,7 +463,7 @@ class Portfolio(LumibotStrategy):
             price,
         )
         self._pending[symbol] = Pending(holding, now, notional)
-        self._claims[symbol] = strategy.key
+        self._owners[symbol] = strategy.key
         order = self.create_order(
             symbol,
             quantity,
@@ -502,7 +502,7 @@ class Portfolio(LumibotStrategy):
             )
             self.exit(holding)
             return
-        size = quantity_value(
+        size = round_quantity(
             amount,
             is_fractional_allowed(holding.direction, settings.risk.does_allow_fractions),
         )
@@ -532,7 +532,7 @@ class Portfolio(LumibotStrategy):
         if amount <= 0:
             self._release(holding.symbol)
             return
-        size = quantity_value(
+        size = round_quantity(
             amount,
             is_fractional_allowed(holding.direction, settings.risk.does_allow_fractions),
         )
@@ -569,12 +569,12 @@ class Portfolio(LumibotStrategy):
         position = self.get_position(symbol)
         return 0.0 if position is None else abs(float(position.quantity))
 
-    def _is_claimed(self, symbol: str) -> bool:
-        return symbol in self._claims or symbol in self._pending or symbol in self._holdings
+    def _is_owned(self, symbol: str) -> bool:
+        return symbol in self._owners or symbol in self._pending or symbol in self._holdings
 
     def _release(self, symbol: str) -> None:
         self._pending.pop(symbol, None)
         self._holdings.pop(symbol, None)
-        self._claims.pop(symbol, None)
+        self._owners.pop(symbol, None)
         self._stops.pop(symbol, None)
         self._closing.discard(symbol)

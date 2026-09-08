@@ -15,7 +15,7 @@ type Unattributed = Literal["unattributed"]
 class OrderTag:
     strategy: StrategyKey
     kind: OrderKind
-    signal: str
+    symbol: str
     risk_fraction: float
 
 
@@ -26,10 +26,10 @@ ORDER_KINDS: tuple[OrderKind, ...] = get_args(OrderKind.__value__)
 UNATTRIBUTED: Unattributed = "unattributed"
 
 
-def order_tag(strategy: StrategyKey, kind: OrderKind, signal: str, risk_fraction: float) -> str:
+def order_tag(strategy: StrategyKey, kind: OrderKind, symbol: str, risk_fraction: float) -> str:
     scaled = round(risk_fraction * RISK_FRACTION_SCALE)
     code = strategy_class(strategy).code
-    return "-".join((ORDER_TAG_PREFIX, code, kind, signal, str(scaled), uuid4().hex[:8]))
+    return "-".join((ORDER_TAG_PREFIX, code, kind, symbol, str(scaled), uuid4().hex[:8]))
 
 
 def find_order_tag(value: str) -> OrderTag | None:

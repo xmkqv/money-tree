@@ -5,7 +5,7 @@ from typing import Annotated
 import typer
 from pydantic import ValidationError
 
-from mt.config.services import SERVICE_SETTINGS, ServiceName, service_keys
+from mt.config.services import SERVICE_SETTINGS, ServiceName, service_secrets
 from mt.config.settings import settings
 from mt.config.values import STRATEGY_KEYS, StrategyKey, strategy_selection_adapter
 
@@ -17,7 +17,7 @@ app.add_typer(environment, name="env")
 
 @environment.command("list")
 def list_environment(service: Annotated[str, typer.Option()]) -> None:
-    for key in service_keys(_parse_service(service)):
+    for key in service_secrets(_parse_service(service)):
         typer.echo(key)
 
 

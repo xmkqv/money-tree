@@ -160,7 +160,7 @@ class DailySmaSection(DailyVariationSection):
 
 class DailyTfbSection(DailyVariationSection):
     turnover_sessions: Count
-    average_lag_sessions: Count
+    trend_lag_sessions: Count
 
 
 class WebSection(SettingsSection):
