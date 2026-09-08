@@ -10,7 +10,8 @@ from mt.config.settings import settings
 from mt.frames import last_close
 
 
-def latest_atr(frame: DataFrame, period: int = settings.indicators.period) -> float:
+def latest_atr(frame: DataFrame) -> float:
+    period = settings.indicators.period
     values = ta_atr(
         frame["high"],
         frame["low"],
@@ -26,7 +27,7 @@ def latest_atr(frame: DataFrame, period: int = settings.indicators.period) -> fl
 
 
 def latest_dollar_volume(frame: DataFrame) -> float:
-    if frame.empty or not {"close", "volume"}.issubset(frame.columns):
+    if frame.empty:
         return 0.0
     volume = float(frame["volume"].iloc[-1])
     close = last_close(frame)
@@ -36,8 +37,6 @@ def latest_dollar_volume(frame: DataFrame) -> float:
 
 
 def average_dollar_volume(frame: DataFrame, sessions: int) -> float:
-    if sessions < 1 or not {"close", "volume"}.issubset(frame.columns):
-        return 0.0
     closes = frame["close"].tail(sessions)
     volumes = frame["volume"].tail(sessions)
     if len(closes) < sessions or closes.count() < sessions or volumes.count() < sessions:
