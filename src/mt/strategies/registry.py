@@ -16,8 +16,6 @@ if tuple(cls.key for cls in STRATEGIES) != STRATEGY_KEYS:
 if len(STRATEGIES_BY_CODE) != len(STRATEGIES):
     raise ValueError("strategy order-tag codes must be unique")
 for _strategy in STRATEGIES:
-    if _strategy.key != f"{_strategy.family}_{_strategy.variation.lower()}":
-        raise ValueError(f"{_strategy.__name__} key must be its family and variation")
     if len(_strategy.code) != 1:
         raise ValueError(f"{_strategy.__name__} order-tag code must be one character")
 

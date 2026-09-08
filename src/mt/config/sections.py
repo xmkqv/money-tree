@@ -118,6 +118,7 @@ class BreakoutSection(SettingsSection):
     stop_fraction_min: Fraction
     stop_fraction_max: Fraction
     positions_max: Count
+    target_fractions: tuple[Fraction, Fraction, Fraction]
     past_sessions: Count
     signal_candles_max: Count
     trail_atr_multiple: Amount

@@ -14,7 +14,6 @@ from .daily import Daily
 class DailySma(Daily):
     key = "daily_sma"
     code = "s"
-    variation = "SMA"
     is_paused = settings.daily_sma.is_paused
     positions_max = settings.daily_sma.positions_max
     risk_fraction_max = settings.daily_sma.risk_fraction_max

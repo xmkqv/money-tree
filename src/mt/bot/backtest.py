@@ -37,7 +37,7 @@ def run(
     datasource = YahooDataBacktesting
     datasource_configuration: dict[str, str | bool] | None = None
     datasource_options: dict[str, object] = {}
-    if strategy_class(strategy_key).family == Breakout.family:
+    if issubclass(strategy_class(strategy_key), Breakout):
         datasource = AlpacaBacktesting
         datasource_configuration = broker_credentials(paper=True)
         datasource_options = {

@@ -86,6 +86,12 @@ class Strategy(ABC):
     positions_max: ClassVar[int] = settings.risk.positions_max
     risk_fraction_max: ClassVar[float | None] = None
 
+    def __init_subclass__(cls) -> None:
+        if "key" in cls.__dict__:
+            family, _, variation = cls.key.partition("_")
+            cls.family = family
+            cls.variation = variation.upper() if variation.isalpha() else variation
+
     def __init__(self, portfolio: Portfolio) -> None:
         self.portfolio = portfolio
 

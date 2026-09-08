@@ -17,7 +17,6 @@ from .daily import Daily
 class DailyTfb(Daily):
     key = "daily_tfb"
     code = "t"
-    variation = "TFB"
     is_paused = settings.daily_tfb.is_paused
     positions_max = settings.daily_tfb.positions_max
     risk_fraction_max = settings.daily_tfb.risk_fraction_max

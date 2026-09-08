@@ -52,7 +52,6 @@ def does_signal_exit(frame: DataFrame) -> bool:
 
 
 class Daily(Strategy):
-    family = "daily"
     stop_atr_multiple: ClassVar[float]
     does_heed_earnings: ClassVar[bool]
 

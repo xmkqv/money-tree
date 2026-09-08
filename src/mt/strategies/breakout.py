@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from itertools import accumulate
 from math import isfinite
 from typing import Any, ClassVar, cast
 
@@ -112,7 +113,6 @@ def is_relative_volume_ready(frame: DataFrame, day: date, clock: time, multiple:
 
 
 class Breakout(Strategy):
-    family = "breakout"
     is_stop_resting = True
     positions_max = settings.breakout.positions_max
     opening_minutes: ClassVar[int]
@@ -153,7 +153,8 @@ class Breakout(Strategy):
 
     def ladder(self, holding: Holding, original: float, remaining: float) -> Ladder | None:
         fraction = remaining / original if original else 1.0
-        stage = 0 if fraction > 0.5 else 1 if fraction > 0.25 else 2
+        closed = accumulate(settings.breakout.target_fractions[:-1])
+        stage = sum(fraction <= 1.0 - sold for sold in closed)
         targets = self.target_prices(holding.entry, holding.stop, holding.direction)
         return Ladder(original, targets, stage)
 
@@ -240,13 +241,11 @@ class Breakout(Strategy):
             else price <= ladder.targets[ladder.stage]
         )
         if reached:
-            if ladder.stage == 0:
-                quantity = ladder.original_quantity * 0.5
-            elif ladder.stage == 1:
-                quantity = ladder.original_quantity * 0.25
-            else:
+            fractions = settings.breakout.target_fractions
+            if ladder.stage == len(fractions) - 1:
                 self.portfolio.exit(holding)
                 return
+            quantity = ladder.original_quantity * fractions[ladder.stage]
             ladder.stage += 1
             self.portfolio.exit(holding, quantity)
             return

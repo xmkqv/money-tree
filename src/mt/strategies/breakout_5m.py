@@ -6,7 +6,6 @@ from .breakout import Breakout
 class Breakout5m(Breakout):
     key = "breakout_5m"
     code = "o"
-    variation = "5m"
     is_paused = settings.breakout_5m.is_paused
     opening_minutes = settings.breakout_5m.opening_minutes
     volume_multiple = settings.breakout_5m.volume_multiple
