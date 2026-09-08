@@ -30,9 +30,6 @@ class Pending:
     notional: float
 
 
-STOP_COVERAGE_DRIFT_MAX = 1e-6
-
-
 class Portfolio(LumibotStrategy):
     exporter: StateExporter | None = None
 
@@ -333,7 +330,8 @@ class Portfolio(LumibotStrategy):
             if ladder is not None and ladder.stage == 0:
                 ladder.original_quantity = max(ladder.original_quantity, quantity)
             resting = self._stops.get(symbol)
-            if resting is None or resting[1] < quantity - STOP_COVERAGE_DRIFT_MAX:
+            drift_max = settings.portfolio.stop_coverage_drift_max
+            if resting is None or resting[1] < quantity - drift_max:
                 self.protect(holding, quantity)
 
     def _prepare(self, now: datetime) -> None:
@@ -441,7 +439,8 @@ class Portfolio(LumibotStrategy):
             abs(price - stop),
             settings.risk.position_fraction_max,
             risk_fraction,
-            is_fractional_allowed(direction, settings.risk.fractional_orders),
+            settings.risk.notional_usd_min,
+            is_fractional_allowed(direction, settings.risk.does_allow_fractions),
         )
         notional = float(quantity) * price
         if quantity <= 0 or gross + notional > equity:
@@ -505,7 +504,7 @@ class Portfolio(LumibotStrategy):
             return
         size = quantity_value(
             amount,
-            is_fractional_allowed(holding.direction, settings.risk.fractional_orders),
+            is_fractional_allowed(holding.direction, settings.risk.does_allow_fractions),
         )
         if size <= 0 or self._stops.get(holding.symbol) == (stop, float(size)):
             return
@@ -535,7 +534,7 @@ class Portfolio(LumibotStrategy):
             return
         size = quantity_value(
             amount,
-            is_fractional_allowed(holding.direction, settings.risk.fractional_orders),
+            is_fractional_allowed(holding.direction, settings.risk.does_allow_fractions),
         )
         if size <= 0:
             return

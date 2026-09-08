@@ -280,7 +280,7 @@ class Breakout(Strategy):
         if recent is None:
             return
         frame = regular_session(recent)
-        if len(frame) < settings.breakout.trail_bars_min:
+        if len(frame) < settings.breakout.trail_candles_min:
             return
         trail = settings.breakout.trail_atr_multiple * latest_atr(frame)
         candidate = (

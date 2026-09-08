@@ -2,8 +2,6 @@ from decimal import ROUND_DOWN, Decimal
 from math import ceil, floor, isfinite
 from typing import Literal
 
-from mt.config.settings import settings
-
 
 type Direction = Literal[-1, 1]
 
@@ -14,7 +12,8 @@ def entry_quantity(
     stop_distance: float,
     position_fraction_max: float,
     risk_per_trade_max: float | None,
-    fractional_orders: bool,
+    notional_usd_min: float,
+    is_fractional: bool,
 ) -> Decimal:
     if (
         not all(isfinite(value) for value in (equity, price, stop_distance))
@@ -26,18 +25,18 @@ def entry_quantity(
     quantity = equity * position_fraction_max / price
     if risk_per_trade_max is not None:
         quantity = min(quantity, equity * risk_per_trade_max / stop_distance)
-    if quantity * price < settings.risk.notional_usd_min:
+    if quantity * price < notional_usd_min:
         return Decimal(0)
-    return quantity_value(quantity, fractional_orders)
+    return quantity_value(quantity, is_fractional)
 
 
-def quantity_value(quantity: float, fractional_orders: bool) -> Decimal:
-    increment = Decimal("0.000000001" if fractional_orders else "1")
+def quantity_value(quantity: float, is_fractional: bool) -> Decimal:
+    increment = Decimal("0.000000001" if is_fractional else "1")
     return Decimal(str(quantity)).quantize(increment, rounding=ROUND_DOWN)
 
 
-def is_fractional_allowed(direction: Direction, fractional_orders: bool) -> bool:
-    return fractional_orders and direction == 1
+def is_fractional_allowed(direction: Direction, does_allow_fractions: bool) -> bool:
+    return does_allow_fractions and direction == 1
 
 
 def next_stop(direction: Direction, active: float, candidate: float) -> float:

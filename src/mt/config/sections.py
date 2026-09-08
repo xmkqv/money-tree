@@ -51,7 +51,7 @@ class RiskSection(SettingsSection):
     position_fraction_max: Fraction
     positions_max: Count
     notional_usd_min: Amount
-    fractional_orders: bool
+    does_allow_fractions: bool
 
     @model_validator(mode="after")
     def check_limits(self) -> Self:
@@ -84,6 +84,7 @@ class PortfolioSection(SettingsSection):
     pending_ttl_minutes: Count
     opening_lead_minutes: Count
     iteration_minutes: Count
+    stop_coverage_drift_max: Amount
 
 
 class EarningsSection(SettingsSection):
@@ -120,7 +121,7 @@ class BreakoutSection(SettingsSection):
     past_sessions: Count
     signal_candles_max: Count
     trail_atr_multiple: Amount
-    trail_bars_min: Count
+    trail_candles_min: Count
     scan_minutes: Count
     close_lead_minutes: Count
     confirm_past_days: Count

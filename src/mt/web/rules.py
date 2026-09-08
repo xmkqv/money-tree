@@ -282,7 +282,7 @@ def _breakout_rows(
             f"ATR({period}) "
             f"is calculated from {minutes}-minute candles across trading sessions, using "
             "prior-session bars where they are available, so overnight gaps contribute to "
-            f"true range. At least {breakout.trail_bars_min} completed {minutes}-minute "
+            f"true range. At least {breakout.trail_candles_min} completed {minutes}-minute "
             "candles "
             "must be available. Prior sessions count towards that total, so the trade "
             "normally starts with enough. The level rests as an order at the broker. It "
