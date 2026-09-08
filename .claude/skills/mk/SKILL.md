@@ -1,8 +1,7 @@
 ---
 name: mk
 description: only-if-asked
-disable-model-invocation: true
-argument-hint: "[subject=skill|command|cli|tree|sketch|recs|handoff|table|checklist|cheatsheet]"
+argument-hint: "[subject=skill|command|cli|tree|sketch|recs|handoff|table|checklist|cheatsheet|steps|contract]"
 ---
 
 mk(subject)
