@@ -39,10 +39,9 @@ general:
 - entity tables are singular, collections are plural
   - primary keys are bare, foreign keys are qualified
 - value names expose their meaning
-  - booleans are adjectives
-  - instants end with `_at`
-  - dates end with `_on`
-  - quantities end with a unit suffix: `THING_MS`
+  - booleans are predicates
+  - instants and dates end with `_at`
+  - quantities end with a unit suffix, e.g. `*_ms`
   - bounded constants end with their bounds
 
 ### verbs

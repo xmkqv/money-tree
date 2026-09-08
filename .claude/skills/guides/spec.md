@@ -2,7 +2,7 @@
 
 [ex1](./spec.ex1.md)
 
-- content ratios ≔ 80% syntax, 10% prose, 10% any (globally, per layer, per form)
+- content ratios = 80% syntax, 10% prose, 10% any (globally, per layer, per form)
 - vendor layers, e.g. domain services, are denoted vendor[{name}] e.g. `vendor[mesh].send(…)`
 - external layers, e.g. workspace packages, are denoted ${name} e.g. `$db.rpc(…)`
 
@@ -24,7 +24,6 @@
 - layers are hierarchical, i.e. specificity(layer) > specificity(context(layer))
 - layers are balanced, i.e. specificity(layer) ≈ specificity(co-layers(layer))
 - layers are distinct, i.e. non-overlapping
-- a layer is an H1 section
 - count(rules) ≤ 7
 
 ```md:form:blocks
@@ -37,33 +36,28 @@
 
 ### root
 
+- exps are broad declarative design register claims about consumer experience
+- exps are similarly weighted, i.e. similarly leveled in importance and complexity
+- count(exps) ≤ 7
+
 ```md:form:root
 {exps}
-
-{state-machine?}
 
 {blocks}
 
 {invs?}
 ```
 
-#### exps
-
-- exps are declarative
-- count(exps) ≤ 7
-- each exp may cover multiple claims
-- is testable by a consumer of the root surface
-
 ## names
 
 - names converge over time, i.e. state is optimal iff each thing has 1 name
 - names are canonical (i.e. well-known) or conventional (i.e. in spec)
-- `nn` ≔ not null
+- `nn` = not null
 
 ## pseudo-code
 
 - pseudo-code syntax is idiomatic and flexible
-- selected field mutation is `set {name}[{predicate}] {field} ← {value}`
+- selected field mutation is `set {name}[{predicate}] {field} = {value}`
 - comma-separated assignments after one selector form one atomic field mutation
 - prose describes protocols and architectural roles
 - logic can alternate between syntax and prose
@@ -81,7 +75,7 @@ Examples:
 …
 
 {signature}
-    set {name}[{predicate}] {field} ← {value} -- e.g. syntax
+    set {name}[{predicate}] {field} = {value} -- e.g. syntax
     ${layer}.{name}({args}) -- e.g. external layer
     vendor[{alias}].{name}({args}) -- e.g. vendor
     … wait for {event} -- e.g. prose
@@ -94,7 +88,7 @@ Examples:
 ```sql:form:types
 enum {enum} { … }
 …
-type {type} ≔ ( … )
+type {type} = ( … )
 …
 
 {name}(
@@ -127,9 +121,17 @@ policy on {tables} [{alias}] to {roles}
 
 ### ts/tsx
 
+- selectors are , e.g. `{Name}`, `{Name} > {Name}`, etc
+- styles are semantic config, e.g. `{attribute} = {value}`, `like {exemplar}`, etc
+
+```ts:form:css
+{selector} — {style}
+...
+```
+
 ```ts:form:types
-type {Name} ≔ {primitive} branded {Name}
-type {Name} ≔ "{member}" | …
+type {Name} = {primitive} branded {Name}
+type {Name} = "{member}" | …
 
 interface {Name} {
     {name}: Accessor<{type}>
@@ -137,12 +139,12 @@ interface {Name} {
     …
 }
 
-type {Name} ≔ { … }
+type {Name} = { … }
 ```
 
 ```ts:form:surface
 {name}({args})
-    [{value},set{Value}] ≔ createSignal<{type}>({init})
+    [{value},set{Value}] = createSignal<{type}>({init})
 
     onMount(
         {step}
@@ -155,107 +157,33 @@ type {Name} ≔ { … }
             {step}
     )
 
-{Name}Ctx ≔ createContext<{Name}>()
-use{Name} ≔ () → useContext({Name}Ctx) ?? panic("{message}")
+{Name}Ctx = createContext<{Name}>()
+use{Name} = () → useContext({Name}Ctx) ?? panic("{message}")
 ```
 
 ```ts:form:private
 {name}({args})
-    {intent step}
-    …
-
-    dispose ≔ {source}.{subscribe}(
-        …
-    )
-
-    cleanup(…)
+    {logic}
+    … {steps}
+    → {out}
 ```
 
 ```tsx:form:surface
 {Name}Element({props})
-    {binding} ≔ use{Name}()
-    [class={name},{attribute}={value},--{property}={value}]
+    {binding} = use{Name}()
+    [
+      class={name}
+      {attribute}={value}
+      --{property}={value}
+      …
+      on {event} → {handler}
+    ]
         {Name}Element({args})
         {collection}.map({Name}Element)
-
-{name}[class={name},on {event} → {handler}]
-    {element}[{attribute}={value}]
-    {element} {value}
 
 {Name}Element({props})
     [class={name}]
     switch {props}.{discriminant}
         {case} → ...{props}
         …
-
-{predicate}({arg})
-    → {arg} is {Type}[{attribute}]
 ```
-
-## state-machine
-
-- fact ≔ `{dotkey}`, a boolean over observed state, e.g. `roots.empty`
-  - the last key is the predicate, named in the polarity it asserts
-  - the leading keys resolve to declared state
-  - `¬{fact}` asserts the fact does not hold
-- action ≔ `{parameterized-dotkey} — {effect}`
-- event ≔ `{state}[…{facts}] {action} → {state?}`
-  - bracketed facts are conjunctive, and unlisted facts are unconstrained
-  - an omitted state is unchanged
-
-````md:form:state-machine
-facts:
-  {fact}
-  …
-
-states:
-
-  ```state:{key}
-  {Element} {— description?}
-  …
-  ```
-  …
-
-actions:
-  {action}
-  …
-
-events:
-  {event}
-  …
-````
-
-### example
-
-````md
-facts:
-  online
-  me.nn
-  roots.empty
-  fab.menu.hidden
-  tiles.focus.nn
-
-states:
-
-  ```state:null
-  — opening screen
-  ```
-
-  ```state:login
-  Login — centered
-  ```
-
-  ```state:workspace
-  App
-    Tile — top-center, like a notion page header
-      Fab — bottom-center, like the chatgpt chatbar
-  ```
-
-actions:
-  fab.io.submit.{value} — add tail to tile[focus]
-
-events:
-  null[online,¬me.nn] boot → login
-  null[me.nn] boot → workspace
-
-  workspace[tiles.focus.nn] fab.io.submit.{value}

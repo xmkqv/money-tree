@@ -65,7 +65,7 @@ run = [
 
 ```toml:module
 [tasks.test]
-depends = ["//lib/db:reset", ":start"]
+depends = ["//lib/db:build", ":build"]
 run = "bun run test"
 ```
 

@@ -2,9 +2,10 @@
 
 - the glyph set is closed, i.e. an undeclared glyph is content
 - sketch glyphs appear in sketch fences only
+- = binds in statement position and compares elsewhere
 
 ```glyphs
-bind: ≔ defines, ← mutates
+bind: = binds
 compare: = equals, ≠ differs, ≡ equivalent, < ≤ > ≥ order, ≈ approximates
 set: ∈ member, ∉ non-member, ⊆ ⊇ containment, ∪ ∩ ∖ combination, ∅ empty
 logic: ¬ negates
