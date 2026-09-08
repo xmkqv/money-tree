@@ -64,7 +64,9 @@ class Portfolio(LumibotStrategy):
         self._stops: dict[str, tuple[float, float]] = {}
         self._closing: set[str] = set()
         self._events: set[str] = set()
-        self._traded: dict[str, set[tuple[date, str]]] = {cls.family: set() for cls in STRATEGIES}
+        self._traded: dict[StrategyKey, set[tuple[date, str]]] = {
+            cls.key: set() for cls in STRATEGIES
+        }
         self._day: date | None = None
         self._session_baseline = 0.0
         self._locked_at: date | None = None
@@ -169,7 +171,7 @@ class Portfolio(LumibotStrategy):
         return held + ordered
 
     def is_taken(self, strategy: Strategy, symbol: str, day: date) -> bool:
-        return self._is_owned(symbol) or (day, symbol) in self._traded[strategy.family]
+        return self._is_owned(symbol) or (day, symbol) in self._traded[strategy.key]
 
     def record(self, strategy: Strategy, kind: str, level: EventLevel, message: str) -> None:
         self._record(f"{strategy.key}.{kind}", level, message, strategy.key)
@@ -280,7 +282,7 @@ class Portfolio(LumibotStrategy):
             self._holdings[symbol] = holding
             self._owners[symbol] = key
             traded_at = entered_at.astimezone(TRADING_ZONE).date()
-            self._traded[strategy.family].add((traded_at, symbol))
+            self._traded[strategy.key].add((traded_at, symbol))
             if strategy.key not in self._selected:
                 self._record(
                     f"strategy.unselected.{key}",
@@ -470,7 +472,7 @@ class Portfolio(LumibotStrategy):
             },
         )
         self.submit_order(order)
-        self._traded[strategy.family].add((now.date(), symbol))
+        self._traded[strategy.key].add((now.date(), symbol))
         return True
 
     def protect(self, holding: Holding, quantity: float | None = None) -> None:

@@ -23,12 +23,6 @@ class RangeMarks:
 
 
 @dataclass(frozen=True, slots=True)
-class SessionVolume:
-    ratio: float
-    turnover: float
-
-
-@dataclass(frozen=True, slots=True)
 class Break:
     symbol: str
     direction: Direction
@@ -60,7 +54,7 @@ def range_break(high: float, low: float, close: float) -> Direction | None:
 
 def is_setup_ready(high: float, low: float, close: float) -> bool:
     direction = range_break(high, low, close)
-    if direction is None or close < settings.screen.price_usd_min:
+    if direction is None:
         return False
     if high - low < settings.breakout.range_fraction_min * close:
         return False
@@ -68,7 +62,7 @@ def is_setup_ready(high: float, low: float, close: float) -> bool:
     return settings.breakout.stop_fraction_min <= fraction <= settings.breakout.stop_fraction_max
 
 
-def session_volume(frame: DataFrame, day: date, clock: time) -> SessionVolume | None:
+def session_volume(frame: DataFrame, day: date, clock: time) -> float | None:
     sessions = settings.breakout.past_sessions
     regular = regular_session(frame)
     index = cast(DatetimeIndex, regular.index)
@@ -79,7 +73,6 @@ def session_volume(frame: DataFrame, day: date, clock: time) -> SessionVolume | 
     aggregates = DataFrame(
         {
             "session_date": session_dates,
-            "daily_turnover": volume * regular["close"],
             "cumulative_volume": cast(
                 Series,
                 cast(Any, volume).where(pandas_index.time <= clock, 0.0),
@@ -87,7 +80,7 @@ def session_volume(frame: DataFrame, day: date, clock: time) -> SessionVolume | 
         },
         index=index,
     )
-    columns = ["daily_turnover", "cumulative_volume"]
+    columns = ["cumulative_volume"]
     relevant = cast(Any, session_dates) <= current_session
     grouped = cast(
         DataFrame,
@@ -103,22 +96,19 @@ def session_volume(frame: DataFrame, day: date, clock: time) -> SessionVolume | 
     if len(past) != sessions:
         return None
     clock_average = float(cast(Any, past["cumulative_volume"]).mean())
-    turnover = float(cast(Any, past["daily_turnover"]).mean())
     current = float(cast(Any, grouped).loc[current_session, "cumulative_volume"])
-    if not all(isfinite(value) for value in (clock_average, turnover, current)):
+    if not all(isfinite(value) for value in (clock_average, current)):
         return None
     if clock_average <= 0:
         return None
-    return SessionVolume(current / clock_average, turnover)
+    return current / clock_average
 
 
 def is_relative_volume_ready(frame: DataFrame, day: date, clock: time, multiple: float) -> bool:
     if frame.empty:
         return False
-    volume = session_volume(frame, day, clock)
-    if volume is None:
-        return False
-    return volume.turnover >= settings.screen.turnover_usd_min and volume.ratio >= multiple
+    ratio = session_volume(frame, day, clock)
+    return ratio is not None and ratio >= multiple
 
 
 class Breakout(Strategy):
