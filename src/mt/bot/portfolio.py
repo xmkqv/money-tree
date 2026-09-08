@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from math import isfinite
 from typing import Any, cast
 
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
@@ -119,7 +118,7 @@ class Portfolio(LumibotStrategy):
         if pending is not None and entry_side in side:
             self._pending.pop(symbol)
             holding = pending.holding
-            holding.entry = self._entry_price(order, price)
+            holding.entry = float(price)
             holding.risk = abs(holding.entry - holding.stop)
             holding.highest = holding.entry
             holding.lowest = holding.entry
@@ -177,11 +176,6 @@ class Portfolio(LumibotStrategy):
 
     def _is_runnable(self, strategy: Strategy) -> bool:
         return strategy.key in self._selected and not strategy.is_paused
-
-    def _entry_price(self, order: Any, price: float) -> float:
-        average = getattr(order, "avg_fill_price", None)
-        value = 0.0 if average is None else float(average)
-        return value if isfinite(value) and value > 0 else float(price)
 
     def _record(
         self,
@@ -266,7 +260,9 @@ class Portfolio(LumibotStrategy):
             )
             entry = float(position.avg_entry_price)
             risk = entry * entry_tag.risk_fraction
-            entered_at = entry_order.filled_at or datetime.now(UTC)
+            if entry_order.filled_at is None:
+                raise RuntimeError(f"{symbol} entry order has no fill time")
+            entered_at = entry_order.filled_at
             direction: Direction = 1 if quantity > 0 else -1
             original = abs(float(entry_order.filled_qty or entry_order.qty or position.qty))
             holding = Holding(

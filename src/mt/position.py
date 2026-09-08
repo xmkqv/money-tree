@@ -1,5 +1,5 @@
 from decimal import ROUND_DOWN, Decimal
-from math import ceil, floor, isfinite
+from math import ceil, floor
 from typing import Literal
 
 
@@ -15,13 +15,6 @@ def entry_quantity(
     notional_usd_min: float,
     is_fractional: bool,
 ) -> Decimal:
-    if (
-        not all(isfinite(value) for value in (equity, price, stop_distance))
-        or equity <= 0
-        or price <= 0
-        or stop_distance <= 0
-    ):
-        return Decimal(0)
     quantity = equity * position_fraction_max / price
     if risk_per_trade_max is not None:
         quantity = min(quantity, equity * risk_per_trade_max / stop_distance)
