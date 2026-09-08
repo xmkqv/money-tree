@@ -115,7 +115,7 @@ class Daily(Strategy):
             if self.does_heed_earnings and not self._is_earnings_clear(symbol, now.date()):
                 continue
             last = last_close(frame)
-            stop = last - self.stop_atr_multiple * latest_atr(frame)
+            stop = last - self.stop_atr_multiple * latest_atr(frame, settings.indicators.period)
             candidates.append(Candidate(symbol, last, stop))
         if not candidates:
             self.portfolio.record(
@@ -142,9 +142,8 @@ class Daily(Strategy):
         last = last_close(frame)
         if len(since):
             holding.highest = max(holding.highest, float(cast(Any, since["close"]).max()))
-        holding.stop = max(
-            holding.stop, holding.highest - self.stop_atr_multiple * latest_atr(frame)
-        )
+        distance = self.stop_atr_multiple * latest_atr(frame, settings.indicators.period)
+        holding.stop = max(holding.stop, holding.highest - distance)
         if last < holding.stop or does_signal_exit(frame):
             self.portfolio.exit(holding)
 

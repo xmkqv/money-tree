@@ -31,7 +31,7 @@ class DailySma(Daily):
         average_trend = ta_sma(close, length=daily_sma.trend_sessions, talib=False)
         average_trend_long = ta_sma(close, length=daily_sma.trend_sessions_long, talib=False)
         strength = indicator_series(ta_rsi(close, length=period, talib=False), f"RSI_{period}", 1)
-        directional = indicator_column(adx(frame), f"ADX_{period}", 1)
+        directional = indicator_column(adx(frame, period), f"ADX_{period}", 1)
         averages = (average_signal, average_trend, average_trend_long)
         if not all(isinstance(value, Series) for value in averages):
             return False

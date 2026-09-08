@@ -38,7 +38,7 @@ class DailyTfb(Daily):
         period = settings.indicators.period
         close = frame["close"]
         average_trend = ta_sma(close, length=daily_tfb.trend_sessions, talib=False)
-        directional = indicator_column(adx(frame), f"ADX_{period}", 1)
+        directional = indicator_column(adx(frame, period), f"ADX_{period}", 1)
         if not isinstance(average_trend, Series) or directional is None:
             return False
         span = daily_tfb.trend_lag_sessions + 1

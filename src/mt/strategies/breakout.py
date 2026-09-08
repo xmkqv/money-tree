@@ -271,7 +271,7 @@ class Breakout(Strategy):
         frame = regular_session(recent)
         if len(frame) < settings.breakout.trail_candles_min:
             return
-        trail = settings.breakout.trail_atr_multiple * latest_atr(frame)
+        trail = settings.breakout.trail_atr_multiple * latest_atr(frame, settings.indicators.period)
         candidate = (
             max(holding.entry, holding.highest - trail)
             if holding.direction == 1

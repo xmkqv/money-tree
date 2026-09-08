@@ -6,12 +6,10 @@ from pandas import DataFrame, Series
 from pandas_ta_classic.trend.adx import adx as ta_adx
 from pandas_ta_classic.volatility.atr import atr as ta_atr
 
-from mt.config.settings import settings
 from mt.frames import last_close
 
 
-def latest_atr(frame: DataFrame) -> float:
-    period = settings.indicators.period
+def latest_atr(frame: DataFrame, period: int) -> float:
     values = ta_atr(
         frame["high"],
         frame["low"],
@@ -45,12 +43,12 @@ def average_turnover_usd(frame: DataFrame, sessions: int) -> float:
     return traded if isfinite(traded) and traded > 0.0 else 0.0
 
 
-def adx(frame: DataFrame) -> object:
+def adx(frame: DataFrame, period: int) -> object:
     return ta_adx(
         frame["high"],
         frame["low"],
         frame["close"],
-        length=settings.indicators.period,
+        length=period,
         talib=False,
     )
 

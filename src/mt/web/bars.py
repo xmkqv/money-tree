@@ -72,9 +72,10 @@ def chart_window(
 
 
 def bars_atr(bars: list[Bar]) -> float | None:
-    if len(bars) <= settings.indicators.period:
+    period = settings.indicators.period
+    if len(bars) <= period:
         return None
-    return latest_atr(_bar_frame(bars))
+    return latest_atr(_bar_frame(bars), period)
 
 
 def bar_time(bar: Bar) -> datetime:
