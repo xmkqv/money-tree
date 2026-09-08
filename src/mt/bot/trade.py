@@ -22,7 +22,7 @@ def run(strategy_keys: list[StrategyKey]) -> None:
         settings.risk,
     )
     exporter.start()
-    exporter.publish("starting", "run", "info", "Trading run is starting")
+    exporter.publish("starting", "run.started", "info", "Trading run is starting")
     try:
         parameters: dict[str, object] = {"strategies": strategy_keys}
         strategy = Portfolio(broker=alpaca_broker(), parameters=parameters, name="Portfolio")
@@ -30,7 +30,7 @@ def run(strategy_keys: list[StrategyKey]) -> None:
         trader = Trader()
         trader.add_strategy(strategy)
         signal.signal(signal.SIGTERM, lambda number, frame: trader.stop_all())
-        exporter.publish("running", "run", "info", "Trading run is active")
+        exporter.publish("running", "run.activated", "info", "Trading run is active")
         trader.run_all()
     except BaseException:
         exporter.close("failed", "Trading run failed")

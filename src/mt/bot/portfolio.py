@@ -35,7 +35,7 @@ class Portfolio(LumibotStrategy):
 
     def on_bot_crash(self, error: Exception) -> None:
         if self.exporter is not None:
-            self.exporter.publish("failed", "crash", "error", type(error).__name__)
+            self.exporter.publish("failed", "run.crashed", "error", type(error).__name__)
 
     def on_abrupt_closing(self) -> None:
         if self.exporter is not None:
@@ -221,7 +221,7 @@ class Portfolio(LumibotStrategy):
         for holding in list(self._holdings.values()):
             self.exit(holding)
         self._locked_on = day
-        self._record("day.loss_reached", "warning", "Daily loss limit reached")
+        self._record("day.locked", "warning", "Daily loss limit reached")
         return True
 
     def _restore(self) -> None:
@@ -285,9 +285,9 @@ class Portfolio(LumibotStrategy):
             self._claims[symbol] = key
             traded_on = entered_at.astimezone(TRADING_ZONE).date()
             self._traded[strategy.family].add((traded_on, symbol))
-            if not self._is_runnable(strategy):
+            if strategy.key not in self._selected:
                 self._record(
-                    f"strategy.exits_only.{key}",
+                    f"strategy.unselected.{key}",
                     "warning",
                     f"{strategy.name()} is managing existing positions only",
                     key,
@@ -360,7 +360,7 @@ class Portfolio(LumibotStrategy):
         except Exception as error:
             self._daily_frames = {}
             self._market_symbols = []
-            self._record("screen.unavailable", "error", f"Stock screen unavailable: {error}")
+            self._record("screen.failed", "error", f"Stock screen unavailable: {error}")
             return
         self._daily_frames = daily_frames
         self._market_symbols = list(symbols)

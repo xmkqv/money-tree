@@ -330,7 +330,7 @@ class Breakout(Strategy):
         detail = f"{type(error).__name__}: {error}"
         self.portfolio.record(
             self,
-            f"scan.unavailable.{day}",
+            f"scan.stood_down.{day}",
             "error",
             f"{self.family.capitalize()} scan stood down for the day: "
             f"past bars unavailable ({detail[:200]})",

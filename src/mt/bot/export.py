@@ -81,7 +81,7 @@ class StateExporter:
         if self.stopping.is_set():
             return
         level: EventLevel = "info" if status == "stopped" else "error"
-        self.publish(status, status, level, message)
+        self.publish(status, f"run.{status}", level, message)
         self.stopping.set()
         self.thread.join(timeout=settings.export.close_timeout_seconds)
 

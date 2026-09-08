@@ -165,20 +165,20 @@ class Daily(Strategy):
         try:
             return not is_earnings_blocked(symbol, day)
         except Exception as error:
-            self._earnings_unavailable(symbol, error)
+            self._record_earnings_failed(symbol, error)
             return False
 
     def _is_earnings_exit_due(self, symbol: str, day: date) -> bool:
         try:
             return is_earnings_exit_due(symbol, day)
         except Exception as error:
-            self._earnings_unavailable(symbol, error)
+            self._record_earnings_failed(symbol, error)
             return False
 
-    def _earnings_unavailable(self, symbol: str, error: Exception) -> None:
+    def _record_earnings_failed(self, symbol: str, error: Exception) -> None:
         self.portfolio.record(
             self,
-            f"earnings.unavailable.{symbol}",
+            f"earnings.failed.{symbol}",
             "error",
             f"Earnings calendar unavailable for {symbol}: {type(error).__name__}",
         )
