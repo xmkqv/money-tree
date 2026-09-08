@@ -192,13 +192,11 @@ depends = ["check"]
 run = '''
 set -euo pipefail
 
-: "${RAILWAY_TOKEN:?}"
-
 revision="$(git rev-parse --short HEAD)"
 
 for service in web bot; do
   for key in $(uv run mt env list --service "$service"); do
-    eval "value=\${$key:?}"
+    eval "value=\${$key}"
     printf '%s' "$value" \
       | railway variable set "$key" --stdin --service "money-tree-$service" \
         --skip-deploys --json >/dev/null
@@ -214,34 +212,34 @@ done
 run = '''
 set -euo pipefail
 
-run_dir="${MISE_PROJECT_ROOT:?}/.run"
+run_dir="${MISE_PROJECT_ROOT}/.run"
 pid_file="$run_dir/web.pid"
 log_file="$run_dir/web.log"
 
 if [[ -f "$pid_file" ]] && kill -0 "$(<"$pid_file")" 2>/dev/null; then
-  echo "already serving on ${WEB__BASE_URL:?} (pid $(<"$pid_file"))"
+  echo "already serving on ${WEB__BASE_URL} (pid $(<"$pid_file"))"
   exit 0
 fi
 
 mkdir -p "$run_dir"
 uv run --locked uvicorn mt.web.app:create_app \
-  --factory --workers 1 --host 127.0.0.1 --port "${PORT:?}" \
+  --factory --workers 1 --host 127.0.0.1 --port "${PORT}" \
   >"$log_file" 2>&1 &
 echo $! >"$pid_file"
 
 if ! curl -sf --retry 60 --retry-connrefused --retry-delay 1 \
-  "${WEB__BASE_URL:?}/healthz" >/dev/null; then
+  "${WEB__BASE_URL}/healthz" >/dev/null; then
   echo "the dashboard never became healthy; see $log_file" >&2
   exit 1
 fi
-echo "serving ${WEB__BASE_URL:?} (pid $(<"$pid_file"))"
+echo "serving ${WEB__BASE_URL} (pid $(<"$pid_file"))"
 '''
 
 [tasks.stop]
 run = '''
 set -euo pipefail
 
-pid_file="${MISE_PROJECT_ROOT:?}/.run/web.pid"
+pid_file="${MISE_PROJECT_ROOT}/.run/web.pid"
 
 if [[ ! -f "$pid_file" ]]; then
   echo "nothing is serving"
