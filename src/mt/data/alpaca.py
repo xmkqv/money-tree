@@ -2,19 +2,18 @@ from typing import Any
 
 import httpx
 from alpaca.common.enums import BaseURL
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import Field, TypeAdapter
 
+from mt.config.sections import BrokerSection
 from mt.config.values import BrokerMode, DataFeedName
+
+from .http import Payload
 
 
 PAST_API_URL = "https://data.alpaca.markets"
 
 
-class _Payload(BaseModel):
-    model_config = ConfigDict(extra="ignore", frozen=True)
-
-
-class Account(_Payload):
+class Account(Payload):
     account_number: str
     status: str
     equity: float
@@ -23,7 +22,7 @@ class Account(_Payload):
     buying_power: float
 
 
-class Position(_Payload):
+class Position(Payload):
     symbol: str
     side: str
     qty: float
@@ -34,12 +33,12 @@ class Position(_Payload):
     unrealized_plpc: float
 
 
-class Clock(_Payload):
+class Clock(Payload):
     is_open: bool
     next_open: str
 
 
-class Fill(_Payload):
+class Fill(Payload):
     id: str
     order_id: str
     symbol: str
@@ -49,13 +48,13 @@ class Fill(_Payload):
     price: float
 
 
-class ClosedOrder(_Payload):
+class ClosedOrder(Payload):
     id: str
     submitted_at: str
     client_order_id: str | None = None
 
 
-class Bar(_Payload):
+class Bar(Payload):
     at: str = Field(alias="t")
     open: float = Field(alias="o")
     high: float = Field(alias="h")
@@ -64,17 +63,17 @@ class Bar(_Payload):
     volume: float = Field(alias="v", default=0.0)
 
 
-class EquityPoint(_Payload):
+class EquityPoint(Payload):
     timestamp: int
     equity: float
 
 
-class _PortfolioHistory(_Payload):
+class _PortfolioHistory(Payload):
     timestamp: list[int]
     equity: list[float | None]
 
 
-class _BarsPage(_Payload):
+class _BarsPage(Payload):
     bars: list[Bar] | None = None
     next_page_token: str | None = None
 
@@ -87,6 +86,13 @@ closed_orders_adapter = TypeAdapter(list[ClosedOrder])
 def live_api_url(broker_mode: BrokerMode) -> str:
     target = BaseURL.TRADING_PAPER if broker_mode == "paper" else BaseURL.TRADING_LIVE
     return target.value
+
+
+def credential_headers(broker: BrokerSection) -> dict[str, str]:
+    return {
+        "APCA-API-KEY-ID": broker.api_key.get_secret_value(),
+        "APCA-API-SECRET-KEY": broker.api_secret.get_secret_value(),
+    }
 
 
 class AlpacaLiveClient:

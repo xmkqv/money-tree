@@ -1,10 +1,39 @@
-from typing import Annotated, Literal, get_args
+from typing import Annotated, Literal, TypeIs, get_args
 
-from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    SecretStr,
+    TypeAdapter,
+)
+
+
+type StrategyKey = Literal["breakout_5m", "breakout_10m", "daily_sma", "daily_tfb"]
+
+STRATEGY_KEYS: tuple[StrategyKey, ...] = get_args(StrategyKey.__value__)
 
 
 def parse_none(value: object) -> object:
     return None if value == "none" else value
+
+
+def split_keys(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def check_distinct(values: tuple[StrategyKey, ...]) -> tuple[StrategyKey, ...]:
+    if len(set(values)) != len(values):
+        raise ValueError(f"strategy keys must be distinct, from: {', '.join(STRATEGY_KEYS)}")
+    return values
+
+
+def is_strategy_key(value: str) -> TypeIs[StrategyKey]:
+    return value in STRATEGY_KEYS
 
 
 type Count = Annotated[int, Field(gt=0)]
@@ -20,8 +49,16 @@ type BrokerMode = Literal["live", "paper"]
 type DataFeedName = Literal["sip", "delayed_sip", "iex"]
 type Timeframe = Annotated[str, Field(pattern=r"^\d+(Min|Hour|Day)$")]
 type ChartTimeframe = Literal["5Min", "1Hour", "1Day"]
+type StrategySelection = Annotated[
+    tuple[StrategyKey, ...],
+    BeforeValidator(split_keys),
+    AfterValidator(check_distinct),
+    Field(min_length=1),
+]
 
 CHART_TIMEFRAMES: tuple[ChartTimeframe, ...] = get_args(ChartTimeframe.__value__)
+
+strategy_selection_adapter: TypeAdapter[tuple[StrategyKey, ...]] = TypeAdapter(StrategySelection)
 
 
 class SettingsSection(BaseModel):

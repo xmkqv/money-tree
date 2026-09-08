@@ -4,11 +4,11 @@ from pydantic import UUID4, AwareDatetime, BaseModel, ConfigDict, Field
 
 from mt.config.sections import RiskSection
 from mt.config.settings import settings
-from mt.strategies.keys import STRATEGY_KEYS, StrategyKey
+from mt.config.values import STRATEGY_KEYS, StrategyKey
+from mt.strategies.base import EventLevel
 
 
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
-type EventLevel = Literal["info", "warning", "error"]
 
 STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
 

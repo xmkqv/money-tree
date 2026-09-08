@@ -5,8 +5,7 @@ from mt.config.sections import RiskSection
 from mt.config.settings import settings
 from mt.exchange import upcoming_session_bounds
 from mt.strategies.base import Strategy
-from mt.strategies.keys import UNATTRIBUTED
-from mt.strategies.order_tag import ORDER_TAG_PREFIX
+from mt.strategies.order_tag import ORDER_TAG_PREFIX, UNATTRIBUTED
 from mt.strategies.registry import STRATEGIES
 
 from .rules import KINDS, RULE_FIELDS, Row, percent, strategy_rows

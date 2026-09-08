@@ -3,8 +3,6 @@ from typing import Annotated
 from pydantic import Field
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from mt.strategies.keys import StrategySelection
-
 from .sections import (
     BacktestSection,
     BreakoutSection,
@@ -25,7 +23,7 @@ from .sections import (
     ScreenSection,
     WebSection,
 )
-from .values import Mode, Symbol
+from .values import Mode, StrategySelection, Symbol
 
 
 class BotSettings(BaseSettings):

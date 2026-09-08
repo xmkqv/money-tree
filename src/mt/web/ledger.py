@@ -8,7 +8,7 @@ from typing import TypedDict
 import httpx
 
 from mt.config.sections import RiskSection
-from mt.config.values import Symbol
+from mt.config.values import StrategyKey, Symbol
 from mt.data.alpaca import (
     AlpacaLiveClient,
     AlpacaPastClient,
@@ -19,8 +19,7 @@ from mt.data.alpaca import (
 )
 from mt.exchange import TRADING_ZONE
 from mt.snapshot import StateSnapshot
-from mt.strategies.keys import UNATTRIBUTED, StrategyKey
-from mt.strategies.order_tag import find_order_tag
+from mt.strategies.order_tag import UNATTRIBUTED, find_order_tag
 
 from .pulse import BotState, PulsePosition, bot_state, pulse_positions
 from .strategies import EntryWindow, entry_windows, strategy_labels

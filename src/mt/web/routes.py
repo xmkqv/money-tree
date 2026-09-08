@@ -12,14 +12,14 @@ from pydantic import ValidationError
 from starlette.responses import FileResponse
 
 from mt.config.settings import WebSettings
-from mt.config.values import ChartTimeframe, Symbol
+from mt.config.values import ChartTimeframe, StrategyKey, Symbol, is_strategy_key
 from mt.data.alpaca import AlpacaLiveClient, AlpacaPastClient
 from mt.exchange import TRADING_ZONE, session_bounds
 from mt.position import Direction
 from mt.snapshot import STATE_SIGNATURE_SALT, StateSnapshot
 from mt.strategies.breakout import Breakout
 from mt.strategies.daily import Daily
-from mt.strategies.keys import StrategyKey, Unattributed, is_strategy_key
+from mt.strategies.order_tag import Unattributed
 from mt.strategies.registry import strategy_class
 
 from .bars import BarRow, bar_row, bars_atr, chart_window, session_hour_bars

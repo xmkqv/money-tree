@@ -1,6 +1,11 @@
 import httpx
+from pydantic import BaseModel, ConfigDict
 
 from mt.config.sections import TimeoutSection
+
+
+class Payload(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True)
 
 
 def http_timeout(timeout: TimeoutSection) -> httpx.Timeout:

@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from mt.config.services import SERVICE_SETTINGS, ServiceName, service_keys
 from mt.config.settings import settings
-from mt.strategies.keys import STRATEGY_KEYS, StrategyKey, strategy_selection_adapter
+from mt.config.values import STRATEGY_KEYS, StrategyKey, strategy_selection_adapter
 
 
 app = typer.Typer(no_args_is_help=True)

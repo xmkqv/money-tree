@@ -2,15 +2,16 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import ClassVar, Protocol
+from typing import ClassVar, Literal, Protocol
 
 from pandas import DataFrame
 
 from mt.config.settings import settings
+from mt.config.values import STRATEGY_KEYS, StrategyKey
 from mt.position import Direction
-from mt.snapshot import EventLevel
 
-from .keys import StrategyKey
+
+type EventLevel = Literal["info", "warning", "error"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +115,10 @@ class Strategy(ABC):
 
     def is_capped(self) -> bool:
         return self.portfolio.position_count(self.cap_keys()) >= self.positions_max
+
+
+def family_keys(family: str) -> frozenset[StrategyKey]:
+    return frozenset(key for key in STRATEGY_KEYS if key.startswith(f"{family}_"))
 
 
 def ranked[Item](

@@ -4,8 +4,8 @@ from pathlib import Path
 from typing import cast
 
 from mt.config.settings import settings
+from mt.config.values import StrategyKey
 from mt.strategies.breakout import Breakout
-from mt.strategies.keys import StrategyKey
 from mt.strategies.registry import strategy_class
 
 from .broker import broker_credentials

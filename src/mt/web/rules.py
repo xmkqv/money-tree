@@ -3,10 +3,10 @@ from datetime import datetime, timedelta
 from typing import TypedDict
 
 from mt.config.settings import settings
+from mt.config.values import StrategyKey
 from mt.strategies.base import Strategy
 from mt.strategies.breakout import Breakout
 from mt.strategies.daily import Daily
-from mt.strategies.keys import StrategyKey
 
 
 class Row(TypedDict):

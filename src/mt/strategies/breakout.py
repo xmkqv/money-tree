@@ -6,13 +6,13 @@ from typing import Any, ClassVar, cast
 from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
 from mt.config.settings import settings
+from mt.config.values import StrategyKey
 from mt.exchange import TRADING_ZONE
 from mt.frames import frame_between, frame_since, frame_until, regular_session
 from mt.indicators import latest_atr, latest_dollar_volume
 from mt.position import Direction, next_stop
 
-from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, ranked
-from .keys import StrategyKey
+from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, family_keys, ranked
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,8 +137,6 @@ class Breakout(Strategy):
 
     @classmethod
     def cap_keys(cls) -> frozenset[StrategyKey]:
-        from .registry import family_keys
-
         return family_keys(cls.family)
 
     @classmethod

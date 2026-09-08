@@ -12,14 +12,9 @@ from itsdangerous import TimestampSigner
 
 from mt.config.sections import RiskSection
 from mt.config.settings import settings
-from mt.snapshot import (
-    STATE_SIGNATURE_SALT,
-    EventLevel,
-    RunStatus,
-    StateEvent,
-    StateSnapshot,
-)
-from mt.strategies.keys import StrategyKey
+from mt.config.values import StrategyKey
+from mt.snapshot import STATE_SIGNATURE_SALT, RunStatus, StateEvent, StateSnapshot
+from mt.strategies.base import EventLevel
 
 
 logger = logging.getLogger(__name__)

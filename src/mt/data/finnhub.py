@@ -1,11 +1,11 @@
 from datetime import date
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import Field, TypeAdapter
 
 from mt.config.settings import settings
 
-from .http import http_timeout
+from .http import Payload, http_timeout
 
 
 API_URL = "https://finnhub.io/api/v1"
@@ -13,21 +13,17 @@ COMMON_STOCK = "Common Stock"
 TIMEOUT = http_timeout(settings.finnhub.timeout)
 
 
-class _Payload(BaseModel):
-    model_config = ConfigDict(extra="ignore", frozen=True)
-
-
-class Stock(_Payload):
+class Stock(Payload):
     symbol: str
     type: str
 
 
-class Release(_Payload):
+class Release(Payload):
     symbol: str
     date: date
 
 
-class _Calendar(_Payload):
+class _Calendar(Payload):
     releases: list[Release] = Field(alias="earningsCalendar")
 
 

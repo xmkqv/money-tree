@@ -1,12 +1,14 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, get_args
 from uuid import uuid4
 
-from .keys import StrategyKey
-from .registry import STRATEGIES, STRATEGIES_BY_CODE
+from mt.config.values import StrategyKey
+
+from .registry import STRATEGIES_BY_CODE, strategy_class
 
 
 type OrderKind = Literal["e", "s", "x"]
+type Unattributed = Literal["unattributed"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,15 +22,14 @@ class OrderTag:
 ORDER_TAG_PREFIX = "mt"
 ORDER_TAG_PARTS = 6
 RISK_FRACTION_SCALE = 1_000_000
-ORDER_KINDS: frozenset[OrderKind] = frozenset({"e", "s", "x"})
-STRATEGY_CODES: dict[StrategyKey, str] = {cls.key: cls.code for cls in STRATEGIES}
+ORDER_KINDS: tuple[OrderKind, ...] = get_args(OrderKind.__value__)
+UNATTRIBUTED: Unattributed = "unattributed"
 
 
 def order_tag(strategy: StrategyKey, kind: OrderKind, signal: str, risk_fraction: float) -> str:
     scaled = round(risk_fraction * RISK_FRACTION_SCALE)
-    return "-".join(
-        (ORDER_TAG_PREFIX, STRATEGY_CODES[strategy], kind, signal, str(scaled), uuid4().hex[:8])
-    )
+    code = strategy_class(strategy).code
+    return "-".join((ORDER_TAG_PREFIX, code, kind, signal, str(scaled), uuid4().hex[:8]))
 
 
 def find_order_tag(value: str) -> OrderTag | None:

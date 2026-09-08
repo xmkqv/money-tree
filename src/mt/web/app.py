@@ -11,10 +11,16 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from mt.config.settings import LoginSettings, WebSettings
-from mt.data.alpaca import PAST_API_URL, AlpacaLiveClient, AlpacaPastClient, live_api_url
+from mt.data.alpaca import (
+    PAST_API_URL,
+    AlpacaLiveClient,
+    AlpacaPastClient,
+    credential_headers,
+    live_api_url,
+)
 from mt.data.http import http_timeout
+from mt.data.railway import RailwayOAuthClient
 
-from .auth import RailwayOAuthClient
 from .routes import NO_STORE, dashboard_router, error_response
 from .state import StateStore
 
@@ -62,10 +68,7 @@ def _start_session(request: Request, subject: str) -> None:
 def create_app() -> FastAPI:
     configuration = WebSettings()  # pyright: ignore[reportCallIssue]
 
-    credentials = {
-        "APCA-API-KEY-ID": configuration.broker.api_key.get_secret_value(),
-        "APCA-API-SECRET-KEY": configuration.broker.api_secret.get_secret_value(),
-    }
+    credentials = credential_headers(configuration.broker)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, object]]:
