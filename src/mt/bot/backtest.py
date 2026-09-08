@@ -24,11 +24,6 @@ ARTIFACT_NAMES = {
 LUMIBOT_DISABLE_UI = "LUMIBOT_DISABLE_UI"
 
 
-def _artifact_paths(output_dir: Path) -> dict[str, str]:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return {key: str(output_dir / name) for key, name in ARTIFACT_NAMES.items()}
-
-
 def run(
     strategy_key: StrategyKey,
     symbols: list[str],
@@ -52,34 +47,26 @@ def run(
             "warm_up_trading_days": settings.backtest.warm_up_days,
         }
     report_mode = output_dir is not None
-    previous_disable_ui = os.environ.get(LUMIBOT_DISABLE_UI)
     if report_mode:
         os.environ[LUMIBOT_DISABLE_UI] = "1"
-    try:
-        results = Portfolio.backtest(
-            datasource,
-            start,
-            end,
-            config=datasource_configuration,
-            parameters=parameters,
-            benchmark_asset=settings.benchmark_symbol,
-            budget=settings.backtest.budget_usd,
-            show_plot=report_mode,
-            show_tearsheet=False,
-            show_indicators=report_mode,
-            show_progress_bar=False,
-            save_tearsheet=True,
-            save_logfile=report_mode,
-            quiet_logs=not report_mode,
-            **datasource_options,
-            **({} if output_dir is None else _artifact_paths(output_dir)),
-        )
-    finally:
-        if report_mode:
-            if previous_disable_ui is None:
-                os.environ.pop(LUMIBOT_DISABLE_UI, None)
-            else:
-                os.environ[LUMIBOT_DISABLE_UI] = previous_disable_ui
+    results = Portfolio.backtest(
+        datasource,
+        start,
+        end,
+        config=datasource_configuration,
+        parameters=parameters,
+        benchmark_asset=settings.benchmark_symbol,
+        budget=settings.backtest.budget_usd,
+        show_plot=report_mode,
+        show_tearsheet=False,
+        show_indicators=report_mode,
+        show_progress_bar=False,
+        save_tearsheet=True,
+        save_logfile=report_mode,
+        quiet_logs=not report_mode,
+        **datasource_options,
+        **({} if output_dir is None else _artifact_paths(output_dir)),
+    )
     return cast(dict[str, object], results or {})
 
 
@@ -91,5 +78,9 @@ def report(
 ) -> Path:
     output_dir = Path("runs") / f"{strategy_key}-{start:%Y%m%d}-{end:%Y%m%d}"
     run(strategy_key, symbols, start, end, output_dir=output_dir)
-    print(output_dir)
     return output_dir
+
+
+def _artifact_paths(output_dir: Path) -> dict[str, str]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return {key: str(output_dir / name) for key, name in ARTIFACT_NAMES.items()}

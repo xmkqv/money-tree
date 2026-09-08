@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 from typing import Annotated
 
@@ -56,7 +57,8 @@ def run_backtest(
 ) -> None:
     from mt.bot import backtest
 
-    backtest.run(_parse_strategy(strategy), _parse_symbols(symbols), start, end)
+    results = backtest.run(_parse_strategy(strategy), _parse_symbols(symbols), start, end)
+    typer.echo(json.dumps(results, default=str, indent=2))
 
 
 @app.command("report")
@@ -68,7 +70,7 @@ def run_report(
 ) -> None:
     from mt.bot.backtest import report
 
-    report(_parse_strategy(strategy), _parse_symbols(symbols), start, end)
+    typer.echo(report(_parse_strategy(strategy), _parse_symbols(symbols), start, end))
 
 
 @app.command("trade")
