@@ -7,7 +7,7 @@ from pandas import DataFrame, DatetimeIndex, Timedelta
 from mt.config.sections import ChartTimeframeSection
 from mt.config.settings import settings
 from mt.data.alpaca import Bar
-from mt.exchange import TRADING_ZONE, session_starts
+from mt.exchange import TRADING_ZONE, session_starts, trading_time
 from mt.frames import regular_session
 from mt.indicators import latest_atr
 
@@ -78,10 +78,6 @@ def bars_atr(bars: list[Bar]) -> float | None:
     return latest_atr(_bar_frame(bars), period)
 
 
-def bar_time(bar: Bar) -> datetime:
-    return datetime.fromisoformat(bar.opened_at.replace("Z", "+00:00")).astimezone(TRADING_ZONE)
-
-
 def bar_row(bar: Bar) -> BarRow:
     return {
         "t": bar.opened_at,
@@ -102,6 +98,6 @@ def _bar_frame(bars: list[Bar]) -> DataFrame:
             "close": [bar.close for bar in bars],
             "volume": [bar.volume for bar in bars],
         },
-        index=DatetimeIndex([bar_time(bar) for bar in bars], tz=TRADING_ZONE),
+        index=DatetimeIndex([trading_time(bar.opened_at) for bar in bars], tz=TRADING_ZONE),
     )
     return frame.sort_index()

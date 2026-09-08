@@ -1618,7 +1618,7 @@ function paintRail() {
     railToggle("targets", "Targets", null, Boolean(has.targets), has.targets ? "" : "Breakout trades only"),
   );
   document.getElementById("tc-rail-note").textContent =
-    has.reconstructed ? "Stop and targets are reconstructed from the rules." : "";
+    has.strategy ? "Stop and targets are reconstructed from the rules." : "";
 }
 
 function railToggle(key, label, token, enabled, why) {

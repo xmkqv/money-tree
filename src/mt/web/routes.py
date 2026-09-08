@@ -197,7 +197,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
 
         async def build() -> Levels:
             direction: Direction = 1 if side == "long" else -1
-            payload = Levels(strategy=strategy, reconstructed=True)
+            payload = Levels(strategy=strategy)
             bounds = session_bounds(opened_at)
             found_class = strategy_class(strategy) if is_strategy_key(strategy) else None
             if found_class is not None and issubclass(found_class, Breakout) and bounds:
@@ -255,7 +255,6 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 configuration.risk,
                 dashboard_section.flat_quantity_max,
                 snapshot,
-                stale,
             ),
         )
         return read_response(

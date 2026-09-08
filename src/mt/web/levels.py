@@ -2,10 +2,9 @@ from datetime import datetime, timedelta
 from typing import NotRequired, TypedDict
 
 from mt.data.alpaca import Bar
+from mt.exchange import trading_time
 from mt.position import Direction
 from mt.strategies.breakout import Breakout, range_marks, range_stop
-
-from .bars import bar_time
 
 
 class OpeningRange(TypedDict):
@@ -16,7 +15,6 @@ class OpeningRange(TypedDict):
 
 class Levels(TypedDict):
     strategy: str
-    reconstructed: bool
     range: NotRequired[OpeningRange]
     stop: NotRequired[float]
     targets: NotRequired[list[float]]
@@ -25,7 +23,7 @@ class Levels(TypedDict):
 
 def opening_range(bars: list[Bar], opens: datetime, minutes: int) -> tuple[float, float] | None:
     closes = opens + timedelta(minutes=minutes)
-    inside = [bar for bar in bars if opens <= bar_time(bar) < closes]
+    inside = [bar for bar in bars if opens <= trading_time(bar.opened_at) < closes]
     if not inside:
         return None
     return max(bar.high for bar in inside), min(bar.low for bar in inside)

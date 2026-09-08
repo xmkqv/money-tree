@@ -15,11 +15,11 @@ from mt.data.alpaca import (
     Fill,
     Position,
 )
-from mt.exchange import TRADING_ZONE
+from mt.exchange import TRADING_ZONE, trading_time
 from mt.snapshot import StateSnapshot
 from mt.strategies.order_tag import UNATTRIBUTED, find_order_tag
 
-from .pulse import BotState, PulsePosition, bot_state, pulse_positions
+from .pulse import PulsePosition, pulse_positions
 from .strategies import EntryWindow, StrategyLabel, entry_windows, strategy_labels
 
 
@@ -112,7 +112,6 @@ class Ledger(TypedDict):
     unrealised: float
     positionCapPct: float
     dailyLossLimitPct: float
-    bot: BotState
     strategies: list[StrategyLabel]
     windows: dict[str, EntryWindow]
     positions: list[PositionRow]
@@ -154,7 +153,7 @@ def match_cycles(
         symbol = fill.symbol
         quantity = fill.qty
         price = fill.price
-        when = _trading_time(fill.transaction_time)
+        when = trading_time(fill.transaction_time)
         signed = quantity if fill.side == "buy" else -quantity
         held[symbol] += signed
 
@@ -260,10 +259,6 @@ def _order_strategy(client_order_id: str) -> StrategyKey | None:
     return None if tag is None else tag.strategy
 
 
-def _trading_time(timestamp: str) -> datetime:
-    return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).astimezone(TRADING_ZONE)
-
-
 def _clock_minute(when: datetime) -> int:
     return when.hour * 60 + when.minute
 
@@ -275,7 +270,6 @@ async def build_ledger(
     fallback_configuration: RiskSection,
     flat_quantity_max: float,
     snapshot: StateSnapshot | None,
-    stale: bool,
 ) -> Ledger:
     async with asyncio.TaskGroup() as reads:
         account_read = reads.create_task(live.account())
@@ -326,7 +320,6 @@ async def build_ledger(
         unrealised=round(sum(row["unreal"] for row in rows), 2),
         positionCapPct=round(100 * configuration.position_fraction_max, 2),
         dailyLossLimitPct=round(100 * configuration.per_day_max, 2),
-        bot=bot_state(snapshot, stale),
         strategies=strategy_labels(),
         windows=entry_windows(),
         positions=rows,

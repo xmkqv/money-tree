@@ -17,6 +17,10 @@ def upcoming_session_bounds(day: date) -> tuple[datetime, datetime]:
     return _bounds(XNYS.date_to_session(day, direction="next"))
 
 
+def trading_time(timestamp: str) -> datetime:
+    return datetime.fromisoformat(timestamp).astimezone(TRADING_ZONE)
+
+
 def session_starts(index: DatetimeIndex) -> DatetimeIndex:
     return _session_stamps(index, cast(Any, XNYS).opens)
 
