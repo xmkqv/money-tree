@@ -215,3 +215,4 @@ class LoginSection(SettingsSection):
     allowed_railway_emails: frozenset[Annotated[str, AfterValidator(str.casefold)]] = Field(
         min_length=1
     )
+    timeout: TimeoutSection

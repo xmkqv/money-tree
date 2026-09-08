@@ -8,6 +8,8 @@ from pydantic import TypeAdapter
 
 from mt.config.sections import LoginSection
 
+from .http import http_timeout
+
 
 AUTHORIZATION_URL = "https://backboard.railway.com/oauth/auth"
 TOKEN_URL = "https://backboard.railway.com/oauth/token"
@@ -43,20 +45,20 @@ class _OAuthClient(Protocol):
 
 
 class RailwayOAuthClient:
-    def __init__(self, oauth: LoginSection, redirect_uri: str) -> None:
-        self._oauth = oauth
+    def __init__(self, login: LoginSection, redirect_uri: str) -> None:
+        self._login = login
         self._redirect_uri = redirect_uri
 
     def _client(self) -> _OAuthClient:
         return cast(
             _OAuthClient,
             AsyncOAuth2Client(
-                self._oauth.railway_oauth_client_id,
-                self._oauth.railway_oauth_client_secret.get_secret_value(),
+                self._login.railway_oauth_client_id,
+                self._login.railway_oauth_client_secret.get_secret_value(),
                 scope="openid email",
                 redirect_uri=self._redirect_uri,
                 code_challenge_method="S256",
-                timeout=10,
+                timeout=http_timeout(self._login.timeout),
             ),
         )
 
