@@ -1,3 +1,4 @@
+import asyncio
 import hmac
 import secrets
 from collections.abc import AsyncGenerator
@@ -19,7 +20,7 @@ from mt.data.alpaca import (
     credential_headers,
     trading_api_url,
 )
-from mt.data.http import http_timeout
+from mt.data.http import RequestTransport, http_timeout
 from mt.data.railway import RailwayOAuthClient
 
 from .routes import NO_STORE, dashboard_router, error_response
@@ -73,13 +74,21 @@ def create_app() -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, object]]:
+        requests = configuration.requests
+        concurrency = asyncio.Semaphore(requests.web_concurrency_max)
         async with (
             httpx.AsyncClient(
+                transport=RequestTransport(
+                    requests.web_reads_per_minute, concurrency, requests.pause_seconds
+                ),
                 base_url=trading_api_url(configuration.broker.mode),
                 headers=credentials,
                 timeout=http_timeout(configuration.broker.timeout),
             ) as trading,
             httpx.AsyncClient(
+                transport=RequestTransport(
+                    requests.web_market_data_per_minute, concurrency, requests.pause_seconds
+                ),
                 base_url=bars_api_url(),
                 headers=credentials,
                 timeout=http_timeout(configuration.bars.timeout),
@@ -88,8 +97,7 @@ def create_app() -> FastAPI:
             yield {
                 "trading": TradingClientAlpaca(
                     trading,
-                    configuration.dashboard.page_rows_max,
-                    configuration.dashboard.pages_max,
+                    configuration.dashboard,
                 ),
                 "bars": BarsClientAlpaca(
                     bars,
@@ -116,7 +124,7 @@ def create_app() -> FastAPI:
     async def upstream_failed(_: Request, error: Exception) -> JSONResponse:
         if not isinstance(error, httpx.HTTPStatusError) or error.response.status_code != 429:
             return error_response("Upstream read failed", 502)
-        retry_after = error.response.headers.get("Retry-After", "60")[:40]
+        retry_after = error.response.headers["Retry-After"]
         return error_response("Alpaca read limit was reached", 503, {"Retry-After": retry_after})
 
     @app.exception_handler(ExceptionGroup)
