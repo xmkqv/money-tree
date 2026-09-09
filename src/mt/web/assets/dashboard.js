@@ -617,6 +617,16 @@ function pressOnly(selector, isPressed) {
   }
 }
 
+function wireGroup(id, key, apply) {
+  document.getElementById(id).addEventListener("click", ev => {
+    const btn = ev.target.closest("button");
+    if (!btn) return;
+    const value = btn.dataset[key];
+    pressOnly(`#${id} button`, b => b.dataset[key] === value);
+    apply(value);
+  });
+}
+
 function syncRangeButtons() {
   pressOnly("#chart-range button", b => !chart.custom && b.dataset.range === chart.preset);
 }
@@ -2121,35 +2131,11 @@ document.getElementById("chart-range").addEventListener("click", ev => {
   if (btn) setRange(btn.dataset.range);
 });
 
-document.getElementById("strat-range").addEventListener("click", ev => {
-  const btn = ev.target.closest("button");
-  if (!btn) return;
-  stratRange = btn.dataset.range;
-  for (const b of document.querySelectorAll("#strat-range button")) {
-    b.setAttribute("aria-pressed", String(b.dataset.range === stratRange));
-  }
-  renderStrategies(stratRange);
-});
+wireGroup("strat-range", "range", value => { stratRange = value; renderStrategies(value); });
 
-document.getElementById("unit-toggle").addEventListener("click", ev => {
-  const btn = ev.target.closest("button");
-  if (!btn) return;
-  unit = btn.dataset.unit;
-  for (const b of document.querySelectorAll("#unit-toggle button")) {
-    b.setAttribute("aria-pressed", String(b.dataset.unit === unit));
-  }
-  renderPeriodReturns();
-});
+wireGroup("unit-toggle", "unit", value => { unit = value; renderPeriodReturns(); });
 
-document.getElementById("today-tabs").addEventListener("click", ev => {
-  const btn = ev.target.closest("button");
-  if (!btn) return;
-  todayTab = btn.dataset.tab;
-  for (const b of document.querySelectorAll("#today-tabs button")) {
-    b.setAttribute("aria-pressed", String(b.dataset.tab === todayTab));
-  }
-  renderToday();
-});
+wireGroup("today-tabs", "tab", value => { todayTab = value; renderToday(); });
 
 document.getElementById("today-reset").addEventListener("click", () => {
   selectDay(LATEST.y, LATEST.m, LATEST.day);
@@ -2182,10 +2168,7 @@ function resolvedTheme() {
 }
 
 function syncThemeButtons() {
-  const now = resolvedTheme();
-  for (const b of document.querySelectorAll("#theme-toggle button")) {
-    b.setAttribute("aria-pressed", String(b.dataset.setTheme === now));
-  }
+  pressOnly("#theme-toggle button", b => b.dataset.setTheme === resolvedTheme());
 }
 
 function repaintForTheme() {
