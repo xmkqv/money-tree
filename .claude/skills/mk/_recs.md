@@ -1,6 +1,6 @@
 # recs
 
-recs(fov=infer(), max=null, out=/tmp/recs-{rnd}.md)
+recs(fov=infer(), max=null, out=null)
   log intent
   log fov, foe, and skills.mk.tree
   log recommendations.orderby(complexity ascending).slice(0, max)
@@ -69,3 +69,4 @@ recs(fov=infer(), max=null, out=/tmp/recs-{rnd}.md)
   - assumes ≔ markdown reference key
 - path and assumes share the skills.guides refs section
 - validity is a special key reserved for provable correctness concerns
+- table is a markdown table

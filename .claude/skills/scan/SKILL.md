@@ -11,6 +11,7 @@ scan(fov=infer())
     fix basic issues
     fix lexicon issues
     fix dof issues
+    fix tests issues
     log code issues
     log drift_log
   )
@@ -19,6 +20,8 @@ scan(fov=infer())
 
 - authority: (guides, spec) > (code, tests)
 - auto-fixes consider guides and spec authoratitive over code and tests
+- fixes are generally reductions, i.e. consolidation, normalization, simplification, collapse, etc.
+- any log files are written to /tmp/{rnd}.md
 
 ## basic
 
@@ -41,6 +44,11 @@ scan(fov=infer())
 - spaghetti
 - legacy echoes
 
+## tests
+
+- skills.guides.code.tests
+- skills.use.bad-tests
+
 ## code
 
 - skills.guides.code.infer()
@@ -48,7 +56,7 @@ scan(fov=infer())
 
 # drift log
 
-- table:log cols ≔ name, cat, in spec, in code
+- table:patterns cols ≔ name, cat, in spec, in code
 - cat ∈ pattern, function, type, variable, constant, config, secret, {other}
 - count(spec sketches) = count(code sketches)
 - check log.names.each ∈ sketches.names
@@ -56,7 +64,7 @@ scan(fov=infer())
 ```md:form:drift-log
 # drift
 
-{table:log}
+{table:patterns}
 
 ## spec sketches
 

@@ -1,5 +1,7 @@
 # tests
 
+- cases are never regression tests
+
 ```text
 tests/
   world/

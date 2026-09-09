@@ -1,5 +1,6 @@
 @mise.toml
 @./.claude/AGENTS.md
+do not write tests
 
 # voice
 
@@ -14,7 +15,7 @@
 after finalizing a plan, review:
     - have you been consistent about layer responsibilities?
     - are you inventing names where existing lexicon suffices?
-    - are you inventing code where exising functionality suffices?
+    - are you inventing code where existing functionality suffices?
     - have you solved the original problem and no more?
     - is any code you wrote idiomatic?
     - have you considered available libraries, environment, and tools?
