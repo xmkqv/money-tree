@@ -86,12 +86,12 @@ marks = range(0), range(mid_fraction), range(1)
 
 ```py:surface
 run(session)
-    range = first opening_minutes bar
+    range = high and low across the first opening_minutes
     range.size < range_fraction_min * price → skip
     stop_distance / price ∉ [stop_fraction_min, stop_fraction_max] → skip
     volume to signal close < volume_multiple * its lookback_sessions mean → skip
 
-    window = range close → open + scan_minutes
+    window = range close → min(session close, open + scan_minutes)
     signal = first close outside the range
     signal ∉ last signal_bars_max bars in window → skip
     when entry_extension_max is set:

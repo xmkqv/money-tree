@@ -154,7 +154,7 @@ def _breakout_rows(
     minutes = cls.opening_minutes
     opening_at, scan_at = cls.entry_window(opens, closes)
     opening_end = f"{opening_at:%H:%M}"
-    first_entry = f"{opens + timedelta(minutes=2 * minutes):%H:%M}"
+    first_entry = f"{min(closes, opens + timedelta(minutes=2 * minutes)):%H:%M}"
     scan_end = f"{scan_at:%H:%M}"
     exit_at = f"{closes - timedelta(minutes=breakout.close_lead_minutes):%H:%M}"
 
