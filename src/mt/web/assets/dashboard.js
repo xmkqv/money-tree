@@ -934,9 +934,9 @@ function wirePanZoom(options) {
 
 function clampChartWindow() {
   const N = chart.series.length;
-  const span = clamp(chart.i1 - chart.i0, 3, N - 1);
-  if (chart.i0 < 0) chart.i0 = 0;
-  if (chart.i0 + span > N - 1) chart.i0 = N - 1 - span;
+  if (!N) return;
+  const span = Math.min(Math.max(chart.i1 - chart.i0, 3), N - 1);
+  chart.i0 = clamp(chart.i0, 0, N - 1 - span);
   chart.i1 = chart.i0 + span;
 }
 
