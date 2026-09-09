@@ -227,6 +227,10 @@ report(strategy, symbols, start, end)
 
 # web
 
+- the whole account reads on one screen without scrolling
+- the dashboard says when it does not know
+- every number leads to the trade or rule behind it
+
 ## bot state
 
 ```sketch
