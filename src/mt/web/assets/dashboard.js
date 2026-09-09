@@ -549,11 +549,39 @@ function axisMetrics(hostId) {
 const gutterFor = (labels, advance) =>
   Math.ceil(Math.max(...labels.map(text => text.length)) * advance) + 16;
 
-const chartPad = widest => {
+const CHART_PAD = { t: 1, b: 1.8, l: 1.3 };
+const TRADE_PAD = { t: 1.3, b: 3.3, l: 0.9 };
+const TRADE_PAD_PHONE = { t: 1, b: 3.2, l: 0.5 };
+
+function plotBox(hostId, { minimum, scale, widest }) {
+  const host = document.getElementById(hostId);
+  const width = host.clientWidth, height = host.clientHeight;
+  if (width < minimum || height < minimum) return null;
+  const { advance } = axisMetrics(hostId);
   const unit = space("--space-md");
-  const { advance } = axisMetrics("chart-host");
-  return { t: unit, r: gutterFor(widest, advance), b: unit * 1.8, l: unit * 1.3 };
-};
+  const pad = {
+    t: unit * scale.t, r: gutterFor(widest, advance), b: unit * scale.b, l: unit * scale.l,
+  };
+  return { host, width, height, advance, pad, plotW: width - pad.l - pad.r, plotH: height - pad.t - pad.b };
+}
+
+function paintSvg(box, label, body) {
+  box.host.querySelectorAll("svg").forEach(n => n.remove());
+  box.host.insertAdjacentHTML("afterbegin",
+    '<svg viewBox="0 0 ' + box.width + " " + box.height + '" preserveAspectRatio="none" ' +
+    'role="img" aria-label="' + label + '">' + body + "</svg>");
+}
+
+function sizeHits(box) {
+  Object.assign(box.host.querySelector(".plot-hit").style, {
+    left: box.pad.l + "px", top: box.pad.t + "px",
+    width: box.plotW + "px", height: box.plotH + "px",
+  });
+  Object.assign(box.host.querySelector(".axis-hit").style, {
+    left: (box.width - box.pad.r) + "px", top: box.pad.t + "px",
+    width: box.pad.r + "px", height: box.plotH + "px",
+  });
+}
 
 const chart = {
   series: null,
@@ -583,10 +611,18 @@ function setRange(range) {
   queueChart();
 }
 
-function syncRangeButtons() {
-  for (const b of document.querySelectorAll("#chart-range button")) {
-    b.setAttribute("aria-pressed", String(!chart.custom && b.dataset.range === chart.preset));
+function pressOnly(selector, isPressed) {
+  for (const b of document.querySelectorAll(selector)) {
+    b.setAttribute("aria-pressed", String(isPressed(b)));
   }
+}
+
+function syncRangeButtons() {
+  pressOnly("#chart-range button", b => !chart.custom && b.dataset.range === chart.preset);
+}
+
+function syncTimeframeButtons() {
+  pressOnly("#tc-range button", b => b.dataset.timeframe === TC_STATE.timeframe);
 }
 
 function markCustom() {
@@ -595,22 +631,35 @@ function markCustom() {
   syncRangeButtons();
 }
 
+function yTicks(yMin, yMax, divisor) {
+  const step = niceStep((yMax - yMin) / divisor);
+  const ticks = [];
+  for (let v = Math.ceil(yMin / step) * step; v <= yMax; v += step) ticks.push(v);
+  return ticks;
+}
+
+function hoveredIndex(geo, clientX) {
+  return clamp(Math.round(geo.indexAt(clientX)), geo.lo, geo.hi);
+}
+
 function niceStep(raw) {
   const mag = Math.pow(10, Math.floor(Math.log10(Math.abs(raw) || 1)));
   const norm = raw / mag;
   return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag;
 }
 
+function indexBounds(i0, i1, length) {
+  return [clamp(Math.floor(i0), 0, length - 1), clamp(Math.ceil(i1), 0, length - 1)];
+}
+
 function chartWindow() {
   const s = chart.series;
   if (!s || !s.length) return null;
-  const N = s.length;
-  const lo = clamp(Math.floor(chart.i0), 0, N - 1);
-  const hi = clamp(Math.ceil(chart.i1), 0, N - 1);
+  const [lo, hi] = indexBounds(chart.i0, chart.i1, s.length);
   const baseline = s[lo].before;
   const visible = [];
   for (let i = lo; i <= hi; i++) visible.push({ i, p: s[i], y: s[i].value - baseline });
-  return { s, N, lo, hi, baseline, visible, last: visible[visible.length - 1] };
+  return { s, lo, hi, baseline, visible, last: visible[visible.length - 1] };
 }
 
 function paintChartHero(w) {
@@ -640,17 +689,30 @@ function tickLabels(w) {
   return ["−" + usd0.format(reach || 1)];
 }
 
-let chartFrame = 0, chartOutput;
-function queueChart() {
-  cancelAnimationFrame(chartFrame);
-  chartFrame = requestAnimationFrame(() => {
-    const host = document.getElementById("chart-host");
-    const output = JSON.stringify([chart, unit, resolvedTheme(), host.clientWidth, host.clientHeight]);
-    if (output === chartOutput) return;
-    chartOutput = output;
-    drawChart();
-  });
+function coalesce(draw) {
+  let frame = 0;
+  return () => {
+    cancelAnimationFrame(frame);
+    frame = requestAnimationFrame(draw);
+  };
 }
+
+const same = (a, b) => a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
+
+let chartOutput = [];
+const queueChart = coalesce(() => {
+  const host = document.getElementById("chart-host");
+  const output = [
+    chart.series, chart.series?.at(-1)?.value, chart.i0, chart.i1,
+    chart.yManual?.min, chart.yManual?.max,
+    unit, resolvedTheme(), host.clientWidth, host.clientHeight,
+  ];
+  if (same(output, chartOutput)) return;
+  chartOutput = output;
+  drawChart();
+});
+
+const queueTradeChart = coalesce(() => drawTradeChart());
 
 function drawChart() {
   const w = chartWindow();
@@ -658,15 +720,11 @@ function drawChart() {
   paintChartHero(w);
   if (onPhone()) return;
 
-  const host = document.getElementById("chart-host");
-  const width = host.clientWidth;
-  const height = host.clientHeight;
-  if (width < 60 || height < 60) return;
+  const box = plotBox("chart-host", { minimum: 60, scale: CHART_PAD, widest: tickLabels(w) });
+  if (!box) return;
+  const { width, height, pad: PAD, plotW, plotH } = box;
 
-  const { N, lo, hi, baseline, visible } = w;
-  const PAD = chartPad(tickLabels(w));
-  const plotW = width - PAD.l - PAD.r;
-  const plotH = height - PAD.t - PAD.b;
+  const { lo, hi, baseline, visible } = w;
 
   const i0 = chart.i0, i1 = chart.i1;
 
@@ -683,10 +741,10 @@ function drawChart() {
   const px = i => PAD.l + ((i - i0) / (i1 - i0)) * plotW;
   const py = v => PAD.t + (1 - (v - yMin) / (yMax - yMin)) * plotH;
   const indexAt = clientX => {
-    const box = document.getElementById("chart-host").getBoundingClientRect();
-    return i0 + ((clientX - box.left - PAD.l) / plotW) * (i1 - i0);
+    const rect = document.getElementById("chart-host").getBoundingClientRect();
+    return i0 + ((clientX - rect.left - PAD.l) / plotW) * (i1 - i0);
   };
-  geo = { width, height, plotW, plotH, N, px, py, indexAt, yMin, yMax, baseline, lo, hi };
+  geo = { width, height, plotW, plotH, px, py, indexAt, yMin, yMax, baseline, lo, hi };
 
   const zeroY = clamp(py(0), PAD.t, PAD.t + plotH);
   const line = visible.map((v, k) => (k ? "L" : "M") + px(v.i).toFixed(2) + " " + py(v.y).toFixed(2)).join(" ");
@@ -694,9 +752,7 @@ function drawChart() {
     " L" + px(visible[visible.length - 1].i).toFixed(2) + " " + zeroY.toFixed(2) +
     " L" + px(visible[0].i).toFixed(2) + " " + zeroY.toFixed(2) + " Z";
 
-  const ticks = [];
-  const step = niceStep((yMax - yMin) / 3.2);
-  for (let t = Math.ceil(yMin / step) * step; t <= yMax; t += step) ticks.push(t);
+  const ticks = yTicks(yMin, yMax, 3.2);
 
   const gridSvg = ticks.map(t =>
     '<line class="' + (Math.abs(t) < 1e-9 ? "grid-zero" : "grid") + '" x1="' + PAD.l +
@@ -718,10 +774,7 @@ function drawChart() {
   const last = visible[visible.length - 1];
   const lastTone = last.y >= 0 ? "mark-gain" : "mark-loss";
 
-  host.querySelectorAll("svg").forEach(n => n.remove());
-  host.insertAdjacentHTML("afterbegin",
-    '<svg viewBox="0 0 ' + width + " " + height + '" preserveAspectRatio="none" ' +
-    'role="img" aria-label="Cumulative profit and loss across the visible window">' +
+  paintSvg(box, "Cumulative profit and loss across the visible window",
       "<defs>" +
         '<linearGradient id="gGain" x1="0" x2="0" y1="' + PAD.t + '" y2="' + zeroY + '" gradientUnits="userSpaceOnUse">' +
           '<stop class="g0" offset="0"/><stop class="g1" offset="1"/></linearGradient>' +
@@ -744,16 +797,10 @@ function drawChart() {
         '<circle class="dot ' + lastTone + '" id="crossDot" r="4.5" opacity="0"/>' +
         '<circle class="dot ' + lastTone + '" cx="' + px(last.i).toFixed(2) + '" cy="' + py(last.y).toFixed(2) + '" r="4.5"/>' +
       "</g>" +
-      xSvg +
-    "</svg>"
+      xSvg
   );
 
-  Object.assign(document.getElementById("plot-hit").style, {
-    left: PAD.l + "px", top: PAD.t + "px", width: plotW + "px", height: plotH + "px",
-  });
-  Object.assign(document.getElementById("axis-hit").style, {
-    left: (width - PAD.r) + "px", top: PAD.t + "px", width: PAD.r + "px", height: plotH + "px",
-  });
+  sizeHits(box);
   if (chartPointer !== null) chartHover({ clientX: chartPointer });
 }
 
@@ -897,8 +944,8 @@ function chartHover(event) {
   chartPointer = event.clientX;
   const tip = document.getElementById("chart-tip");
   const svg = document.getElementById("chart-host").querySelector("svg");
-  if (!svg) return;
-  const i = clamp(Math.round(geo.indexAt(event.clientX)), geo.lo, geo.hi);
+  if (!svg || !geo) return;
+  const i = hoveredIndex(geo, event.clientX);
   const point = chart.series[i];
   const y = point.value - geo.baseline;
   const cross = svg.querySelector("#cross");
@@ -1184,7 +1231,8 @@ function renderLog() {
 
 
 
-let TRADE = null, TC_STATE = { timeframe: "5Min", bars: null, hover: null };
+const blankTradeState = timeframe => ({ timeframe, bars: null, averages: [] });
+let TRADE = null, TC_STATE = blankTradeState("5Min");
 let TC_LEVELS = null, TC_COTRADES = [];
 const TC_VIEW = { i0: 0, i1: 0, yManual: null, custom: false };
 let TC_ORIGIN = "history";
@@ -1192,7 +1240,7 @@ let TC_ORIGIN = "history";
 const TC_SHOW = { range: true, stop: true, targets: true };
 
 function selectTradeState(timeframe) {
-  TC_STATE = { timeframe, bars: null, averages: [], hover: null };
+  TC_STATE = blankTradeState(timeframe);
   TC_LEVELS = null;
   Object.assign(TC_VIEW, { i0: 0, i1: 0, yManual: null, custom: false });
   document.getElementById("tc-host").querySelectorAll("svg, .tc-mark").forEach(n => n.remove());
@@ -1275,8 +1323,7 @@ async function openTradeChart(trade, from) {
   selectTradeState("5Min");
   TC_COTRADES = ALL_TRADES.filter(t => t.symbol === trade.symbol).reverse();
   if (trade.open) TC_COTRADES.push(trade);
-  for (const b of document.querySelectorAll("#tc-range button"))
-    b.setAttribute("aria-pressed", String(b.dataset.timeframe === "5Min"));
+  syncTimeframeButtons();
   document.getElementById("chart-back").textContent =
     TC_ORIGIN === "portfolio" ? "← Portfolio" : "← Trade log";
   switchView("chart");
@@ -1304,7 +1351,7 @@ async function loadTradeLevels() {
     TC_LEVELS = {};
   }
   paintRail();
-  if (TC_STATE.bars) drawTradeChart();
+  if (TC_STATE.bars) queueTradeChart();
 }
 
 function paintStepper() {
@@ -1344,7 +1391,7 @@ function averageColor(index) {
 function railToggle(key, label, averageIndex, enabled, why) {
   return html`<label class=${"tc-toggle" + (enabled ? "" : " off")} title=${why || nothing}>
     <input type="checkbox" .checked=${enabled && TC_SHOW[key]} ?disabled=${!enabled}
-      @change=${event => { TC_SHOW[key] = event.target.checked; drawTradeChart(); }}>
+      @change=${event => { TC_SHOW[key] = event.target.checked; queueTradeChart(); }}>
     <span class=${"tc-swatch" + (averageIndex === null ? " plain" : "")}
       style=${styleMap({"--sma-h": averageIndex === null ? undefined : "var(" + averageColor(averageIndex) + ")"})}></span>
     <span>${label}</span></label>`;
@@ -1425,28 +1472,23 @@ async function loadTradeBars() {
   tcState("");
   setTradeView(0, Math.max(1, TC_STATE.bars.length - TC_STATE.first));
   paintRail();
-  drawTradeChart();
+  paintTradeTable();
+  queueTradeChart();
 }
 
-const tradePad = (widest, advance) => {
-  const unit = space("--space-md");
-  return onPhone()
-    ? { l: unit * 0.5, r: gutterFor(widest, advance), t: unit, b: unit * 3.2 }
-    : { l: unit * 0.9, r: gutterFor(widest, advance), t: unit * 1.3, b: unit * 3.3 };
-};
-
 function drawTradeChart() {
-  const host = document.getElementById("tc-host");
   const bars = TC_STATE.bars;
   if (!bars || !bars.length) return;
-  const { advance } = axisMetrics("tc-host");
   const reach = Math.max(...bars.map(b => b.h));
-  const TC_PAD = tradePad([money(reach)], advance);
-  const width = host.clientWidth, height = host.clientHeight;
-  if (width < 80 || height < 80) return;
+  const box = plotBox("tc-host", {
+    minimum: 80,
+    scale: onPhone() ? TRADE_PAD_PHONE : TRADE_PAD,
+    widest: [money(reach)],
+  });
+  if (!box) return;
+  const { host, width, height, advance, pad: TC_PAD, plotW, plotH } = box;
 
   const t = TRADE;
-  const plotW = width - TC_PAD.l - TC_PAD.r, plotH = height - TC_PAD.t - TC_PAD.b;
 
   const averages = {};
   for (const { length, values } of TC_STATE.averages) {
@@ -1468,9 +1510,8 @@ function drawTradeChart() {
   const outIndex = nearest(stampOf(t.date, t.minute));
 
   const i0 = TC_VIEW.i0, i1 = TC_VIEW.i1;
-  const lo = clamp(Math.floor(i0), 0, all.length - 1);
-  const hi = clamp(Math.ceil(i1), 0, all.length - 1);
-  const shown = all.slice(lo, hi + 1);
+  const [lo, hi] = indexBounds(i0, i1, all.length);
+  const visible = all.slice(lo, hi + 1);
 
   const levels = TC_LEVELS || {};
   const extra = [];
@@ -1491,8 +1532,8 @@ function drawTradeChart() {
   if (TC_VIEW.yManual) {
     yMin = TC_VIEW.yManual.min; yMax = TC_VIEW.yManual.max;
   } else {
-    yMin = Math.min(...shown.map(b => b.l), ...extra);
-    yMax = Math.max(...shown.map(b => b.h), ...extra);
+    yMin = Math.min(...visible.map(b => b.l), ...extra);
+    yMax = Math.max(...visible.map(b => b.h), ...extra);
     const pad = ((yMax - yMin) || Math.max(yMax * 0.01, 0.01)) * 0.10;
     yMin -= pad; yMax += pad;
   }
@@ -1505,13 +1546,11 @@ function drawTradeChart() {
     return i0 + (clientX - rect.left - TC_PAD.l) / step - 0.5;
   };
   TC_STATE.geo = {
-    px, py, step, width, height, inIndex, outIndex, shown: all,
+    px, py, width, height, bars: all,
     lo, hi, yMin, yMax, plotW, plotH, indexAt, count: all.length,
   };
 
-  const ticks = [];
-  const gridStep = niceStep((yMax - yMin) / 4.2);
-  for (let v = Math.ceil(yMin / gridStep) * gridStep; v <= yMax; v += gridStep) ticks.push(v);
+  const ticks = yTicks(yMin, yMax, 4.2);
   const grid = ticks.map(v =>
     '<line class="grid" x1="' + TC_PAD.l + '" y1="' + py(v).toFixed(2) + '" x2="' + (width - TC_PAD.r) +
     '" y2="' + py(v).toFixed(2) + '"/>' +
@@ -1523,7 +1562,7 @@ function drawTradeChart() {
 
   const firstOf = key => {
     const seen = new Map();
-    shown.forEach((b, k) => { const at = key(b.t); if (!seen.has(at)) seen.set(at, k + lo); });
+    visible.forEach((b, k) => { const at = key(b.t); if (!seen.has(at)) seen.set(at, k + lo); });
     return seen;
   };
   const daily = TC_STATE.timeframe === "1Day";
@@ -1545,7 +1584,7 @@ function drawTradeChart() {
 
   const candidates = [];
   const push = (i, named) => {
-    const b = shown[i - lo];
+    const b = visible[i - lo];
     if (!b) return;
     candidates.push({
       i, named,
@@ -1584,7 +1623,7 @@ function drawTradeChart() {
     if (previous.clamped) kept[kept.length - 1] = candidate;
   }
 
-  const rules = shown.map((_bar, k) => {
+  const rules = visible.map((_bar, k) => {
     const i = k + lo;
     return boundary.has(i) && i > lo
       ? '<line class="grid" x1="' + px(i - 0.5).toFixed(2) + '" y1="' + TC_PAD.t + '" x2="' +
@@ -1603,7 +1642,7 @@ function drawTradeChart() {
     const values = averages[length];
     if (!values) return "";
     let path = "", lastY = null;
-    shown.forEach((_, k) => {
+    visible.forEach((_, k) => {
       const i = k + lo;
       const v = values[i + first];
       if (v === null || v === undefined) return;
@@ -1652,7 +1691,7 @@ function drawTradeChart() {
   }
 
   const bodyW = Math.max(1.5, Math.min(9, step * 0.62));
-  const barMarks = shown.map((b, k) => {
+  const barMarks = visible.map((b, k) => {
     const i = k + lo;
     const up = b.c >= b.o;
     const mark = up ? "gain" : "loss";
@@ -1692,36 +1731,23 @@ function drawTradeChart() {
     overlays + barMarks + smaLines +
     hint(y1) + hint(y2) + trend + fillMarks + entryMark + exitMark;
 
-  host.querySelectorAll("svg").forEach(n => n.remove());
-  host.insertAdjacentHTML("afterbegin",
-    '<svg viewBox="0 0 ' + width + " " + height + '" preserveAspectRatio="none" role="img" ' +
-    'aria-label="' + t.symbol + " price around the trade, entry " + money(t.entry) +
-    (t.open ? " and last " : " and exit ") + money(t.exit) + '">' +
+  paintSvg(box,
+    t.symbol + " price around the trade, entry " + money(t.entry) +
+    (t.open ? " and last " : " and exit ") + money(t.exit),
     '<defs><clipPath id="tcClip"><rect x="' + TC_PAD.l + '" y="' + TC_PAD.t +
     '" width="' + plotW + '" height="' + plotH + '"/></clipPath></defs>' +
     grid + axis +
     '<g clip-path="url(#tcClip)">' + plotted + "</g>" +
-    smaLabels + overlayText +
-    "</svg>");
+    smaLabels + overlayText);
 
   for (const element of host.querySelectorAll("[data-sma]")) {
     element.style.setProperty("--sma-h", "var(" + averageColor(Number(element.dataset.sma)) + ")");
   }
 
-  const hit = document.getElementById("tc-hit");
-  hit.style.left = TC_PAD.l + "px";
-  hit.style.top = TC_PAD.t + "px";
-  hit.style.width = plotW + "px";
-  hit.style.height = plotH + "px";
-  const axisHit = document.getElementById("tc-axis-hit");
-  axisHit.style.left = (width - TC_PAD.r) + "px";
-  axisHit.style.top = TC_PAD.t + "px";
-  axisHit.style.width = TC_PAD.r + "px";
-  axisHit.style.height = plotH + "px";
+  sizeHits(box);
 
   paintTradeLabels(x1, y1, x2, y2, width, inIndex >= i0 && inIndex <= i1,
     outIndex >= i0 && outIndex <= i1);
-  paintTradeTable();
 }
 
 function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
@@ -1777,8 +1803,8 @@ function tradeHover(event) {
   const geo = TC_STATE.geo;
   const tip = document.getElementById("tc-tip");
   if (!geo) return;
-  const bars = geo.shown;
-  const index = clamp(Math.round(geo.indexAt(event.clientX)), geo.lo, geo.hi);
+  const bars = geo.bars;
+  const index = hoveredIndex(geo, event.clientX);
   const b = bars[index];
   if (!b) return;
   render(html`<span class="tt-k">${dayOf(b.t)} ${clockOf(b.t)}</span><span class="tt-v">${money(b.c)}</span>
@@ -1798,8 +1824,7 @@ function wireTradeChart() {
     if (!button || button.dataset.timeframe === TC_STATE.timeframe) return;
     selectTradeState(button.dataset.timeframe);
     loadTradeLevels();
-    for (const b of document.querySelectorAll("#tc-range button"))
-      b.setAttribute("aria-pressed", String(b === button));
+    syncTimeframeButtons();
     loadTradeBars();
   });
   wirePanZoom({
@@ -1811,7 +1836,7 @@ function wireTradeChart() {
     spanMax: geo => geo.count,
     scaleMin: 1e-4,
     clampWindow: clampTradeWindow,
-    redraw: () => { TC_VIEW.custom = true; drawTradeChart(); },
+    redraw: () => { TC_VIEW.custom = true; queueTradeChart(); },
     onReset: resetTradeView,
     onHover: tradeHover,
     onLeave: () => document.getElementById("tc-tip").classList.remove("on"),
@@ -1836,7 +1861,7 @@ function setTradeView(i0, i1) {
 
 function resetTradeView() {
   setTradeView(0, (TC_STATE.geo?.count) || 1);
-  drawTradeChart();
+  queueTradeChart();
 }
 
 
@@ -2165,7 +2190,7 @@ function syncThemeButtons() {
 
 function repaintForTheme() {
   if (currentView === "dashboard") queueChart();
-  if (currentView === "chart") drawTradeChart();
+  if (currentView === "chart") queueTradeChart();
 }
 
 document.getElementById("theme-toggle").addEventListener("click", ev => {
@@ -2191,7 +2216,7 @@ new ResizeObserver(queueChart).observe(document.getElementById("chart-host"));
 let tradeResizeTimer = 0;
 new ResizeObserver(() => {
   clearTimeout(tradeResizeTimer);
-  tradeResizeTimer = setTimeout(() => { if (currentView === "chart") drawTradeChart(); }, 80);
+  tradeResizeTimer = setTimeout(() => { if (currentView === "chart") queueTradeChart(); }, 80);
 }).observe(document.getElementById("tc-host"));
 
 let wasPhone = onPhone();
