@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime, timedelta
 from datetime import time as dtime
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, Literal, cast
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
@@ -26,7 +26,7 @@ from mt.strategies.daily import Daily
 from mt.strategies.order_tag import Unattributed
 from mt.strategies.registry import strategy_class
 
-from .bars import BarRow, bar_averages, bars_atr, chart_window, session_hour_bars
+from .bars import bar_averages, bars_atr, chart_window, session_hour_bars
 from .cache import Cache
 from .ledger import Ledger, build_ledger, match_trades
 from .levels import Levels, add_breakout_levels, opening_range
@@ -192,10 +192,9 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 )
                 rows = session_hour_bars(half)
             else:
-                read = await bars_client(request).bars(
+                rows = await bars_client(request).bars(
                     symbol, timeframe, start.isoformat(), end.isoformat()
                 )
-                rows = [cast(BarRow, bar.model_dump(by_alias=True)) for bar in read]
             read_at = datetime.now(UTC)
             return read_at, {
                 "symbol": symbol,
@@ -309,8 +308,8 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         account = await observation(request)
         cached = build_pulse(account)
         held = ledger_cache.fresh(LEDGER_KEY)
-        if held is not None and {row["symbol"] for row in held[1]["positions"]} != {
-            row["symbol"] for row in cached["positions"]
+        if held is not None and {row.symbol for row in held[1]["positions"]} != {
+            row.symbol for row in cached["positions"]
         }:
             ledger_cache.drop(LEDGER_KEY)
         return read_response(cached, 0, account.read_at)

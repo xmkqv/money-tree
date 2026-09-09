@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from typing import TypedDict
 
 from alpaca.trading.models import Order
+from pydantic import computed_field
 
 from mt.data.alpaca import AccountObservation, Position
 from mt.exchange import TRADING_ZONE
@@ -20,19 +21,16 @@ class BotState(TypedDict):
     events: list[StateEvent]
 
 
-class PulsePosition(TypedDict):
-    symbol: str
-    side: str
-    quantity: float
-    entry: float
-    last: float
-    value: float
-    unrealized_pnl: float
-    unrealized_pnl_percent: float
+class PulsePosition(Position):
     weight: float
 
+    @computed_field
+    @property
+    def unrealized_pnl_percent(self) -> float:
+        return round(self.unrealized_pnl_fraction * 100, 2)
 
-class Pulse[Row = PulsePosition](TypedDict):
+
+class Pulse(TypedDict):
     orders: list[Order]
     asOf: str
     equity: float
@@ -54,8 +52,8 @@ def build_pulse(observation: AccountObservation) -> Pulse:
         equity=equity,
         cash=round(account.cash, 2),
         buyingPower=round(account.buying_power, 2),
-        marketValue=round(sum(row["value"] for row in held), 2),
-        unrealized_pnl=round(sum(row["unrealized_pnl"] for row in held), 2),
+        marketValue=round(sum(row.value for row in held), 2),
+        unrealized_pnl=round(sum(row.unrealized_pnl for row in held), 2),
         positions=held,
     )
 
@@ -83,14 +81,14 @@ def pulse_positions(raw: list[Position], equity: float) -> list[PulsePosition]:
             symbol=item.symbol,
             side="long" if item.side == "long" else "short",
             quantity=round(abs(item.quantity), 4),
-            entry=round(item.avg_entry_price, 4),
-            last=round(item.current_price, 4),
-            value=round(abs(item.market_value), 2),
+            entry=round(item.entry, 4),
+            last=round(item.last, 4),
+            value=round(abs(item.value), 2),
             unrealized_pnl=round(item.unrealized_pnl, 2),
-            unrealized_pnl_percent=round(item.unrealized_pnl_fraction * 100, 2),
-            weight=round(abs(item.market_value) / equity * 100, 2) if equity else 0.0,
+            unrealized_pnl_fraction=item.unrealized_pnl_fraction,
+            weight=round(abs(item.value) / equity * 100, 2) if equity else 0.0,
         )
         for item in raw
     ]
-    rows.sort(key=lambda row: -row["value"])
+    rows.sort(key=lambda row: -row.value)
     return rows

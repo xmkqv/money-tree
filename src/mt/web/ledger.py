@@ -380,9 +380,9 @@ def _position_rows(
 ) -> list[PositionRow]:
     return [
         PositionRow(
-            **position,
+            **position.model_dump(),
             strategy_key=held["strategy_key"]
-            if (held := open_trades.get(position["symbol"]))
+            if (held := open_trades.get(position.symbol))
             else UNATTRIBUTED,
             entered_at=held["entered_at"] if held else None,
             fills=held["fills"] if held else [],

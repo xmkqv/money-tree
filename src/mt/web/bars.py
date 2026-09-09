@@ -10,20 +10,11 @@ from mt.config.sections import ChartTimeframeSection
 from mt.config.settings import settings
 from mt.data.alpaca import Bar
 from mt.exchange import TRADING_ZONE, session_starts, trading_time
-from mt.frames import regular_session
+from mt.frames import normalize_ohlcv, regular_session
 from mt.indicators import latest_atr
 
 
-class BarRow(TypedDict):
-    t: str
-    o: float
-    h: float
-    l: float  # noqa: E741
-    c: float
-    v: float
-
-
-def session_hour_bars(bars: list[Bar]) -> list[BarRow]:
+def session_hour_bars(bars: list[Bar]) -> list[Bar]:
     if not bars:
         return []
     frame = _bar_frame(bars)
@@ -45,9 +36,10 @@ def session_hour_bars(bars: list[Bar]) -> list[BarRow]:
         )
     )
     folded.index = folded.index.tz_convert(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    return cast(
-        list[BarRow], folded.astype(float).rename_axis("t").reset_index().to_dict("records")
-    )
+    return [
+        Bar.model_validate(row)
+        for row in folded.astype(float).rename_axis("t").reset_index().to_dict("records")
+    ]
 
 
 def chart_window(
@@ -76,7 +68,7 @@ def bars_atr(bars: list[Bar]) -> float | None:
 def _bar_frame(bars: list[Bar]) -> DataFrame:
     frame = DataFrame([bar.model_dump() for bar in bars]).drop(columns="opened_at")
     frame.index = DatetimeIndex([trading_time(bar.opened_at) for bar in bars], tz=TRADING_ZONE)
-    return frame.sort_index()
+    return normalize_ohlcv(frame, {"open", "high", "low", "close", "volume"})
 
 
 class Average(TypedDict):
@@ -84,8 +76,8 @@ class Average(TypedDict):
     values: list[float | None]
 
 
-def bar_averages(bars: list[BarRow], lengths: tuple[int, ...]) -> list[Average]:
-    close = Series([bar["c"] for bar in bars], dtype=float)
+def bar_averages(bars: list[Bar], lengths: tuple[int, ...]) -> list[Average]:
+    close = Series([bar.close for bar in bars], dtype=float)
     return [
         Average(
             length=length,

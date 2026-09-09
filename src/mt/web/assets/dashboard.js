@@ -1944,7 +1944,7 @@ function mergePositions(pulsed) {
   const aligned = rows.size === pulsed.length && pulsed.every(pos => rows.has(pos.symbol));
   OPEN_POSITIONS = pulsed.map(pos => Object.assign(rows.get(pos.symbol) || {
     strategy_key: "unattributed", entered_at: null, fills: [],
-  }, pos)).sort((a, b) => b.value - a.value);
+  }, pos));
   return aligned;
 }
 

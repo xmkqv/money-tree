@@ -29,9 +29,9 @@ class Position(Payload):
     symbol: str
     side: str
     quantity: float = Field(validation_alias="qty")
-    avg_entry_price: float
-    current_price: float
-    market_value: float
+    entry: float = Field(validation_alias="avg_entry_price")
+    last: float = Field(validation_alias="current_price")
+    value: float = Field(validation_alias="market_value")
     unrealized_pnl: float = Field(validation_alias="unrealized_pl")
     unrealized_pnl_fraction: float = Field(validation_alias="unrealized_plpc")
 

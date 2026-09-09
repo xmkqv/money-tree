@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class Payload(BaseModel):
-    model_config = ConfigDict(extra="ignore", frozen=True)
+    model_config = ConfigDict(extra="ignore", frozen=True, validate_by_name=True)
 
 
 def http_timeout(timeout: TimeoutSection) -> httpx.Timeout:
