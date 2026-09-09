@@ -793,7 +793,6 @@ table.data .r { text-align: right; padding-left: 12px; }
 }
 
 .mini:hover { color: var(--ink); }
-.mini.hidden { display: none; }
 
 .today-sum {
   display: flex;
@@ -978,7 +977,6 @@ table.trades .sym { font-family: var(--font-ui); font-weight: 600; color: var(--
 
 .cell.sel { box-shadow: 0 0 0 2px var(--ink-2); }
 
-.closed-tag { font-family: var(--font-ui); font-size: 10px; color: var(--ink-3); margin-top: auto; }
 
 .cal-foot {
   display: flex;
@@ -1257,13 +1255,6 @@ table.trades.log td { font-size: 12.5px; }
 
 .rules { display: flex; flex-direction: column; gap: 14px; }
 .rules-note { color: var(--ink-2); max-width: 78ch; line-height: 1.5; margin: 0 0 12px; }
-.rules-note code {
-  font-family: var(--mono, ui-monospace, monospace);
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
-  border-radius: 4px;
-  padding: 1px 4px;
-}
 .rules-grid {
   display: grid;
   gap: 14px;
@@ -1384,7 +1375,6 @@ table.trades.log td { font-size: 12.5px; }
 .trade-facts .s { font-size: 11px; color: var(--ink-3); font-family: var(--font-data); }
 
 .trade-host { flex: 1; min-height: 260px; position: relative; margin: 0 var(--pad, 16px); }
-.trade-host .plot-hit { cursor: crosshair; }
 .tc-state {
   position: absolute; inset: 0; display: grid; place-items: center;
   margin: 0; color: var(--ink-3); font-size: 13px; text-align: center; padding: 0 24px;
@@ -1485,9 +1475,6 @@ body[data-view="chart"] .chart-panel { min-height: 74vh; }
   .trade-host { margin: 0; }
 }
 
-.trade-host .plot-hit { cursor: grab; }
-.trade-host .plot-hit.dragging { cursor: grabbing; }
-.trade-host .axis-hit { cursor: ns-resize; }
 .tc-hint {
   margin: 8px var(--pad, 16px) 0;
   font-size: 11px;
@@ -1781,7 +1768,6 @@ body[data-view="chart"] .chart-panel { min-height: 74vh; }
   .cell .p { font-size: 9.5px; letter-spacing: -0.05em; }
   .cell .q { font-size: 8px; }
   .cell.idle .p { font-size: 9px; }
-  .closed-tag { font-size: 8.5px; }
 
 
   .tiles { grid-template-columns: repeat(auto-fit, minmax(102px, 1fr)); gap: 4px 14px; }
@@ -1851,3 +1837,5 @@ body[data-view="chart"] .chart-panel { min-height: 74vh; }
   .stage { grid-template-rows: 240px auto; }
   .trade-host { min-height: 220px; }
 }
+
+:root { --chart-average: var(--s-daily-tfb); }

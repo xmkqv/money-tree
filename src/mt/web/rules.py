@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TypedDict
 
-from mt.config.settings import settings
+from mt.config.settings import RuleSettings
 from mt.config.values import StrategyKey
 from mt.strategies.base import Strategy
 from mt.strategies.breakout import Breakout
@@ -42,12 +42,13 @@ def percent(fraction: float) -> str:
     return f"{text}%"
 
 
-SYMBOLS = (
-    f"US common stocks screened daily: share price ${settings.screen.price_usd_min:.0f} or "
-    f"more, turnover {millions(settings.screen.turnover_usd_min)} or more averaged across the "
-    f"last {settings.screen.turnover_sessions} completed sessions, and tradable and "
-    "fractionable at the broker."
-)
+def symbols(settings: RuleSettings) -> str:
+    return (
+        f"US common stocks screened daily: share price ${settings.screen.price_usd_min:.0f} or "
+        f"more, turnover {millions(settings.screen.turnover_usd_min)} or more averaged across the "
+        f"last {settings.screen.turnover_sessions} completed sessions, and tradable and "
+        "fractionable at the broker."
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,79 +58,76 @@ class DailyProse:
     confirmation: str
     entry: str
     entry_source: str
-    symbols: str = SYMBOLS
+    symbols: str = ""
     symbols_source: str = "portfolio.py · _screen"
     risk_source: str = "portfolio.py · enter"
 
 
-DAILY_PROSE: dict[StrategyKey, DailyProse] = {
-    "daily_sma": DailyProse(
-        setup=(
-            f"The closing price crosses back above its {settings.daily.average_sessions}-day "
-            f"average while the trend is already stacked underneath it: price above the "
-            f"{settings.daily_sma.trend_sessions}-day average, and that average above the "
-            f"{settings.daily_sma.trend_sessions_long}-day. Needs "
-            f"{settings.daily_sma.trend_sessions_long} sessions of past bars."
+def daily_prose(settings: RuleSettings) -> dict[StrategyKey, DailyProse]:
+    return {
+        "daily_sma": DailyProse(
+            setup=(
+                f"The closing price crosses above its {settings.daily.average_sessions}-day "
+                f"average. The price is above the "
+                f"{settings.daily_sma.trend_sessions}-day average, and that average above the "
+                f"{settings.daily_sma.trend_sessions_long}-day average. Requires "
+                f"{settings.daily_sma.trend_sessions_long} sessions of past bars."
+            ),
+            setup_source="strategies/daily_sma.py · does_enter",
+            confirmation=(
+                f"RSI ({settings.indicators.period}) at {settings.daily_sma.rsi_min:g} "
+                "or above, and "
+                f"ADX ({settings.indicators.period}) at {settings.daily_sma.adx_min:g} or above."
+            ),
+            entry=(
+                f"A three-day structure: one session closes below the "
+                f"{settings.daily.average_sessions}-day average, the next closes back above it and "
+                "higher than that first close, and the buy "
+                "goes in at the open of the third. Market buy, retried every iteration until the "
+                "close."
+            ),
+            entry_source="strategies/daily_sma.py · does_enter, strategies/daily.py · run",
         ),
-        setup_source="strategies/daily_sma.py · does_enter",
-        confirmation=(
-            f"RSI ({settings.indicators.period}) at {settings.daily_sma.rsi_min:g} or above, and "
-            f"ADX ({settings.indicators.period}) at {settings.daily_sma.adx_min:g} or above."
+        "daily_tfb": DailyProse(
+            symbols=(
+                f"{symbols(settings)} This strategy screens that list again on turnover: "
+                f"{millions(settings.screen.turnover_usd_min)} or more averaged across the last "
+                f"{settings.daily_tfb.turnover_sessions} completed sessions. Turnover here is "
+                "the value traded in each session, which is that session's close times its share "
+                "volume. A symbol whose sessions cannot be read does not pass."
+            ),
+            symbols_source="portfolio.py · _screen, strategies/daily_tfb.py · does_clear",
+            setup=(
+                f"The closing price is above its {settings.daily_tfb.trend_sessions}-day average, "
+                f"that average is higher than it was {settings.daily_tfb.trend_lag_sessions} "
+                "sessions ago, and the close beats the previous session's high."
+            ),
+            setup_source="strategies/daily_tfb.py · does_enter",
+            confirmation=(
+                f"ADX ({settings.indicators.period}) at {settings.daily_tfb.adx_min:g} or above."
+            ),
+            entry=(
+                "Submit a market buy at the open. Retry each iteration until the close if "
+                "entry limits prevent the order. Scan completed sessions once per day."
+            ),
+            entry_source="strategies/daily.py · run",
+            risk_source="strategies/daily.py · run, portfolio.py · enter",
         ),
-        entry=(
-            f"A three-day structure: one session closes below the "
-            f"{settings.daily.average_sessions}-day average, the next closes back above it and "
-            "higher than that first close, and the buy "
-            "goes in at the open of the third. Market buy, retried every iteration until the "
-            f"close. Skipped if the company reports earnings within "
-            f"{settings.earnings.block_days} days. A "
-            "company with no earnings date on file can still be bought."
-        ),
-        entry_source="strategies/daily_sma.py · does_enter, strategies/daily.py · run",
-    ),
-    "daily_tfb": DailyProse(
-        symbols=(
-            f"{SYMBOLS} This strategy screens that list again on turnover: "
-            f"{millions(settings.screen.turnover_usd_min)} or more averaged across the last "
-            f"{settings.daily_tfb.turnover_sessions} completed sessions. Turnover here is "
-            "the value traded in each session, which is that session's close times its share "
-            "volume. A symbol whose sessions cannot be read does not pass."
-        ),
-        symbols_source="portfolio.py · _screen, strategies/daily_tfb.py · does_clear",
-        setup=(
-            f"The closing price is above its {settings.daily_tfb.trend_sessions}-day average, "
-            f"that average is higher than it was {settings.daily_tfb.trend_lag_sessions} "
-            "sessions ago, and the close beats the previous session's high."
-        ),
-        setup_source="strategies/daily_tfb.py · does_enter",
-        confirmation=(
-            f"ADX ({settings.indicators.period}) at {settings.daily_tfb.adx_min:g} or above."
-        ),
-        entry=(
-            "Market buy at the open, then retried every iteration until the close. The "
-            "setup is cut from completed sessions, so the day's list is scanned once and "
-            "re-offered. A symbol that could not be funded at the open is taken later in the "
-            "day if room frees up. It may have missed out because no slot was left, because "
-            "no affordable size was available, or because another strategy held it. Upcoming "
-            "earnings do not block an entry for this strategy."
-        ),
-        entry_source="strategies/daily.py · run",
-        risk_source="strategies/daily.py · run, portfolio.py · enter",
-    ),
-}
+    }
 
 
 def strategy_rows(
-    cls: type[Strategy], per_trade: float, opens: datetime, closes: datetime
+    cls: type[Strategy], settings: RuleSettings, opens: datetime, closes: datetime
 ) -> list[Row]:
     if issubclass(cls, Breakout):
-        return _breakout_rows(cls, per_trade, opens, closes)
+        return _breakout_rows(cls, settings, opens, closes)
     if issubclass(cls, Daily):
-        return _daily_rows(cls, per_trade, closes)
+        return _daily_rows(cls, settings, closes)
     raise ValueError(f"{cls.__name__} has no rules")
 
 
-def max_risk_row(cls: type[Strategy], per_trade: float, source: str) -> Row:
+def max_risk_row(cls: type[Strategy], settings: RuleSettings, source: str) -> Row:
+    per_trade = settings.risk.per_trade_max
     own = cls.risk_fraction_max
     limit = per_trade if own is None else own
     return Row(
@@ -149,7 +147,7 @@ def max_risk_row(cls: type[Strategy], per_trade: float, source: str) -> Row:
 
 
 def _breakout_rows(
-    cls: type[Breakout], per_trade: float, opens: datetime, closes: datetime
+    cls: type[Breakout], settings: RuleSettings, opens: datetime, closes: datetime
 ) -> list[Row]:
     breakout = settings.breakout
     period = settings.indicators.period
@@ -163,35 +161,26 @@ def _breakout_rows(
         f"Volume traded up to the signal candle's close is at least "
         f"{cls.volume_multiple:g}x the "
         f"{breakout.past_sessions}-session average at the same time of day. "
-        f"All {breakout.past_sessions} earlier sessions must be available to compare "
-        "against. "
-        "If fewer are available there is no confirmation, and the breakout is passed over. "
-        "The reading is taken at the signal candle's close rather than at the moment the "
-        "scan runs, so a breakout found on a late pass is still confirmed on the volume that "
-        "made it. Each session is measured between its own opening and closing bell, so a "
-        "half day is compared as a half day."
+        f"Requires {breakout.past_sessions} earlier sessions. "
+        "Use volume at the signal close, including when bars arrive late. "
+        "Include only regular trading hours for each session."
     )
 
     first, second, third = cls.target_multiples
     multiples = f"{first:g}x, {second:g}x and {third:g}x"
     reward = f"{first:g}:1 at the first target, then {second:g}:1 and {third:g}:1."
-    targets = (
-        f"Targets are re-cut from the filled price: {multiples} the risk actually taken. A "
-        "fill away from the signal price moves the targets with it."
-    )
+    targets = f"Targets use the average fill price and {multiples} the distance from entry to stop."
 
     extension = (
         ""
         if cls.entry_extension_max is None
-        else f" It is also passed over if that live quote sits more than "
+        else f" Skip the entry if the live quote is more than "
         f"{percent(cls.entry_extension_max)} of the opening range beyond the breakout "
-        "level. The stop "
-        "is a fixed distance inside the range, so a price further past the level risks more "
-        "and leaves less of the move to collect."
+        "level."
     )
 
     return [
-        Row(field="Symbols", value=SYMBOLS, source="portfolio.py · _screen"),
+        Row(field="Symbols", value=symbols(settings), source="portfolio.py · _screen"),
         Row(
             field="Market condition",
             value="None. This strategy takes signals whatever the wider market is doing.",
@@ -243,10 +232,7 @@ def _breakout_rows(
         Row(
             field="Sorting",
             value="Ranked by the value traded in the last completed daily session, which is "
-            "its close times its share volume, highest first. When more breakouts fire than "
-            "there is room to hold, the busiest take the slots. This is a different question "
-            "from the confirmation above, which measures each stock against its own past "
-            "rather than against other stocks.",
+            "its close times its share volume, highest first.",
             source="strategies/base.py · ranked",
         ),
         Row(
@@ -290,7 +276,7 @@ def _breakout_rows(
             "leaves at market.",
             source="strategies/breakout.py · run, manage, portfolio.py · protect",
         ),
-        max_risk_row(cls, per_trade, "portfolio.py · enter"),
+        max_risk_row(cls, settings, "portfolio.py · enter"),
         Row(
             field="Min. R:R",
             value=f"{reward} {targets}",
@@ -299,9 +285,10 @@ def _breakout_rows(
         Row(
             field="Exit Rule",
             value="Scaled out in three: half the position as first filled at the first "
-            "target, a quarter of it at the second, the remainder at the third. Each slice "
-            "is rounded down to whole shares, and a slice worth less than a single share "
-            "is skipped. The resting stop still covers the position, and the next "
+            "target, a quarter of it at the second, the remainder at the third. "
+            "Partial short exits round down to whole shares and skip zero-share slices. Each slice "
+            "of a long supports fractional shares. The resting stop still covers the position, "
+            "and the next "
             "target or the closing deadline takes it. The trailing stop takes whatever is "
             "left if price turns first.",
             source="strategies/breakout.py · manage",
@@ -318,14 +305,12 @@ def _breakout_rows(
     ]
 
 
-def _daily_rows(cls: type[Daily], per_trade: float, closes: datetime) -> list[Row]:
-    prose = DAILY_PROSE[cls.key]
-    lead_minutes = settings.earnings.exit_lead_minutes
+def _daily_rows(cls: type[Daily], settings: RuleSettings, closes: datetime) -> list[Row]:
+    prose = daily_prose(settings)[cls.key]
     period = settings.indicators.period
     average_sessions = settings.daily.average_sessions
-    earnings_exit = f"{closes - timedelta(minutes=lead_minutes):%H:%M}"
     return [
-        Row(field="Symbols", value=prose.symbols, source=prose.symbols_source),
+        Row(field="Symbols", value=prose.symbols or symbols(settings), source=prose.symbols_source),
         Row(
             field="Market condition",
             value=f"The last completed close of {settings.benchmark_symbol} must be above its "
@@ -349,7 +334,17 @@ def _daily_rows(cls: type[Daily], per_trade: float, closes: datetime) -> list[Ro
             "with no readable sessions is left out.",
             source="strategies/daily.py · _ranked",
         ),
-        Row(field="Entry", value=prose.entry, source=prose.entry_source),
+        Row(
+            field="Entry",
+            value=prose.entry
+            + (
+                f" Earnings within {settings.earnings.block_days} days block an entry. "
+                "A company with no earnings date on file can still be bought."
+                if cls.does_heed_earnings
+                else " Earnings do not block an entry."
+            ),
+            source=prose.entry_source,
+        ),
         Row(
             field="Stop Loss",
             value=f"{cls.stop_atr_multiple:g}x the {period}-period ATR below the entry "
@@ -357,11 +352,11 @@ def _daily_rows(cls: type[Daily], per_trade: float, closes: datetime) -> list[Ro
             "reached since entry. The stop only ever moves up.",
             source="strategies/daily.py · manage",
         ),
-        max_risk_row(cls, per_trade, prose.risk_source),
+        max_risk_row(cls, settings, prose.risk_source),
         Row(
             field="Min. R:R",
             value="No fixed target. The trade is held while the trend holds and closed on "
-            "the exit rule below, so no reward-to-risk ratio is set in advance.",
+            "the exit rule below.",
             source="strategies/daily.py · manage",
         ),
         Row(
@@ -375,9 +370,9 @@ def _daily_rows(cls: type[Daily], per_trade: float, closes: datetime) -> list[Ro
         Row(
             field="Emergency Exit",
             value=(
-                f"Closed {lead_minutes} minutes before the closing bell "
-                f"({earnings_exit} on a full session) on the session before the company "
-                "reports earnings. The daily loss limit closes all positions and "
+                "Closed at the open of the last exchange session strictly before the company "
+                "reports earnings, including weekend and holiday release dates. "
+                "The daily loss limit closes all positions and "
                 "stops new entries for the rest of the day."
                 if cls.does_heed_earnings
                 else "The daily loss limit closes all positions and stops new entries for "

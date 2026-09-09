@@ -6,8 +6,8 @@ const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD"
 
 const money = v => usd.format(v);
 const signedMoney = v => (v > 0 ? "+" : v < 0 ? "−" : "") + usd.format(Math.abs(v));
-const signedPct = (v, d = 2) => (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d) + "%";
-const plainNum = v => new Intl.NumberFormat("en-US").format(v);
+const signedPct = (v, d = 2) => v === null || !Number.isFinite(v) ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d) + "%";
+const plainNum = new Intl.NumberFormat("en-US").format;
 const tone = v => (v > 0 ? "pos" : v < 0 ? "neg" : "flat");
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -58,7 +58,7 @@ const weekStart = d => {
 };
 
 let LEDGER, ACCOUNT, STRATEGIES, STRAT_BY_ID, OPEN_POSITIONS, ALL_TRADES, tradesByDate;
-let SESSION = {}, TOTALS, SESSIONS, LAST_SESSION, DAY_PNL, WEEK_PNL, BENCH, BENCH_SYMBOL, DAILY, INTRADAY, LATEST;
+let SESSION = {}, TOTALS, SESSIONS, LAST_SESSION, DAY_PNL, BENCH, BENCH_SYMBOL, DAILY, INTRADAY, LATEST;
 let FIRST_MONTH, LAST_MONTH, FIRST_IX, LAST_IX;
 let STRATEGY_PERIODS = {};
 let monthCache = new Map();
@@ -113,7 +113,7 @@ function monthData(y, m) {
     const hit = LEDGER.days.find(x => x.date === iso);
     const entry = {
       day: d, weekday, weekend: weekday === 0 || weekday === 6,
-      pnl: null, trades: 0, wins: 0, closed: null,
+      pnl: null, trades: 0, wins: 0,
       before: hit ? hit.before : running, iso,
     };
     if (hit) {
@@ -216,27 +216,20 @@ function derive(ledger) {
   LAST_SESSION = SESSIONS[SESSIONS.length - 1] || { date: ledger.equityDaily.at(-1).date, pnl: 0, before: ledger.equity, pct: 0, trades: 0, wins: 0 };
   DAY_PNL = LAST_SESSION.pnl;
 
-  const weekCut = ledger.days.length > 3 ? ledger.days[ledger.days.length - 3].date : (ledger.days[0] || LAST_SESSION).date;
-  const weekTrades = ledger.trades.filter(t => t.date >= weekCut);
-  WEEK_PNL = Math.round(weekTrades.reduce((a, t) => a + t.pnl, 0) * 100) / 100;
-
-  const monthKey = LAST_SESSION.date.slice(0, 7);
   periodFromTrades("D", LAST_SESSION.before, tradesByDate.get(LAST_SESSION.date) || []);
-  periodFromTrades("W", (ledger.days.find(d => d.date === weekCut) || LAST_SESSION).before, weekTrades);
-  periodFromTrades("M", ACCOUNT.invested, ledger.trades.filter(t => t.date.startsWith(monthKey)));
+  for (const key of ["W", "M"]) {
+    const period = ledger.periods[key];
+    periodFromTrades(key, period.base, ledger.trades.filter(t => t.date >= period.start && t.date <= ledger.today));
+  }
   periodFromTrades("ALL", ACCOUNT.invested, ledger.trades);
 
   const bench = ledger.benchmark;
   const at = i => bench[i].close;
-  const since = from => {
-    const i = bench.findIndex(b => b.date >= from);
-    return i < 0 || bench.length < 2 ? 0 : (at(bench.length - 1) / at(Math.max(0, i - 1)) - 1) * 100;
-  };
   BENCH_SYMBOL = ledger.benchmarkSymbol;
   BENCH = bench.length > 1
-    ? { D: (at(bench.length - 1) / at(bench.length - 2) - 1) * 100, W: since(weekCut),
-        M: since(monthKey + "-01"), ALL: (at(bench.length - 1) / at(0) - 1) * 100 }
-    : { D: 0, W: 0, M: 0, ALL: 0 };
+    ? { D: (at(bench.length - 1) / at(bench.length - 2) - 1) * 100, W: ledger.periods.W.benchmarkPct,
+        M: ledger.periods.M.benchmarkPct, ALL: (at(bench.length - 1) / at(0) - 1) * 100 }
+    : { D: 0, W: ledger.periods.W.benchmarkPct, M: ledger.periods.M.benchmarkPct, ALL: 0 };
 
   const [ly, lm, lday] = dparts(LAST_SESSION.date);
   LATEST = { y: ly, m: lm - 1, day: lday };
@@ -340,16 +333,15 @@ function renderToday() {
     return;
   }
 
-  if (!cell || cell.closed) {
-    sum.innerHTML = "<span>" + (cell && cell.closed ? cell.closed + " — market closed" : "No session") + "</span>";
-    table.innerHTML = "<tbody><tr><td class='empty'>" +
-      (cell && cell.closed ? "Market closed. No trades placed." : "No session on this date.") + "</td></tr></tbody>";
+  if (!cell) {
+    sum.innerHTML = "<span>No session</span>";
+    table.innerHTML = "<tbody><tr><td class='empty'>No session on this date.</td></tr></tbody>";
     return;
   }
 
   if (!trades.length) {
-    sum.innerHTML = "<span>No entries triggered</span>";
-    table.innerHTML = "<tbody><tr><td class='empty'>No trades — no strategy signalled an entry.</td></tr></tbody>";
+    sum.innerHTML = "<span>No closed trades</span>";
+    table.innerHTML = "<tbody><tr><td class='empty'>No trades closed in this session.</td></tr></tbody>";
     return;
   }
 
@@ -497,9 +489,9 @@ function renderAccount() {
   bar.classList.toggle("closed", !LEDGER.marketOpen);
   document.getElementById("st-word").textContent = LEDGER.marketOpen ? "Market open" : "Market closed";
   document.getElementById("st-session").textContent =
-    LEDGER.marketOpen ? "closes 16:00 ET" : "opens " + LEDGER.nextOpen;
+    LEDGER.marketOpen ? "closes " + LEDGER.nextClose : "opens " + LEDGER.nextOpen;
   document.getElementById("st-strats").textContent =
-    "Paper " + LEDGER.accountNumber + " · " + LEDGER.positions.length + " positions";
+    "Account " + LEDGER.accountNumber + " · " + LEDGER.positions.length + " positions";
   document.getElementById("st-asof").textContent = LEDGER.asOf;
 }
 
@@ -513,7 +505,7 @@ function renderPeriodReturns() {
   for (const [label, key] of [["Session", "D"], ["Week", "W"], ["Month", "M"], ["Inception", "ALL"]]) {
     const p = STRATEGY_PERIODS[key];
     const pnl = Object.values(p.rows).reduce((s, r) => s + r[1], 0);
-    host.append(periodCell(label, pnl, (pnl / p.base) * 100, BENCH[key]));
+    host.append(periodCell(label, pnl, p.base ? (pnl / p.base) * 100 : null, BENCH[key]));
   }
 }
 
@@ -638,7 +630,7 @@ function renderStrategies(period) {
     big.textContent = trades === 0 ? "—" : signedMoney(pnl);
     const small = document.createElement("span");
     small.className = "sub";
-    small.textContent = trades === 0 ? "" : signedPct((pnl / p.base) * 100);
+    small.textContent = trades === 0 ? "" : signedPct(p.base ? (pnl / p.base) * 100 : null);
     pnlCell.append(big, small);
 
     tr.append(nameCell, tradeCell, pnlCell);
@@ -662,8 +654,7 @@ let geo = null;
 function presetWindow(range) {
   if (range === "D") return { series: INTRADAY, i0: 0, i1: INTRADAY.length - 1 };
   const n = DAILY.length;
-  const span = range === "W" ? Math.min(6, n - 1) : n - 1;
-  return { series: DAILY, i0: Math.max(0, n - 1 - span), i1: n - 1 };
+  return { series: DAILY, i0: LEDGER.periods[range]?.equityIndex ?? 0, i1: n - 1 };
 }
 
 function setRange(range) {
@@ -1092,16 +1083,6 @@ function dayCell(cell, peak, tip) {
   d.textContent = cell.day;
   el.append(d);
 
-  if (cell.closed) {
-    el.className = "cell idle";
-    const tag = document.createElement("span");
-    tag.className = "closed-tag";
-    tag.textContent = "Closed";
-    el.append(tag);
-    el.title = cell.closed + " — market closed";
-    return el;
-  }
-
   if (cell.pnl === null) {
     el.className = "cell idle";
     const p = document.createElement("span");
@@ -1209,7 +1190,7 @@ function renderPortfolio() {
     label.textContent = st.label;
     const n = document.createElement("span");
     n.className = "eyebrow";
-    n.textContent = held.length + (held.length === 1 ? " pos" : " pos");
+    n.textContent = held.length + (held.length === 1 ? " position" : " positions");
     nm.append(chip, label, n);
 
     const amt = document.createElement("div");
@@ -1357,7 +1338,7 @@ function renderHistory() {
     strip.append(bar);
   }
 
-  buildTable(document.getElementById("hs-months"),
+  buildTable(document.getElementById("hs-sessions"),
     ["Session", "Trades", "Win rate", "P&L", "Return"],
     [...SESSIONS].reverse().map(m => [
       { t: m.long },
@@ -1383,8 +1364,8 @@ function renderHistory() {
   const fs = document.getElementById("f-strategy");
   if (fs.options.length === 1) {
     for (const st of STRATEGIES) fs.append(new Option(st.label, st.id));
-    const fm = document.getElementById("f-month");
-    for (const m of [...SESSIONS].reverse()) fm.append(new Option(m.long, m.date));
+    const sessions = document.getElementById("f-session");
+    for (const session of [...SESSIONS].reverse()) sessions.append(new Option(session.long, session.date));
   }
 
   renderLog();
@@ -1411,14 +1392,14 @@ function renderLog() {
   const strategy = document.getElementById("f-strategy").value;
   const side = document.getElementById("f-side").value;
   const result = document.getElementById("f-result").value;
-  const month = document.getElementById("f-month").value;
+  const session = document.getElementById("f-session").value;
   const symbol = document.getElementById("f-symbol").value.trim().toUpperCase();
 
   const rows = ALL_TRADES.filter(t =>
     (!strategy || t.strategy === strategy) &&
     (!side || t.side === side) &&
     (!result || (result === "win" ? t.pnl > 0 : t.pnl <= 0)) &&
-    (!month || month === t.date) &&
+    (!session || session === t.date) &&
     (!symbol || t.symbol.includes(symbol))
   );
 
@@ -1466,12 +1447,16 @@ let TC_LEVELS = null, TC_COTRADES = [];
 const TC_VIEW = { i0: 0, i1: 0, yManual: null, custom: false };
 let TC_ORIGIN = "history";
 
-const SMA_SET = [
-  { length: 20, token: "--s-breakout-5m" },
-  { length: 50, token: "--s-breakout-10m" },
-  { length: 200, token: "--s-daily-tfb" },
-];
-const TC_SHOW = { sma20: false, sma50: false, sma200: false, range: true, stop: true, targets: true };
+const TC_SHOW = { range: true, stop: true, targets: true };
+
+function selectTradeState(bar) {
+  TC_STATE = { bar, bars: null, averages: [], hover: null };
+  TC_LEVELS = null;
+  Object.assign(TC_VIEW, { i0: 0, i1: 0, yManual: null, custom: false });
+  document.getElementById("tc-host").querySelectorAll("svg").forEach(n => n.remove());
+  document.getElementById("tc-tip").classList.remove("on");
+  paintRail();
+}
 
 function clockOf(iso) {
   const at = new Date(iso);
@@ -1530,8 +1515,7 @@ function positionTrade(position) {
     date: LEDGER.today,
     minute: tradingMinutes(),
     heldMin: Math.max(0,
-      (Date.parse(LEDGER.today + "T00:00:00Z") / 60000 + tradingMinutes()) -
-      (Date.parse(position.inDate + "T00:00:00Z") / 60000 + position.inMinute)),
+      stampOf(LEDGER.today, tradingMinutes()) - stampOf(position.inDate, position.inMinute)),
     fills: position.fills || [],
     open: true,
   };
@@ -1541,8 +1525,8 @@ async function openTradeChart(trade, from) {
   TRADE = trade;
   if (from) TC_ORIGIN = from;
   TC_LEVELS = null;
-  TC_STATE = { bar: "5Min", bars: null, hover: null };
-  TC_COTRADES = ALL_TRADES.filter(t => t.symbol === trade.symbol).slice().reverse();
+  selectTradeState("5Min");
+  TC_COTRADES = ALL_TRADES.filter(t => t.symbol === trade.symbol).reverse();
   if (trade.open) TC_COTRADES.push(trade);
   for (const b of document.querySelectorAll("#tc-range button"))
     b.setAttribute("aria-pressed", String(b.dataset.bar === "5Min"));
@@ -1557,6 +1541,7 @@ async function openTradeChart(trade, from) {
 }
 
 async function loadTradeLevels() {
+  const state = TC_STATE;
   const t = TRADE;
   if (t.strategy === "unattributed") { TC_LEVELS = {}; paintRail(); return; }
   const query = new URLSearchParams({
@@ -1565,8 +1550,11 @@ async function loadTradeLevels() {
   try {
     const response = await fetch("/api/levels?" + query, { headers: { Accept: "application/json" } });
     if (!response.ok) throw new Error("HTTP " + response.status);
-    TC_LEVELS = (await response.json()).data;
+    const payload = await response.json();
+    if (TC_STATE !== state) return;
+    TC_LEVELS = payload.data;
   } catch {
+    if (TC_STATE !== state) return;
     TC_LEVELS = {};
   }
   paintRail();
@@ -1587,25 +1575,13 @@ function stepTrade(by) {
   openTradeChart(TC_COTRADES[index]);
 }
 
-function movingAverage(bars, length) {
-  const out = new Array(bars.length).fill(null);
-  let total = 0;
-  for (let i = 0; i < bars.length; i++) {
-    total += bars[i].c;
-    if (i >= length) total -= bars[i - length].c;
-    if (i >= length - 1) out[i] = total / length;
-  }
-  return out;
-}
-
 function paintRail() {
   const host = document.getElementById("tc-smas");
   host.replaceChildren();
-  const bars = TC_STATE.bars || [];
-  for (const { length, token } of SMA_SET) {
+  for (const { length, values } of TC_STATE.averages || []) {
     const key = "sma" + length;
-    const enough = bars.length >= length;
-    host.append(railToggle(key, "SMA " + length, token, enough,
+    const enough = values.some(value => value !== null);
+    host.append(railToggle(key, "SMA " + length, "--chart-average", enough,
       enough ? "" : "Not enough bars at this size"));
   }
 
@@ -1702,6 +1678,7 @@ function tcState(message) {
 }
 
 async function loadTradeBars() {
+  const state = TC_STATE;
   const t = TRADE;
   tcState("Loading " + TC_BARS[TC_STATE.bar].toLowerCase() + " bars…");
   document.getElementById("tc-host").querySelectorAll("svg").forEach(n => n.remove());
@@ -1710,19 +1687,23 @@ async function loadTradeBars() {
   });
   try {
     const response = await fetch("/api/bars?" + query, { headers: { Accept: "application/json" } });
+    if (TC_STATE !== state) return;
     if (response.status === 401) { location.replace("/login"); return; }
     if (!response.ok) throw new Error("HTTP " + response.status);
     const payload = await response.json();
+    if (TC_STATE !== state) return;
+    TC_STATE.averages = payload.data.averages;
     TC_STATE.bars = payload.data.bars.map(b => ({ ...b, x: barStamp(b.t) }));
     const from = barStamp(payload.data.displayFrom);
     TC_STATE.first = Math.max(0, TC_STATE.bars.findIndex(b => b.x >= from));
   } catch (error) {
+    if (TC_STATE !== state) return;
     TC_STATE.bars = null;
     tcState("Past bars could not be read. Try again in a moment.");
     return;
   }
   if (!TC_STATE.bars.length) {
-    tcState("No bars for this window. The IEX feed may not have quoted this stock then.");
+    tcState("No historical bars are available for this window.");
     return;
   }
   tcState("");
@@ -1749,9 +1730,9 @@ function drawTradeChart() {
   const plotW = width - TC_PAD.l - TC_PAD.r, plotH = height - TC_PAD.t - TC_PAD.b;
 
   const averages = {};
-  for (const { length } of SMA_SET) {
+  for (const { length, values } of TC_STATE.averages) {
     if (TC_SHOW["sma" + length] && bars.length >= length) {
-      averages[length] = movingAverage(bars, length);
+      averages[length] = values;
     }
   }
   const first = TC_STATE.first || 0;
@@ -1881,8 +1862,7 @@ function drawTradeChart() {
     candidate.clamped = Math.abs(candidate.x - natural) > 0.5;
     const previous = kept[kept.length - 1];
     if (!previous || candidate.left >= previous.right + GAP) { kept.push(candidate); continue; }
-    if (previous.clamped && !candidate.clamped) kept[kept.length - 1] = candidate;
-    else if (previous.clamped && candidate.clamped) kept[kept.length - 1] = candidate;
+    if (previous.clamped) kept[kept.length - 1] = candidate;
   }
 
   const rules = shown.map((_bar, k) => {
@@ -1901,10 +1881,10 @@ function drawTradeChart() {
   ).join("");
 
   const smaEnds = [];
-  const smaLines = SMA_SET.map(({ length, token: tokenName }) => {
+  const smaLines = TC_STATE.averages.map(({ length }) => {
     const values = averages[length];
     if (!values) return "";
-    const colour = token(tokenName);
+    const colour = token("--chart-average");
     let path = "", lastY = null;
     shown.forEach((_, k) => {
       const i = k + lo;
@@ -2107,7 +2087,8 @@ function wireTradeChart() {
   document.getElementById("tc-range").addEventListener("click", event => {
     const button = event.target.closest("button");
     if (!button || button.dataset.bar === TC_STATE.bar) return;
-    TC_STATE.bar = button.dataset.bar;
+    selectTradeState(button.dataset.bar);
+    loadTradeLevels();
     for (const b of document.querySelectorAll("#tc-range button"))
       b.setAttribute("aria-pressed", String(b === button));
     loadTradeBars();
@@ -2484,12 +2465,12 @@ document.getElementById("cal-next").addEventListener("click", () => {
   renderCalendar();
 });
 
-for (const id of ["f-strategy", "f-side", "f-result", "f-month"]) {
+for (const id of ["f-strategy", "f-side", "f-result", "f-session"]) {
   document.getElementById(id).addEventListener("change", renderLog);
 }
 document.getElementById("f-symbol").addEventListener("input", renderLog);
 document.getElementById("f-clear").addEventListener("click", () => {
-  for (const id of ["f-strategy", "f-side", "f-result", "f-month"]) document.getElementById(id).value = "";
+  for (const id of ["f-strategy", "f-side", "f-result", "f-session"]) document.getElementById(id).value = "";
   document.getElementById("f-symbol").value = "";
   renderLog();
 });

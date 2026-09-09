@@ -186,8 +186,7 @@
           <div class="tooltip" id="chart-tip" role="status"></div>
         </div>
         <p class="phone-note">
-          The plot is left to the wider view. The figures above are the same ones it
-          carries, and they follow whichever period you pick.
+          The chart is available on wider screens. The figures above show the selected period.
         </p>
         <div class="sr-only" id="chart-table"></div>
       </section>
@@ -257,7 +256,6 @@
   </div>
   </div>
 
-  <!-- ═══ PORTFOLIO ═══════════════════════════════════════ -->
   <div class="view hidden" id="view-portfolio">
     <div class="grid">
 
@@ -297,7 +295,7 @@
         </section>
 
         <section class="panel strategies">
-          <div class="panel-head"><h2>Position weight</h2><span class="eyebrow">vs 10% cap</span></div>
+          <div class="panel-head"><h2>Position weight</h2><span class="eyebrow">vs position cap</span></div>
           <div class="panel-body"><div class="stoplist" id="pf-stops"></div></div>
         </section>
       </div>
@@ -323,7 +321,6 @@
     </div>
   </div>
 
-  <!-- ═══ HISTORY ═════════════════════════════════════════ -->
   <div class="view hidden" id="view-history">
     <div class="history">
 
@@ -337,7 +334,7 @@
           <div class="panel-head"><h2>Session P&amp;L</h2><span class="eyebrow">USD</span></div>
           <div class="panel-body">
             <div class="ystrip" id="hs-strip"></div>
-            <div class="table-scroll"><table class="data" id="hs-months"></table></div>
+            <div class="table-scroll"><table class="data" id="hs-sessions"></table></div>
           </div>
         </section>
 
@@ -363,7 +360,7 @@
             <select id="f-result"><option value="">All</option><option value="win">Wins</option><option value="loss">Losses</option></select>
           </label>
           <label class="field"><span>Session</span>
-            <select id="f-month"><option value="">All</option></select>
+            <select id="f-session"><option value="">All</option></select>
           </label>
           <label class="field grow"><span>Symbol</span>
             <input id="f-symbol" type="search" placeholder="e.g. NVDA" autocomplete="off">
@@ -386,8 +383,7 @@
         <div class="panel-body">
           <p class="rules-warning" id="rules-bot" hidden></p>
           <p class="rules-note">
-            Every rule below is read from the constants the bot runs, so what you read here
-            is what the bot does.
+            These rules describe each strategy. The label above identifies the source of its settings.
           </p>
           <table class="data rules-table" id="rules-portfolio"></table>
         </div>
@@ -436,11 +432,9 @@
       </p>
       <p class="tc-hint">drag to move · scroll to zoom · drag the price axis to stretch it · double-click resets</p>
       <p class="tc-note">
-        Prices come from the IEX feed, one exchange rather than the whole market, so volume
-        is a share of the true total. Every fill is marked as a small diamond, and the entry
-        and exit figures above are their averages. Stop and target levels are reconstructed
-        from the strategy's rules rather than read back from the bot. The resting stop trails
-        once a target is hit, so where it finally sat cannot be recovered from past bars.
+        Prices use the configured historical feeds. A diamond marks each fill.
+        Entry and exit prices are averages. Stop and target levels are calculated from
+        the strategy rules. Historical bars do not show the final trailing stop.
       </p>
       <div class="sr-only" id="tc-table"></div>
     </section>

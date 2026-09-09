@@ -1,8 +1,10 @@
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dtime
+from math import isfinite
 from typing import Any, TypedDict, cast
 
-from pandas import DataFrame, DatetimeIndex, Timedelta
+from pandas import DataFrame, DatetimeIndex, Series, Timedelta
+from pandas_ta_classic.overlap.sma import sma
 
 from mt.config.sections import ChartTimeframeSection
 from mt.config.settings import settings
@@ -101,3 +103,24 @@ def _bar_frame(bars: list[Bar]) -> DataFrame:
         index=DatetimeIndex([trading_time(bar.opened_at) for bar in bars], tz=TRADING_ZONE),
     )
     return frame.sort_index()
+
+
+class Average(TypedDict):
+    length: int
+    values: list[float | None]
+
+
+def bar_averages(bars: list[BarRow], lengths: tuple[int, ...]) -> list[Average]:
+    close = Series([bar["c"] for bar in bars], dtype=float)
+    averages: list[Average] = []
+    for length in lengths:
+        values = sma(close, length=length, talib=False)
+        averages.append(
+            Average(
+                length=length,
+                values=[float(value) if isfinite(value) else None for value in values]
+                if isinstance(values, Series)
+                else [None] * len(bars),
+            )
+        )
+    return averages

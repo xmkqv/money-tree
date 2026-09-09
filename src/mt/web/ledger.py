@@ -2,10 +2,12 @@ import asyncio
 from bisect import bisect_left
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import TypedDict
 
-from mt.config.sections import DashboardSection, RiskSection
+from alpaca.trading.models import Order
+
+from mt.config.sections import DashboardSection
 from mt.config.values import StrategyKey, Symbol
 from mt.data.alpaca import (
     AlpacaLiveClient,
@@ -16,11 +18,10 @@ from mt.data.alpaca import (
     Position,
 )
 from mt.exchange import TRADING_ZONE, trading_time
-from mt.snapshot import StateSnapshot
 from mt.strategies.order_tag import UNATTRIBUTED, find_order_tag
 
 from .pulse import PulsePosition, pulse_positions
-from .strategies import EntryWindow, StrategyLabel, entry_windows, strategy_labels
+from .strategies import StrategyLabel, strategy_labels
 
 
 class FillRow(TypedDict):
@@ -95,13 +96,23 @@ class BenchmarkClose(TypedDict):
     close: float
 
 
+class Period(TypedDict):
+    start: str
+    base: float | None
+    benchmarkPct: float | None
+    equityIndex: int
+
+
 class Ledger(TypedDict):
+    periods: dict[str, Period]
+    orders: list[Order]
     asOf: str
     today: str
     accountNumber: str
     status: str
     marketOpen: bool
     nextOpen: str
+    nextClose: str
     invested: float
     funded: str
     equity: float
@@ -110,10 +121,7 @@ class Ledger(TypedDict):
     buyingPower: float
     marketValue: float
     unrealised: float
-    positionCapPct: float
-    dailyLossLimitPct: float
     strategies: list[StrategyLabel]
-    windows: dict[str, EntryWindow]
     positions: list[PositionRow]
     trades: list[Cycle]
     days: list[Day]
@@ -149,12 +157,19 @@ def match_cycles(
     tallies: dict[str, _Tally] = {}
     cycles: list[Cycle] = []
 
-    for fill in sorted(fills, key=lambda row: row.transaction_time):
+    pending_fills = sorted(fills, key=lambda row: row.transaction_time, reverse=True)
+    while pending_fills:
+        fill = pending_fills.pop()
         symbol = fill.symbol
         quantity = fill.qty
         price = fill.price
         when = trading_time(fill.transaction_time)
         signed = quantity if fill.side == "buy" else -quantity
+        current = held[symbol]
+        if current * signed < 0 and quantity > abs(current) + flat_quantity_max:
+            pending_fills.append(fill.model_copy(update={"qty": quantity - abs(current)}))
+            quantity = abs(current)
+            signed = quantity if fill.side == "buy" else -quantity
         held[symbol] += signed
 
         cycle = tallies.get(symbol)
@@ -205,6 +220,7 @@ def match_cycles(
             )
         )
         del tallies[symbol]
+        held[symbol] = 0.0
 
     still_open = {
         symbol: OpenCycle(
@@ -267,11 +283,10 @@ async def build_ledger(
     live: AlpacaLiveClient,
     past: AlpacaPastClient,
     benchmark: Symbol,
-    fallback_configuration: RiskSection,
     dashboard: DashboardSection,
-    snapshot: StateSnapshot | None,
 ) -> Ledger:
     async with asyncio.TaskGroup() as reads:
+        open_orders_read = reads.create_task(live.open_orders())
         account_read = reads.create_task(live.account())
         positions_read = reads.create_task(live.positions())
         fills_read = reads.create_task(live.fills())
@@ -300,22 +315,26 @@ async def build_ledger(
     closes = {row["date"]: row["equity"] for row in equity_daily}
 
     today = datetime.now(TRADING_ZONE).date().isoformat()
+    periods_equity = list(equity_daily)
     if not equity_daily or equity_daily[-1]["date"] != today:
         equity_daily.append(EquityDay(date=today, equity=equity))
 
     rows = _position_rows(positions, equity, open_cycles)
-    configuration = snapshot.configuration if snapshot else fallback_configuration
     benchmark_start = funded or today
 
     bars = await past.daily_bars(benchmark, benchmark_start)
 
+    benchmark_closes = [BenchmarkClose(date=bar.opened_at[:10], close=bar.close) for bar in bars]
     return Ledger(
+        periods=calendar_periods(date.fromisoformat(today), periods_equity, benchmark_closes),
+        orders=open_orders_read.result(),
         asOf=datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
         today=today,
         accountNumber=account.account_number,
         status=account.status,
         marketOpen=clock.is_open,
-        nextOpen=datetime.fromisoformat(clock.next_open).strftime("%H:%M ET"),
+        nextOpen=trading_time(clock.next_open).strftime("%H:%M ET"),
+        nextClose=trading_time(clock.next_close).strftime("%H:%M ET"),
         invested=invested,
         funded=datetime.fromisoformat(funded).strftime("%-d %b %Y") if funded else "—",
         equity=equity,
@@ -324,10 +343,7 @@ async def build_ledger(
         buyingPower=round(account.buying_power, 2),
         marketValue=round(sum(row["value"] for row in rows), 2),
         unrealised=round(sum(row["unreal"] for row in rows), 2),
-        positionCapPct=round(100 * configuration.position_fraction_max, 2),
-        dailyLossLimitPct=round(100 * configuration.per_day_max, 2),
         strategies=strategy_labels(),
-        windows=entry_windows(),
         positions=rows,
         trades=cycles,
         days=days(cycles, closes, invested),
@@ -336,8 +352,28 @@ async def build_ledger(
         intraday=intraday_points,
         intradayDate=intraday_date,
         benchmarkSymbol=benchmark,
-        benchmark=[BenchmarkClose(date=bar.opened_at[:10], close=bar.close) for bar in bars],
+        benchmark=benchmark_closes,
     )
+
+
+def calendar_periods(
+    today: date, equity: list[EquityDay], benchmark: list[BenchmarkClose]
+) -> dict[str, Period]:
+    boundaries = {"W": today - timedelta(days=today.weekday()), "M": today.replace(day=1)}
+    periods: dict[str, Period] = {}
+    for key, boundary in boundaries.items():
+        start = boundary.isoformat()
+        index = max(0, bisect_left([row["date"] for row in equity], start) - 1)
+        base = equity[index]["equity"] if equity else None
+        bench_index = max(0, bisect_left([row["date"] for row in benchmark], start) - 1)
+        bench_base = benchmark[bench_index]["close"] if benchmark else None
+        periods[key] = Period(
+            start=start,
+            base=base,
+            equityIndex=index,
+            benchmarkPct=(benchmark[-1]["close"] / bench_base - 1) * 100 if bench_base else None,
+        )
+    return periods
 
 
 def _zoned_points(points: list[EquityPoint]) -> list[tuple[datetime, float]]:

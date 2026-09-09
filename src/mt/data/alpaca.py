@@ -3,6 +3,7 @@ from typing import Any
 
 import httpx
 from alpaca.common.enums import BaseURL
+from alpaca.trading.models import Order
 from pydantic import Field, TypeAdapter
 
 from mt.config.sections import BrokerSection
@@ -34,6 +35,7 @@ class Position(Payload):
 class Clock(Payload):
     is_open: bool
     next_open: str
+    next_close: str
 
 
 class Fill(Payload):
@@ -76,6 +78,7 @@ class _BarsPage(Payload):
     next_page_token: str | None = None
 
 
+orders_adapter = TypeAdapter(list[Order])
 positions_adapter = TypeAdapter(list[Position])
 fills_adapter = TypeAdapter(list[Fill])
 closed_orders_adapter = TypeAdapter(list[ClosedOrder])
@@ -108,6 +111,22 @@ class AlpacaLiveClient:
 
     async def positions(self) -> list[Position]:
         return positions_adapter.validate_python(await self._get("/v2/positions"))
+
+    async def open_orders(self) -> list[Order]:
+        async def read(before: str | None) -> list[Order]:
+            return orders_adapter.validate_python(
+                await self._get(
+                    "/v2/orders",
+                    {
+                        "status": "open",
+                        "limit": self._page_rows_max,
+                        "direction": "desc",
+                        "before_order_id": before,
+                    },
+                )
+            )
+
+        return await self._pages(read, lambda order: str(order.id))
 
     async def clock(self) -> Clock:
         return Clock.model_validate(await self._get("/v2/clock"))
@@ -157,7 +176,7 @@ class AlpacaLiveClient:
         return [
             EquityPoint(timestamp=timestamp, equity=equity)
             for timestamp, equity in zip(history.timestamp, history.equity, strict=True)
-            if equity
+            if equity is not None
         ]
 
     async def _pages[Row](
@@ -172,7 +191,12 @@ class AlpacaLiveClient:
             collected.extend(page)
             if len(page) < self._page_rows_max:
                 break
-            token = cursor(page[-1])
+            next_token = cursor(page[-1])
+            if next_token == token:
+                raise httpx.HTTPError("Account history pagination did not advance")
+            token = next_token
+        else:
+            raise httpx.HTTPError("Account history exceeds the configured page limit")
         return collected
 
     async def _get(self, path: str, params: dict[str, object] | None = None) -> Any:
@@ -183,9 +207,12 @@ class AlpacaLiveClient:
 
 
 class AlpacaPastClient:
-    def __init__(self, client: httpx.AsyncClient, feed: DataFeedName, bars_max: int) -> None:
+    def __init__(
+        self, client: httpx.AsyncClient, feed: DataFeedName, daily_feed: DataFeedName, bars_max: int
+    ) -> None:
         self._client = client
         self._feed = feed
+        self._daily_feed = daily_feed
         self._bars_max = bars_max
 
     async def daily_bars(self, symbol: str, start: str) -> list[Bar]:
@@ -204,7 +231,8 @@ class AlpacaPastClient:
             "timeframe": timeframe,
             "start": start,
             "limit": str(self._bars_max if limit is None else limit),
-            "feed": self._feed,
+            "feed": self._daily_feed if timeframe.endswith("Day") else self._feed,
+            "adjustment": "all",
         }
         if end is not None:
             params["end"] = end

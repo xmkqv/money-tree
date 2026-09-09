@@ -2,6 +2,8 @@ import asyncio
 from datetime import datetime
 from typing import TypedDict
 
+from alpaca.trading.models import Order
+
 from mt.data.alpaca import AlpacaLiveClient, Position
 from mt.exchange import TRADING_ZONE
 from mt.snapshot import StateEvent, StateSnapshot
@@ -30,6 +32,7 @@ class PulsePosition(TypedDict):
 
 
 class Pulse(TypedDict):
+    orders: list[Order]
     asOf: str
     equity: float
     cash: float
@@ -41,6 +44,7 @@ class Pulse(TypedDict):
 
 async def build_pulse(live: AlpacaLiveClient) -> Pulse:
     async with asyncio.TaskGroup() as reads:
+        open_orders_read = reads.create_task(live.open_orders())
         account_read = reads.create_task(live.account())
         positions_read = reads.create_task(live.positions())
 
@@ -49,6 +53,7 @@ async def build_pulse(live: AlpacaLiveClient) -> Pulse:
     equity = round(account.equity, 2)
     held = pulse_positions(positions, equity)
     return Pulse(
+        orders=open_orders_read.result(),
         asOf=datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
         equity=equity,
         cash=round(account.cash, 2),
@@ -80,10 +85,10 @@ def pulse_positions(raw: list[Position], equity: float) -> list[PulsePosition]:
             qty=round(abs(item.qty), 4),
             entry=round(item.avg_entry_price, 4),
             last=round(item.current_price, 4),
-            value=round(item.market_value, 2),
+            value=round(abs(item.market_value), 2),
             unreal=round(item.unrealized_pl, 2),
             unrealPct=round(item.unrealized_plpc * 100, 2),
-            weight=round(item.market_value / equity * 100, 2) if equity else 0.0,
+            weight=round(abs(item.market_value) / equity * 100, 2) if equity else 0.0,
         )
         for item in raw
     ]

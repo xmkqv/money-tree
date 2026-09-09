@@ -22,13 +22,13 @@ from mt.strategies.daily import Daily
 from mt.strategies.order_tag import Unattributed
 from mt.strategies.registry import strategy_class
 
-from .bars import BarRow, bar_row, bars_atr, chart_window, session_hour_bars
+from .bars import BarRow, bar_averages, bar_row, bars_atr, chart_window, session_hour_bars
 from .cache import Cache
 from .ledger import Ledger, build_ledger
 from .levels import Levels, add_breakout_levels, opening_range
 from .pulse import Pulse, bot_state, build_pulse
 from .state import StateStore
-from .strategies import strategy_rules
+from .strategies import entry_windows, strategy_rules
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
@@ -175,7 +175,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 "symbol": symbol,
                 "timeframe": timeframe,
                 "displayFrom": display.isoformat(),
-                "smaLengths": list(dashboard_section.sma_lengths),
+                "averages": bar_averages(rows, dashboard_section.sma_lengths),
                 "bars": rows,
             },
             dashboard_section.chart_max_age_seconds,
@@ -237,7 +237,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
     async def strategies() -> JSONResponse:
         snapshot, _ = read_state()
         reported = snapshot is not None
-        active_configuration = snapshot.configuration if snapshot else configuration.risk
+        active_configuration = snapshot.configuration if snapshot else configuration
         return read_response(
             strategy_rules(active_configuration, configured=reported),
             dashboard_section.strategies_max_age_seconds,
@@ -252,13 +252,19 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 live(request),
                 past(request),
                 benchmark_symbol,
-                configuration.risk,
                 dashboard_section,
-                snapshot,
             ),
         )
+        reported_configuration = snapshot.configuration if snapshot else configuration
+        risk = reported_configuration.risk
         return read_response(
-            {**cached, "bot": bot_state(snapshot, stale)},
+            {
+                **cached,
+                "bot": bot_state(snapshot, stale),
+                "windows": entry_windows(reported_configuration),
+                "positionCapPct": round(100 * risk.position_fraction_max, 2),
+                "dailyLossLimitPct": round(100 * risk.per_day_max, 2),
+            },
             dashboard_section.ledger_max_age_seconds,
         )
 
@@ -297,6 +303,8 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
             return error_response("State snapshot is too large", 413)
         try:
             snapshot = StateSnapshot.model_validate_json(body)
+            if len(snapshot.events) > configuration.export.events_max:
+                return error_response("State snapshot has too many events", 422)
         except ValidationError:
             return error_response("State snapshot is invalid", 422)
         drift = abs((snapshot.heartbeat_at - signed_at).total_seconds())

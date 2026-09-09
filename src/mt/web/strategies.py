@@ -1,9 +1,9 @@
-from datetime import date, datetime
-from typing import TypedDict
+from datetime import datetime, timedelta
+from typing import TypedDict, cast
 
 from mt.config.sections import RiskSection
-from mt.config.settings import settings
-from mt.exchange import upcoming_session_bounds
+from mt.config.settings import RuleSettings
+from mt.exchange import TRADING_ZONE, upcoming_session_bounds
 from mt.strategies.base import Strategy
 from mt.strategies.order_tag import ORDER_TAG_PREFIX, UNATTRIBUTED
 from mt.strategies.registry import STRATEGIES
@@ -34,9 +34,19 @@ class StrategyRules(TypedDict):
 EntryWindow = TypedDict("EntryWindow", {"from": str, "to": str})
 
 
-def entry_windows() -> dict[str, EntryWindow]:
-    opens, closes = upcoming_session_bounds(date.today())
-    return {cls.key: _window(*cls.entry_window(opens, closes)) for cls in STRATEGIES}
+def entry_windows(configuration: RuleSettings) -> dict[str, EntryWindow]:
+    opens, closes = upcoming_session_bounds(datetime.now(TRADING_ZONE).date())
+    windows: dict[str, EntryWindow] = {}
+    for cls in STRATEGIES:
+        if cls.family == "breakout":
+            section = getattr(configuration, cls.key)
+            windows[cls.key] = _window(
+                opens + timedelta(minutes=section.opening_minutes),
+                min(closes, opens + timedelta(minutes=configuration.breakout.scan_minutes)),
+            )
+        else:
+            windows[cls.key] = _window(opens, closes)
+    return windows
 
 
 def strategy_labels() -> list[StrategyLabel]:
@@ -50,17 +60,17 @@ def strategy_labels() -> list[StrategyLabel]:
     return labels
 
 
-def strategy_rules(risk: RiskSection, *, configured: bool) -> StrategyRules:
-    opens, closes = upcoming_session_bounds(date.today())
+def strategy_rules(configuration: RuleSettings, *, configured: bool) -> StrategyRules:
+    opens, closes = upcoming_session_bounds(datetime.now(TRADING_ZONE).date())
     return StrategyRules(
         fields=list(RULE_FIELDS),
-        strategies=[_card(cls, risk.per_trade_max, opens, closes) for cls in STRATEGIES],
-        portfolio=portfolio_rules(risk),
+        strategies=[_card(cls, configuration, opens, closes) for cls in STRATEGIES],
+        portfolio=portfolio_rules(configuration.risk, configuration.breakout.positions_max),
         configured=configured,
     )
 
 
-def portfolio_rules(risk: RiskSection) -> list[Row]:
+def portfolio_rules(risk: RiskSection, breakout_positions_max: int) -> list[Row]:
     return [
         Row(
             field="Position cap",
@@ -70,7 +80,7 @@ def portfolio_rules(risk: RiskSection) -> list[Row]:
         ),
         Row(
             field="Breakout cap",
-            value=f"At most {settings.breakout.positions_max} breakout positions open at once "
+            value=f"At most {breakout_positions_max} breakout positions open at once "
             "across both breakout strategies, including pending entries.",
             source="strategies/breakout.py · cap_keys",
         ),
@@ -95,8 +105,15 @@ def portfolio_rules(risk: RiskSection) -> list[Row]:
     ]
 
 
-def _card(cls: type[Strategy], per_trade: float, opens: datetime, closes: datetime) -> StrategyCard:
-    rows = strategy_rows(cls, per_trade, opens, closes)
+def _card(
+    cls: type[Strategy], configuration: RuleSettings, opens: datetime, closes: datetime
+) -> StrategyCard:
+    section = getattr(configuration, cls.key)
+    attributes = {name: value for name, value in section.model_dump().items() if hasattr(cls, name)}
+    if cls.family == "breakout":
+        attributes["positions_max"] = configuration.breakout.positions_max
+    described = cast(type[Strategy], type(cls.__name__, (cls,), attributes))
+    rows = strategy_rows(described, configuration, opens, closes)
     if [row["field"] for row in rows] != list(RULE_FIELDS):
         raise ValueError(f"{cls.__name__} must describe every rule field in order")
     return StrategyCard(id=cls.key, name=cls.name(), kind=KINDS[cls.family], rows=rows)
