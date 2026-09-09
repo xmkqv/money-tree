@@ -4,8 +4,9 @@ from typing import Annotated
 import typer
 from pydantic import TypeAdapter, ValidationError
 
-from mt.config.bot import settings
+from mt.config.bot import settings as bot_settings
 from mt.config.services import SERVICE_SETTINGS, ServiceName, service_secrets
+from mt.config.settings import settings
 from mt.config.values import STRATEGY_KEYS, StrategyKey, Symbol, strategy_selection_adapter
 
 
@@ -58,10 +59,10 @@ def _parse_strategy(value: str) -> StrategyKey:
 
 @app.command("report")
 def run_report(
-    strategy: Annotated[str, typer.Option()] = settings.strategies[0],
+    strategy: Annotated[str, typer.Option()] = bot_settings.strategies[0],
     symbols: Annotated[str, typer.Option()] = settings.benchmark_symbol,
-    start: Annotated[datetime, typer.Option()] = settings.backtest.start_at,
-    end: Annotated[datetime, typer.Option()] = settings.backtest.end_at,
+    start: Annotated[datetime, typer.Option()] = bot_settings.backtest.start_at,
+    end: Annotated[datetime, typer.Option()] = bot_settings.backtest.end_at,
 ) -> None:
     if start.tzinfo != end.tzinfo or end <= start:
         raise typer.BadParameter("end must follow start in the same timezone")
@@ -74,7 +75,7 @@ def run_report(
 
 @app.command("trade")
 def run_trade(
-    strategies: Annotated[str, typer.Option()] = ",".join(settings.strategies),
+    strategies: Annotated[str, typer.Option()] = ",".join(bot_settings.strategies),
 ) -> None:
     from mt.bot.trade import trade
 

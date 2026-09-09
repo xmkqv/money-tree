@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -10,7 +10,7 @@ from alpaca.trading.models import Order
 from pydantic import Field, TypeAdapter
 
 from mt.config.sections import BarsSection, BrokerSection, DashboardSection
-from mt.config.values import BrokerMode, DataFeedName
+from mt.config.values import DataFeedName
 from mt.exchange import TRADING_ZONE, upcoming_session_bounds
 
 from .http import Payload
@@ -108,13 +108,17 @@ fills_adapter = TypeAdapter(list[Fill])
 closed_orders_adapter = TypeAdapter(list[ClosedOrder])
 
 
-def trading_api_url(broker_mode: BrokerMode) -> str:
-    target = BaseURL.TRADING_PAPER if broker_mode == "paper" else BaseURL.TRADING_LIVE
+def trading_api_url(broker: BrokerSection) -> str:
+    target = BaseURL.TRADING_PAPER if broker.is_paper else BaseURL.TRADING_LIVE
     return target.value
 
 
 def bars_api_url() -> str:
     return BaseURL.DATA.value
+
+
+def bars_feed(timeframe: str, bars: BarsSection) -> DataFeedName:
+    return bars.daily_feed if timeframe.endswith("Day") else bars.intraday_feed
 
 
 def bars_end_at(end: datetime, feed: DataFeedName, sip_delay_minutes: int) -> datetime:
@@ -125,11 +129,18 @@ def bars_end_at(end: datetime, feed: DataFeedName, sip_delay_minutes: int) -> da
     return end
 
 
+async def get_json(
+    client: httpx.AsyncClient, path: str, params: Mapping[str, object] | None = None
+) -> Any:
+    query = {key: str(value) for key, value in (params or {}).items() if value is not None}
+    response = await client.get(path, params=query)
+    response.raise_for_status()
+    return response.json()
+
+
 def credential_headers(broker: BrokerSection) -> dict[str, str]:
-    return {
-        "APCA-API-KEY-ID": broker.api_key.get_secret_value(),
-        "APCA-API-SECRET-KEY": broker.api_secret.get_secret_value(),
-    }
+    key, secret = broker.key_pair
+    return {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
 
 
 class TradingClientAlpaca:
@@ -300,10 +311,7 @@ class TradingClientAlpaca:
         return collected
 
     async def _get(self, path: str, params: dict[str, object] | None = None) -> Any:
-        query = {key: str(value) for key, value in (params or {}).items() if value is not None}
-        response = await self._client.get(path, params=query)
-        response.raise_for_status()
-        return response.json()
+        return await get_json(self._client, path, params)
 
 
 class BarsClientAlpaca:
@@ -326,11 +334,7 @@ class BarsClientAlpaca:
         limit: int | None = None,
         pages_max: int = 1,
     ) -> list[Bar]:
-        feed = (
-            self._configuration.daily_feed
-            if timeframe.endswith("Day")
-            else self._configuration.intraday_feed
-        )
+        feed = bars_feed(timeframe, self._configuration)
         params = {
             "timeframe": timeframe,
             "start": start,
@@ -348,9 +352,9 @@ class BarsClientAlpaca:
         rows: list[Bar] = []
         query = dict(params)
         for _ in range(pages_max):
-            response = await self._client.get(f"/v2/stocks/{symbol}/bars", params=query)
-            response.raise_for_status()
-            page = _BarsPage.model_validate(response.json())
+            page = _BarsPage.model_validate(
+                await get_json(self._client, f"/v2/stocks/{symbol}/bars", query)
+            )
             rows.extend(page.bars or [])
             if not page.next_page_token:
                 break

@@ -7,30 +7,24 @@ from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from pandas import DataFrame
 
-from mt.config.bot import settings
-from mt.config.values import DataFeedName, Timeframe
+from mt.config.bot import settings as bot_settings
+from mt.config.settings import settings
+from mt.config.values import Timeframe
 from mt.frames import normalize_ohlcv
 
-from .alpaca import bars_end_at
+from .alpaca import bars_end_at, bars_feed
 
 
 class BarsAlpaca:
     def __init__(self) -> None:
-        self._bars = StockHistoricalDataClient(
-            settings.broker.api_key.get_secret_value(),
-            settings.broker.api_secret.get_secret_value(),
-        )
+        self._bars = StockHistoricalDataClient(*settings.broker.key_pair)
 
     def bars(
-        self,
-        symbols: list[str],
-        timeframe: Timeframe,
-        start: datetime,
-        end: datetime,
-        feed: DataFeedName,
+        self, symbols: list[str], timeframe: Timeframe, start: datetime, end: datetime
     ) -> dict[str, DataFrame]:
+        feed = bars_feed(timeframe, settings.bars)
         frames: dict[str, DataFrame] = {}
-        page = settings.portfolio.symbols_per_request
+        page = bot_settings.portfolio.symbols_per_request
         for offset in range(0, len(symbols), page):
             request = StockBarsRequest(
                 symbol_or_symbols=symbols[offset : offset + page],

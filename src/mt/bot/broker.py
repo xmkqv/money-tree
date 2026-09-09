@@ -1,16 +1,13 @@
-from mt.config.bot import settings
+from mt.config.settings import settings
 
 
 def broker_credentials(*, paper: bool) -> dict[str, str | bool]:
-    return {
-        "API_KEY": settings.broker.api_key.get_secret_value(),
-        "API_SECRET": settings.broker.api_secret.get_secret_value(),
-        "PAPER": paper,
-    }
+    key, secret = settings.broker.key_pair
+    return {"API_KEY": key, "API_SECRET": secret, "PAPER": paper}
 
 
 def alpaca_broker() -> object:
     from lumibot.brokers import Alpaca
 
-    credentials = broker_credentials(paper=settings.broker.mode == "paper")
+    credentials = broker_credentials(paper=settings.broker.is_paper)
     return Alpaca({**credentials, "MARKET": "NYSE"})

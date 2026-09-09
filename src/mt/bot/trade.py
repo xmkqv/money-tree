@@ -1,7 +1,6 @@
 import signal
 
-from mt.config.bot import settings
-from mt.config.settings import RuleSettings
+from mt.config.settings import RuleSettings, settings
 from mt.config.values import StrategyKey
 from mt.strategies.registry import strategy_class
 

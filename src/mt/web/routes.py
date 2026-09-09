@@ -15,7 +15,7 @@ from itsdangerous import BadSignature, SignatureExpired, TimestampSigner
 from pydantic import ValidationError
 from starlette.responses import FileResponse
 
-from mt.config.settings import WebSettings
+from mt.config.settings import WebSettings, settings
 from mt.config.values import ChartTimeframe, StrategyKey, Symbol, is_strategy_key
 from mt.data.alpaca import AccountObservation, BarsClientAlpaca, TradingClientAlpaca
 from mt.exchange import TRADING_ZONE, session_bounds
@@ -93,12 +93,12 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
             await asyncio.gather(*(cache.close() for cache in caches))
 
     router = APIRouter(lifespan=lifespan)
-    mode = configuration.broker.mode.upper().encode()
+    mode = settings.broker.mode.upper().encode()
     dashboard_html = DASHBOARD_HTML.replace(b"{{ BROKER_MODE }}", mode)
     for plain, fingerprinted in ASSET_REWRITES.items():
         dashboard_html = dashboard_html.replace(plain, fingerprinted)
     signer = TimestampSigner(
-        configuration.export.secret.get_secret_value(),
+        settings.export.secret.get_secret_value(),
         salt=STATE_SIGNATURE_SALT,
         digest_method=hashlib.sha256,
     )
@@ -112,7 +112,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
     ledger_cache = Cache[tuple[datetime, Ledger]](dashboard_section.ledger_ttl_seconds)
     account_cache = Cache[AccountObservation](dashboard_section.pulse_ttl_seconds)
     match_history = lru_cache(maxsize=dashboard_section.history_cache_max)(match_trades)
-    benchmark_symbol = configuration.benchmark_symbol
+    benchmark_symbol = settings.benchmark_symbol
     chart_ttl = dashboard_section.chart_ttl_seconds
     chart_cache_max = dashboard_section.chart_cache_max
     bar_cache = Cache[tuple[datetime, dict[str, Any]]](chart_ttl, chart_cache_max)
@@ -205,7 +205,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 "bars": rows,
             }
 
-        key = repr((symbol, timeframe, start, display, end, configuration.bars, dashboard_section))
+        key = repr((symbol, timeframe, start, display, end, settings.bars, dashboard_section))
         read_at, payload = await bar_cache.get_or_build(key, build)
         return read_response(payload, dashboard_section.chart_max_age_seconds, read_at)
 
@@ -267,7 +267,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
     async def strategies() -> JSONResponse:
         snapshot, _ = read_state()
         reported = snapshot is not None
-        active_configuration = snapshot.configuration if snapshot else configuration
+        active_configuration = snapshot.configuration if snapshot else settings
         return read_response(
             strategy_rules(active_configuration, configured=reported),
             dashboard_section.strategies_max_age_seconds,
@@ -290,7 +290,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
             return account.read_at, result
 
         read_at, cached = await ledger_cache.get_or_build(LEDGER_KEY, build)
-        reported_configuration = snapshot.configuration if snapshot else configuration
+        reported_configuration = snapshot.configuration if snapshot else settings
         risk = reported_configuration.risk
         return read_response(
             {
@@ -338,7 +338,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
             return error_response("State snapshot is too large", 413)
         try:
             snapshot = StateSnapshot.model_validate_json(body)
-            if len(snapshot.events) > configuration.export.events_max:
+            if len(snapshot.events) > settings.export.events_max:
                 return error_response("State snapshot has too many events", 422)
         except ValidationError:
             return error_response("State snapshot is invalid", 422)

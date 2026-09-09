@@ -10,9 +10,9 @@ from uuid import uuid4
 import httpx
 from itsdangerous import TimestampSigner
 
-from mt.config.bot import settings
-from mt.config.settings import RuleSettings
+from mt.config.settings import RuleSettings, settings
 from mt.config.values import StrategyKey
+from mt.data.http import http_timeout
 from mt.snapshot import STATE_SIGNATURE_SALT, EventLevel, RunStatus, StateEvent, StateSnapshot
 
 
@@ -98,7 +98,7 @@ class StateExporter:
         )
 
     def _export(self) -> None:
-        with httpx.Client(timeout=settings.export.timeout_seconds) as client:
+        with httpx.Client(timeout=http_timeout(settings.export.timeout)) as client:
             while True:
                 try:
                     snapshot = self.pending.get(timeout=settings.export.interval_seconds)

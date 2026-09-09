@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from mt.config.settings import LoginSettings, WebSettings
+from mt.config.settings import LoginSettings, WebSettings, settings
 from mt.data.alpaca import (
     BarsClientAlpaca,
     TradingClientAlpaca,
@@ -70,7 +70,7 @@ def _start_session(request: Request, subject: str) -> None:
 def create_app() -> FastAPI:
     configuration = WebSettings()  # pyright: ignore[reportCallIssue]
 
-    credentials = credential_headers(configuration.broker)
+    credentials = credential_headers(settings.broker)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, object]]:
@@ -81,9 +81,9 @@ def create_app() -> FastAPI:
                 transport=RequestTransport(
                     requests.web_reads_per_minute, concurrency, requests.pause_seconds
                 ),
-                base_url=trading_api_url(configuration.broker.mode),
+                base_url=trading_api_url(settings.broker),
                 headers=credentials,
-                timeout=http_timeout(configuration.broker.timeout),
+                timeout=http_timeout(settings.broker.timeout),
             ) as trading,
             httpx.AsyncClient(
                 transport=RequestTransport(
@@ -91,7 +91,7 @@ def create_app() -> FastAPI:
                 ),
                 base_url=bars_api_url(),
                 headers=credentials,
-                timeout=http_timeout(configuration.bars.timeout),
+                timeout=http_timeout(settings.bars.timeout),
             ) as bars,
         ):
             yield {
@@ -101,7 +101,7 @@ def create_app() -> FastAPI:
                 ),
                 "bars": BarsClientAlpaca(
                     bars,
-                    configuration.bars,
+                    settings.bars,
                     configuration.dashboard.bars_max,
                 ),
             }

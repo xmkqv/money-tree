@@ -3,7 +3,8 @@ from pathlib import Path
 
 from pydantic import TypeAdapter
 
-from mt.config.bot import settings
+from mt.config.bot import settings as bot_settings
+from mt.config.settings import settings
 from mt.config.values import StrategyKey, Symbol
 from mt.strategies.breakout import Breakout
 from mt.strategies.registry import strategy_class
@@ -42,7 +43,7 @@ def report(strategy_key: StrategyKey, symbols: list[str], start: datetime, end: 
         datasource_configuration = broker_credentials(paper=True)
         datasource_options = {
             "timestep": "minute",
-            "warm_up_trading_days": settings.backtest.warm_up_days,
+            "warm_up_trading_days": bot_settings.backtest.warm_up_days,
         }
     Portfolio.backtest(
         datasource,
@@ -51,7 +52,7 @@ def report(strategy_key: StrategyKey, symbols: list[str], start: datetime, end: 
         config=datasource_configuration,
         parameters={"strategies": [strategy_key], "symbols": symbols},
         benchmark_asset=settings.benchmark_symbol,
-        budget=settings.backtest.budget_usd,
+        budget=bot_settings.backtest.budget_usd,
         show_plot=True,
         show_tearsheet=False,
         show_indicators=True,

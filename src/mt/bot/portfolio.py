@@ -7,7 +7,8 @@ from alpaca.trading.models import Asset
 from lumibot.strategies import Strategy as LumibotStrategy
 from pandas import DataFrame, DatetimeIndex
 
-from mt.config.bot import settings
+from mt.config.bot import settings as bot_settings
+from mt.config.settings import settings
 from mt.config.values import StrategyKey, is_strategy_key
 from mt.data.bars import BarsAlpaca
 from mt.data.broker import Broker, BrokerAlpaca, BrokerEngine
@@ -49,8 +50,8 @@ class Portfolio(LumibotStrategy):
         self.on_abrupt_closing()
 
     def initialize(self) -> None:
-        self.sleeptime = f"{settings.portfolio.iteration_minutes}M"
-        self.minutes_before_opening = settings.portfolio.opening_lead_minutes
+        self.sleeptime = f"{bot_settings.portfolio.iteration_minutes}M"
+        self.minutes_before_opening = bot_settings.portfolio.opening_lead_minutes
         supplied = cast(list[str], self.parameters["strategies"])
         selected: list[StrategyKey] = [value for value in supplied if is_strategy_key(value)]
         if len(selected) != len(supplied):
@@ -172,7 +173,7 @@ class Portfolio(LumibotStrategy):
     def minute_frames(
         self, symbols: list[str], start: datetime, now: datetime, minutes: int
     ) -> dict[str, DataFrame]:
-        frames = self._bars.bars(symbols, f"{minutes}Min", start, now, settings.bars.intraday_feed)
+        frames = self._bars.bars(symbols, f"{minutes}Min", start, now)
         return {symbol: self._completed(frame, now, minutes) for symbol, frame in frames.items()}
 
     def last_price(self, symbol: str) -> float:
@@ -289,7 +290,7 @@ class Portfolio(LumibotStrategy):
             if order.is_active()
         }
         for symbol, pending in list(self._pending.items()):
-            ttl = timedelta(minutes=settings.portfolio.pending_ttl_minutes)
+            ttl = timedelta(minutes=bot_settings.portfolio.pending_ttl_minutes)
             expired = now - pending.submitted_at > ttl
             if symbol not in active and expired:
                 self._pending.pop(symbol, None)
@@ -315,7 +316,7 @@ class Portfolio(LumibotStrategy):
             if ladder is not None and ladder.stage == 0:
                 ladder.original_quantity = max(ladder.original_quantity, quantity)
             resting = self._stops.get(symbol)
-            drift_max = settings.portfolio.stop_coverage_drift_max
+            drift_max = bot_settings.portfolio.stop_coverage_drift_max
             if resting is None or resting[1] < quantity - drift_max:
                 self.protect(position, quantity)
 
@@ -323,7 +324,7 @@ class Portfolio(LumibotStrategy):
         day = now.date()
         if self._prepared_at == day:
             return
-        first = day - timedelta(days=settings.portfolio.lookback_days)
+        first = day - timedelta(days=bot_settings.portfolio.lookback_days)
         start = datetime.combine(first, time(), TRADING_ZONE)
         self._assets = self._broker.assets()
         symbols = self._given or self._screen(now, self._assets)
@@ -334,12 +335,12 @@ class Portfolio(LumibotStrategy):
         ):
             for symbol in requested:
                 bars = self.get_historical_prices(
-                    symbol, settings.portfolio.lookback_days, timestep="day"
+                    symbol, bot_settings.portfolio.lookback_days, timestep="day"
                 )
                 if bars is not None:
                     frames[symbol] = normalize_ohlcv(bars.df, {"high", "low", "close", "volume"})
         else:
-            frames = self._bars.bars(requested, "1Day", start, now, settings.bars.daily_feed)
+            frames = self._bars.bars(requested, "1Day", start, now)
         lengths = {
             length
             for strategy in self._strategies.values()
@@ -358,7 +359,7 @@ class Portfolio(LumibotStrategy):
         symbols = sorted(assets.keys() & stocks())
         first = now.date() - timedelta(days=settings.screen.lookback_days)
         start = datetime.combine(first, time(), TRADING_ZONE)
-        frames = self._bars.bars(symbols, "1Day", start, now, settings.bars.daily_feed)
+        frames = self._bars.bars(symbols, "1Day", start, now)
         cleared: dict[str, float] = {}
         for symbol, frame in frames.items():
             completed = self._completed(frame, now)

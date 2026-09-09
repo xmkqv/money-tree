@@ -29,9 +29,11 @@ from .sections import (
 from .values import Mode, StrategySelection, Symbol
 
 
-class RuleSettings(BaseSettings):
+class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_nested_delimiter="__", extra="ignore", frozen=True)
 
+
+class RuleSettings(Settings):
     benchmark_symbol: Symbol
     risk: RiskSection
     screen: ScreenSection
@@ -48,23 +50,20 @@ class RuleSettings(BaseSettings):
 class SharedSettings(RuleSettings):
     order_tag: OrderTagSection
     finnhub: FinnhubSection
-
-
-class BotSettings(SharedSettings):
-    strategies: Annotated[StrategySelection, NoDecode]
     broker: BrokerSection
     bars: BarsSection
     export: ExportSection
+
+
+class BotSettings(Settings):
+    strategies: Annotated[StrategySelection, NoDecode]
     portfolio: PortfolioSection
     backtest: BacktestSection
 
 
-class WebSettings(SharedSettings):
+class WebSettings(Settings):
     requests: RequestSection
     mode: Annotated[Mode, Field(validation_alias="MISE_ENV")]
-    broker: BrokerSection
-    bars: BarsSection
-    export: ExportSection
     web: WebSection
     dashboard: DashboardSection
 
@@ -73,16 +72,12 @@ class WebSettings(SharedSettings):
         return f"{str(self.web.base_url).rstrip('/')}/auth/callback"
 
 
-class DeploymentSettings(BaseSettings):
-    model_config = SettingsConfigDict(extra="ignore", frozen=True)
-
+class DeploymentSettings(Settings):
     project_root: Path = Field(validation_alias="MISE_PROJECT_ROOT")
     mode: Mode = Field(validation_alias="MISE_ENV")
 
 
-class LoginSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_nested_delimiter="__", extra="ignore", frozen=True)
-
+class LoginSettings(Settings):
     login: LoginSection
 
 

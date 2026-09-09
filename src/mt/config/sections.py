@@ -36,6 +36,14 @@ class BrokerSection(SettingsSection):
     api_secret: RequiredSecret
     timeout: TimeoutSection
 
+    @property
+    def key_pair(self) -> tuple[str, str]:
+        return self.api_key.get_secret_value(), self.api_secret.get_secret_value()
+
+    @property
+    def is_paper(self) -> bool:
+        return self.mode == "paper"
+
 
 class FinnhubSection(SettingsSection):
     api_key: RequiredSecret
@@ -69,7 +77,7 @@ class ExportSection(SettingsSection):
     secret: SigningSecret
     interval_seconds: Count
     events_max: Count
-    timeout_seconds: Amount
+    timeout: TimeoutSection
     close_timeout_seconds: Amount
 
 

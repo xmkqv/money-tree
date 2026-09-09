@@ -5,14 +5,14 @@ from typing import Literal
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 
-from .settings import BotSettings, DeploymentSettings, LoginSettings, WebSettings
+from .settings import BotSettings, DeploymentSettings, LoginSettings, SharedSettings, WebSettings
 
 
 type ServiceName = Literal["web", "bot"]
 
 SERVICE_SETTINGS: dict[ServiceName, tuple[type[BaseSettings], ...]] = {
-    "web": (WebSettings, LoginSettings),
-    "bot": (BotSettings,),
+    "web": (SharedSettings, WebSettings, LoginSettings),
+    "bot": (SharedSettings, BotSettings),
 }
 
 
