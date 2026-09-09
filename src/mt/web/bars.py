@@ -44,17 +44,10 @@ def session_hour_bars(bars: list[Bar]) -> list[BarRow]:
             v=("volume", "sum"),
         )
     )
-    return [
-        {
-            "t": start.astimezone(UTC).isoformat().replace("+00:00", "Z"),
-            "o": float(row.o),
-            "h": float(row.h),
-            "l": float(row.l),
-            "c": float(row.c),
-            "v": float(row.v),
-        }
-        for start, row in folded.iterrows()
-    ]
+    folded.index = folded.index.tz_convert(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return cast(
+        list[BarRow], folded.astype(float).rename_axis("t").reset_index().to_dict("records")
+    )
 
 
 def chart_window(
@@ -80,28 +73,9 @@ def bars_atr(bars: list[Bar]) -> float | None:
     return latest_atr(_bar_frame(bars), period)
 
 
-def bar_row(bar: Bar) -> BarRow:
-    return {
-        "t": bar.opened_at,
-        "o": bar.open,
-        "h": bar.high,
-        "l": bar.low,
-        "c": bar.close,
-        "v": bar.volume,
-    }
-
-
 def _bar_frame(bars: list[Bar]) -> DataFrame:
-    frame = DataFrame(
-        {
-            "open": [bar.open for bar in bars],
-            "high": [bar.high for bar in bars],
-            "low": [bar.low for bar in bars],
-            "close": [bar.close for bar in bars],
-            "volume": [bar.volume for bar in bars],
-        },
-        index=DatetimeIndex([trading_time(bar.opened_at) for bar in bars], tz=TRADING_ZONE),
-    )
+    frame = DataFrame([bar.model_dump() for bar in bars]).drop(columns="opened_at")
+    frame.index = DatetimeIndex([trading_time(bar.opened_at) for bar in bars], tz=TRADING_ZONE)
     return frame.sort_index()
 
 
@@ -112,15 +86,12 @@ class Average(TypedDict):
 
 def bar_averages(bars: list[BarRow], lengths: tuple[int, ...]) -> list[Average]:
     close = Series([bar["c"] for bar in bars], dtype=float)
-    averages: list[Average] = []
-    for length in lengths:
-        values = sma(close, length=length, talib=False)
-        averages.append(
-            Average(
-                length=length,
-                values=[float(value) if isfinite(value) else None for value in values]
-                if isinstance(values, Series)
-                else [None] * len(bars),
-            )
+    return [
+        Average(
+            length=length,
+            values=[float(value) if isfinite(value) else None for value in values]
+            if isinstance(values := sma(close, length=length, talib=False), Series)
+            else [None] * len(bars),
         )
-    return averages
+        for length in lengths
+    ]

@@ -1,10 +1,10 @@
-import asyncio
-from datetime import datetime
+from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import TypedDict
 
 from alpaca.trading.models import Order
 
-from mt.data.alpaca import Position, TradingClientAlpaca
+from mt.data.alpaca import AccountObservation, Position
 from mt.exchange import TRADING_ZONE
 from mt.snapshot import StateEvent, StateSnapshot
 
@@ -14,6 +14,7 @@ class BotState(TypedDict):
     stale: bool
     running: bool
     reported: bool
+    reportedAgoMinutes: float | None
     strategies: list[str]
     paused: list[str]
     events: list[StateEvent]
@@ -31,7 +32,7 @@ class PulsePosition(TypedDict):
     weight: float
 
 
-class Pulse(TypedDict):
+class Pulse[Row = PulsePosition](TypedDict):
     orders: list[Order]
     asOf: str
     equity: float
@@ -39,22 +40,17 @@ class Pulse(TypedDict):
     buyingPower: float
     marketValue: float
     unrealized_pnl: float
-    positions: list[PulsePosition]
+    positions: Sequence[PulsePosition]
 
 
-async def build_pulse(trading: TradingClientAlpaca) -> Pulse:
-    async with asyncio.TaskGroup() as reads:
-        open_orders_read = reads.create_task(trading.open_orders())
-        account_read = reads.create_task(trading.account())
-        positions_read = reads.create_task(trading.positions())
-
-    account = account_read.result()
-    positions = positions_read.result()
+def build_pulse(observation: AccountObservation) -> Pulse:
+    account = observation.account
+    positions = observation.positions
     equity = round(account.equity, 2)
     held = pulse_positions(positions, equity)
     return Pulse(
-        orders=open_orders_read.result(),
-        asOf=datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
+        orders=observation.orders,
+        asOf=observation.read_at.astimezone(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
         equity=equity,
         cash=round(account.cash, 2),
         buyingPower=round(account.buying_power, 2),
@@ -66,11 +62,15 @@ async def build_pulse(trading: TradingClientAlpaca) -> Pulse:
 
 def bot_state(snapshot: StateSnapshot | None, stale: bool) -> BotState:
     running = snapshot is not None and snapshot.status == "running" and not stale
+    silence = datetime.now(UTC) - snapshot.heartbeat_at if snapshot else None
     return BotState(
         status=snapshot.status if snapshot else "unknown",
         stale=stale,
         running=running,
         reported=snapshot is not None,
+        reportedAgoMinutes=(
+            round(silence.total_seconds() / 60, 1) if silence is not None else None
+        ),
         strategies=list(snapshot.strategies) if snapshot else [],
         paused=list(snapshot.paused) if snapshot else [],
         events=list(reversed(snapshot.events)) if snapshot else [],

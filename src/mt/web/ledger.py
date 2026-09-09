@@ -1,26 +1,25 @@
 import asyncio
 from bisect import bisect_left
 from collections import defaultdict
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import TypedDict
 
-from alpaca.trading.models import Order
-
 from mt.config.sections import DashboardSection
 from mt.config.values import StrategyKey, Symbol
 from mt.data.alpaca import (
+    AccountObservation,
     BarsClientAlpaca,
     ClosedOrder,
     EquityPoint,
     Fill,
-    Position,
     TradingClientAlpaca,
 )
 from mt.exchange import TRADING_ZONE, trading_time
 from mt.strategies.order_tag import UNATTRIBUTED, find_order_tag
 
-from .pulse import PulsePosition, pulse_positions
+from .pulse import Pulse, PulsePosition, build_pulse
 from .strategies import StrategyLabel, strategy_labels
 
 
@@ -98,10 +97,8 @@ class Period(TypedDict):
     equityIndex: int
 
 
-class Ledger(TypedDict):
+class Ledger(Pulse):
     periods: dict[str, Period]
-    orders: list[Order]
-    asOf: str
     today: str
     accountNumber: str
     status: str
@@ -110,14 +107,8 @@ class Ledger(TypedDict):
     nextClose: str
     invested: float
     funded: str
-    equity: float
     lastEquity: float
-    cash: float
-    buyingPower: float
-    marketValue: float
-    unrealized_pnl: float
     strategies: list[StrategyLabel]
-    positions: list[PositionRow]
     trades: list[Trade]
     days: list[Day]
     totals: Totals
@@ -141,12 +132,13 @@ class _Tally:
 
 
 def match_trades(
-    fills: list[Fill],
-    orders: list[ClosedOrder],
+    fills: tuple[Fill, ...],
+    orders: tuple[ClosedOrder, ...],
     flat_quantity_max: float,
 ) -> tuple[list[Trade], dict[str, OpenTrade]]:
     strategies: dict[str, StrategyKey | None] = {
-        order.id: _order_strategy_key(order.client_order_id or "") for order in orders
+        order.id: tag.strategy_key if (tag := find_order_tag(order.client_order_id or "")) else None
+        for order in orders
     }
     held: defaultdict[str, float] = defaultdict(float)
     tallies: dict[str, _Tally] = {}
@@ -264,41 +256,35 @@ def days(trades: list[Trade], closes: dict[str, float], opening: float) -> list[
     return days
 
 
-def _order_strategy_key(client_order_id: str) -> StrategyKey | None:
-    tag = find_order_tag(client_order_id)
-    return None if tag is None else tag.strategy_key
-
-
 def _clock_minute(when: datetime) -> int:
     return when.hour * 60 + when.minute
 
 
 async def build_ledger(
+    observation: AccountObservation,
     trading: TradingClientAlpaca,
     bars_client: BarsClientAlpaca,
     benchmark: Symbol,
     dashboard: DashboardSection,
+    match_history: Callable[
+        [tuple[Fill, ...], tuple[ClosedOrder, ...], float],
+        tuple[list[Trade], dict[str, OpenTrade]],
+    ],
 ) -> Ledger:
     async with asyncio.TaskGroup() as reads:
-        open_orders_read = reads.create_task(trading.open_orders())
-        account_read = reads.create_task(trading.account())
-        positions_read = reads.create_task(trading.positions())
-        fills_read = reads.create_task(trading.fills())
-        orders_read = reads.create_task(trading.closed_orders())
-        daily_read = reads.create_task(
-            trading.equity(dashboard.equity_daily_period, dashboard.equity_daily_timeframe)
-        )
+        history_read = reads.create_task(trading.history())
+        daily_read = reads.create_task(trading.daily_equity())
         intraday_read = reads.create_task(
             trading.equity(dashboard.equity_intraday_period, dashboard.equity_intraday_timeframe)
         )
         clock_read = reads.create_task(trading.clock())
 
-    account = account_read.result()
-    positions = positions_read.result()
+    account = observation.account
+    pulse = build_pulse(observation)
     clock = clock_read.result()
 
-    trades, open_trades = match_trades(
-        fills_read.result(), orders_read.result(), dashboard.flat_quantity_max
+    trades, open_trades = match_history(
+        history_read.result().fills, history_read.result().orders, dashboard.flat_quantity_max
     )
     equity_daily = _equity_series(daily_read.result())
     intraday_points, intraday_date = _intraday_series(intraday_read.result())
@@ -314,41 +300,35 @@ async def build_ledger(
     if not equity_daily or equity_daily[-1]["date"] != today:
         equity_daily.append(EquityDay(date=today, equity=equity))
 
-    rows = _position_rows(positions, equity, open_trades)
+    rows = _position_rows(pulse["positions"], open_trades)
     benchmark_start = funded or today
 
     bars = await bars_client.daily_bars(benchmark, benchmark_start)
 
     benchmark_closes = [BenchmarkClose(date=bar.opened_at[:10], close=bar.close) for bar in bars]
-    return Ledger(
-        periods=calendar_periods(date.fromisoformat(today), periods_equity, benchmark_closes),
-        orders=open_orders_read.result(),
-        asOf=datetime.now(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
-        today=today,
-        accountNumber=account.account_number,
-        status=account.status,
-        marketOpen=clock.is_open,
-        nextOpen=trading_time(clock.next_open).strftime("%H:%M ET"),
-        nextClose=trading_time(clock.next_close).strftime("%H:%M ET"),
-        invested=invested,
-        funded=datetime.fromisoformat(funded).strftime("%-d %b %Y") if funded else "—",
-        equity=equity,
-        lastEquity=round(account.last_equity, 2),
-        cash=round(account.cash, 2),
-        buyingPower=round(account.buying_power, 2),
-        marketValue=round(sum(row["value"] for row in rows), 2),
-        unrealized_pnl=round(sum(row["unrealized_pnl"] for row in rows), 2),
-        strategies=strategy_labels(),
-        positions=rows,
-        trades=trades,
-        days=days(trades, closes, invested),
-        totals=totals(trades),
-        equityDaily=equity_daily,
-        intraday=intraday_points,
-        intradayDate=intraday_date,
-        benchmarkSymbol=benchmark,
-        benchmark=benchmark_closes,
-    )
+    return {
+        **pulse,
+        "periods": calendar_periods(date.fromisoformat(today), periods_equity, benchmark_closes),
+        "today": today,
+        "accountNumber": account.account_number,
+        "status": account.status,
+        "marketOpen": clock.is_open,
+        "nextOpen": trading_time(clock.next_open).strftime("%H:%M ET"),
+        "nextClose": trading_time(clock.next_close).strftime("%H:%M ET"),
+        "invested": invested,
+        "funded": datetime.fromisoformat(funded).strftime("%-d %b %Y") if funded else "—",
+        "lastEquity": round(account.last_equity, 2),
+        "strategies": strategy_labels(),
+        "positions": rows,
+        "trades": trades,
+        "days": days(trades, closes, invested),
+        "totals": totals(trades),
+        "equityDaily": equity_daily,
+        "intraday": intraday_points,
+        "intradayDate": intraday_date,
+        "benchmarkSymbol": benchmark,
+        "benchmark": benchmark_closes,
+    }
 
 
 def calendar_periods(
@@ -395,19 +375,17 @@ def _intraday_series(points: list[EquityPoint]) -> tuple[list[IntradayPoint], st
 
 
 def _position_rows(
-    raw: list[Position],
-    equity: float,
+    raw: Sequence[PulsePosition],
     open_trades: dict[str, OpenTrade],
 ) -> list[PositionRow]:
-    rows: list[PositionRow] = []
-    for position in pulse_positions(raw, equity):
-        held = open_trades.get(position["symbol"])
-        rows.append(
-            PositionRow(
-                **position,
-                strategy_key=held["strategy_key"] if held else UNATTRIBUTED,
-                entered_at=held["entered_at"] if held else None,
-                fills=held["fills"] if held else [],
-            )
+    return [
+        PositionRow(
+            **position,
+            strategy_key=held["strategy_key"]
+            if (held := open_trades.get(position["symbol"]))
+            else UNATTRIBUTED,
+            entered_at=held["entered_at"] if held else None,
+            fills=held["fills"] if held else [],
         )
-    return rows
+        for position in raw
+    ]
