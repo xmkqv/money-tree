@@ -95,7 +95,7 @@ class Portfolio(LumibotStrategy):
             return
         self._prepare(now)
         for holding in list(self._holdings.values()):
-            if holding.symbol not in self._pending:
+            if holding.symbol not in self._pending and holding.symbol not in self._closing:
                 holding.strategy.manage(holding, session)
         for strategy in self._strategies.values():
             if self._is_runnable(strategy):
