@@ -15,6 +15,4 @@ mise.*.local.toml
 .run/
 /data/
 /logs/
-node_modules/
 /runs/
-gen.*.*

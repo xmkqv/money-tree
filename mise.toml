@@ -13,6 +13,7 @@ LUMIBOT_DISABLE_UI = "1"
 UV_PYTHON_PREFERENCE = "only-system"
 STRATEGIES = "breakout_5m,daily_sma,daily_tfb,breakout_10m"
 BENCHMARK_SYMBOL = "SPY"
+LIT_VERSION = "3.3.3"
 
 ## broker
 BROKER__MODE = "paper"
@@ -203,11 +204,13 @@ DAILY_TFB__POSITIONS_MAX = "5"
 DAILY_TFB__IS_PAUSED = "false"
 
 [tasks.setup]
-run = ["mise install", "uv sync --locked", "npm ci", "npm run build"]
+run = ["mise install", "uv sync --locked"]
+
+[tasks.vendor]
+run = "curl -sSfL https://cdn.jsdelivr.net/gh/lit/dist@${LIT_VERSION}/all/lit-all.min.js -o src/mt/web/assets/lit.min.js"
 
 [tasks.test]
 run = [
-  "npm run build",
   "uv run ruff check src",
   "uv run ruff format --check src",
   "uv run pyright",

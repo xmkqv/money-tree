@@ -8,5 +8,4 @@
 .venv
 dist
 logs
-node_modules
 runs

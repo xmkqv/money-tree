@@ -1,4 +1,4 @@
-import { html, render, repeat, nothing, styleMap } from "/assets/gen.vendor.js";
+import { html, render, repeat, nothing, styleMap } from "/assets/lit.min.js";
 
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
