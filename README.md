@@ -46,3 +46,5 @@ mise run stop
 ## license
 
 MIT. See [LICENSE](LICENSE).
+
+Daily replay uses engine daily bars; it does not establish minute-level fill fidelity.

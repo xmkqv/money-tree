@@ -5,13 +5,14 @@ vendors:
   calendar: finnhub
   engine: lumibot
   host: railway
+defer:
+  - persisted state
+  - restarts and recovery
 ---
 
-- the bot trades the selected strategies against one broker account
-- one daily loss limit ends the trading day across every strategy
-- a report replays one strategy over a date range into one run directory
-- the dashboard shows an allowed user the account, orders, fills, and the bot heartbeat
-- one command pushes both services to one revision
+- the bot trades the selected strategies on one broker account
+- one daily loss limit ends the day for every strategy
+- fractional positions are supported
 
 ```sh:surface
 mt trade --strategies KEY,…
@@ -19,218 +20,278 @@ mt report --strategy KEY --symbols SYM,… --start DATE --end DATE
 mt env list --service {web|bot}
 ```
 
-```sketch
-┌─────────┐  signed snapshot  ┌─────────┐  session cookie  ┌─────────┐
-│   bot   ├──────────────────→│   web   │←─────────────────┤ browser │
-└────┬────┘                   └────┬────┘                  └─────────┘
-     │ orders quotes bars          │ account orders fills bars
-     ↓                             ↓
-vendor[broker]                 vendor[broker]
+# data
+
+## sources
+
+```py:types
+live = account, positions, orders, fills, quotes, listing
+    vendor[engine] answers when replaying
+
+past = vendor[broker] bars ∪ vendor[calendar] earnings
+    up to the engine clock
+
+listing = {
+    symbols
+    shorts ⊆ symbols
+}
 ```
 
-```text:types
-live = the account as vendor[broker] holds it now: equity, cash, positions, orders, fills, quotes, listing
-past = completed bars from vendor[broker] and earnings dates from vendor[calendar], read up to an instant
-listing = which symbols vendor[broker] trades, with fractions and shorts
-turnover = session close * volume
-market = vendor[calendar]'s common stocks in the listing clearing the screen floors on price and turnover, by turnover, highest first
-replay = a run against vendor[engine]'s simulated account
-```
+## screening
 
-```sketch
-mise.toml             shared configuration
- └─→ mise.{env}.toml  every variable its services read
-      └─→ .env.{env}  a secret's value
-         └─→ settings load once, typed
-```
-
-- `mise*.toml` owns every configuration value
-- a secret is named under `[vars]` in `mise.{env}.toml`
-- neither environment inherits a value from the other
-- a missing variable crashes the service
-
-# layers
-
-- one distribution, `mt`, holds every module
-- a package names what its modules know, never where they run
-- nothing imports `cli`, `bot`, or `web`
-- `data` alone speaks a vendor wire
-- a service builds its clients at start-up
-- `snapshot` is the contract between `bot` and `web`
-
-```sketch
-cli   bot ──→ snapshot ←── web
- │     │ ┌───────┘
- ↓     ↓ ↓
-strategies ──→ data ──→ config
-signals        reads    variable
+```py:private
+symbols = vendor[calendar] stocks ∩ listing.symbols
+    price over screen.price_usd_min
+    turnover over screen.turnover_usd_min
+    order by turnover desc
 ```
 
 # strategies
 
-- a strategy is one class under `strategies/`, inheriting from base
-- a strategy key is `{family}_{variation}`, and its names derive from the key
-- the registry rejects a strategy whose key or order-tag code is undeclared or taken
-- the one-character order-tag code is frozen wire format, never re-used
-- a strategy owns whether it is paused, its position cap, and its risk fraction
-- a strategy setting is keyed by its family when shared, else by its key
-- a paused strategy opens no position and runs its holdings to their exits
+## identity and indicators
 
-```text:types
-R = |entry price - initial stop|
-range(p) = opening range low + p * opening range size
-SMA(n), ATR(n), RSI(n), ADX = standard indicators over n candles, n = the indicator period unless stated
-iteration = one pass of every strategy, each iteration minutes
-rescan = the candidates of the day are offered again on every iteration to the close
+```py:types
+strategy = {
+    key = {family}_{variation} uq
+    code uq frozen
+    is_paused
+    positions_max
+    risk_fraction_max
+}
+
+SMA ATR RSI ADX: period = indicators.period unless given
+R = |entry - stop|
 ```
 
 ## breakout
 
-```text:surface
-setup(session)
-    opening range = the first candle of the session, its length the variation's opening minutes
-    marks = range high, range(mid), range low
-    inv:range size < its floor fraction of price → skip
-    inv:initial stop distance ∉ the family's fraction band of price → skip
-    inv:cumulative volume at the signal candle close < the variation's volume multiple
-        * the average at the same time of day over the past sessions → skip
+### range
 
-entry(candle)
-    window = the opening range close to the open plus the scan minutes
-    long signal = first close above range high · short signal = first close below range low
-    inv:signal candle ∉ the last completed candles within the window → skip
-    inv:entry beyond the range > the entry extension * range size, when the variation sets one → skip
-    inv:live quote already through the initial stop → skip
-    inv:breakout positions ≥ the family cap → skip
-    order = open of the next candle
-    long stop = range(long stop fraction) · short stop = range(short stop fraction)
+```py:types
+range(p) = range.low + p * range.size
+marks = range(0), range(mid_fraction), range(1)
+```
 
-exit(candle)
-    target step = a target multiple of R
-    trail = the trail multiple * ATR on strategy candles across sessions, once the minimum candles complete
-    first target step → set stop = breakeven, then trail
-    each target step → close its target fraction, rounded down to a whole share; a leg under one share is skipped
-    the stop never moves back
-    a lead time before the session close → close the remainder
+### entry
+
+```py:surface
+run(session)
+    range = first opening_minutes candle
+    range.size < range_fraction_min * price → skip
+    R / price ∉ [stop_fraction_min, stop_fraction_max] → skip
+    volume to signal close < volume_multiple * its past_sessions mean → skip
+
+    window = range close → open + scan_minutes
+    signal = first close outside the range
+    signal ∉ last signal_candles_max candles in window → skip
+    when entry_extension_max is set:
+        long: entry > range.high + entry_extension_max * range.size → skip
+        short: entry < range.low - entry_extension_max * range.size → skip
+    quote through stop → skip
+    family positions ≥ positions_max → skip
+
+    order = next open
+    stop =
+        long: range(long_stop_fraction)
+        short: range(short_stop_fraction)
+```
+
+### management
+
+```py:surface
+manage(holding, candle)
+    targets = target_multiples * R
+    trail = trail_atr_multiple * ATR after trail_candles_min candles
+
+    first target → set holding stop = entry, then trail
+    stop never moves back
+    each target → close its target_fractions share
+partial short targets → round down to whole shares; skip zero-share slices
+final target → close the remainder
+    close_lead_minutes before close → close the rest
 ```
 
 ## daily
 
-|          | daily_sma                                                                 | daily_tfb                                            |
-|----------|---------------------------------------------------------------------------|------------------------------------------------------|
-| turnover |                                                                           | over its turnover sessions                           |
-| trend    | price > SMA(trend) > SMA(long trend)                                      | price > SMA(trend) > SMA(trend) its lag sessions ago |
-| momentum | RSI ≥ its floor and ADX ≥ its floor                                       | ADX ≥ its floor                                      |
-| signal   | day 1 close < SMA(average sessions); day 2 close above it and above day 1 | close > previous candle high                         |
+### signals
 
-```text:surface
-market state = the benchmark symbol > SMA(average sessions)
-direction = long
+```py:surface
+is_market_favorable = benchmark close > SMA(average_sessions)
 
-entry(session)
-    inv:¬market state → skip
-    inv:heeding earnings and an earnings date within the block days → skip
-    window = session open to close, rescan
-    order = the next open, or the first later iteration with a free slot and free money
+daily_sma =
+    price > SMA(trend_sessions) > SMA(trend_sessions_long)
+    and RSI ≥ rsi_min
+    and ADX ≥ adx_min
+    and close crosses above SMA(average_sessions)
+    and close[-1] > close[-2]
+
+daily_tfb =
+    turnover over turnover_sessions
+    and price > SMA(trend_sessions) rising over trend_lag_sessions
+    and ADX ≥ adx_min
+    and close > previous high
+```
+
+### entry
+
+```py:surface
+run(session)
+    ¬is_market_favorable → skip
+    when does_heed_earnings:
+        earnings within earnings.block_days → skip
+
+    window = open → close
+    cadence = portfolio.iteration_minutes
     one entry per symbol per session
-    stop = entry - its ATR multiple * ATR
 
-exit(session)
-    set stop = max(stop, highest close since entry - its ATR multiple * ATR)
-    daily close < stop → exit at the next open
-    daily close < SMA(average sessions) or RSI < its exit ceiling → exit at the next open
-    heeding earnings → exit the day before an earnings date
+    order = next open, else the next iteration enter allows
+    stop = entry - stop_atr_multiple * ATR
 ```
 
-# portfolio
+### management
 
-```text:surface
-positions ≤ the account cap across strategies
-gross exposure < equity, else the entry is skipped
-position fraction ≤ the position fraction cap
-risk per trade = its risk fraction of equity at entry, else the account risk cap
-one strategy owns a symbol at a time
-a stop order at or beyond the last price goes at market
+```py:surface
+manage(holding, session)
+    set holding stop = max(stop, highest close since entry - stop_atr_multiple * ATR)
 
-emergency exit
-    session baseline = portfolio value at the session's first iteration
-    inv:equity ≤ session baseline * (1 - the daily loss cap)
-        → cancel open orders, exit every holding, end the day
-```
-
-# snapshot
-
-```text:types
-snapshot = { run_id, sequence, status, strategies, paused, started_at, heartbeat_at, configuration, events capped }
-status = starting | running | stopped | failed
-```
-
-```sketch
-bot                        web                          browser
- ├──snapshot starting──────→│                            │
- ├──snapshot running───────→│                            │
- ├──snapshot heartbeat_at──→│  every export interval     │
- │                          │←──GET /api/ledger──────────┤
- │                          ├──bot state────────────────→│
- │   no heartbeat within    │                            │
- │   the heartbeat timeout  │←──GET /api/ledger──────────┤
- │                          ├──stale────────────────────→│
- ├──snapshot stopped───────→│                            │
+    exit at next open when:
+        close < stop
+        or close < SMA(average_sessions)
+        or RSI < exit_rsi_max
+        or at the open of the last exchange session strictly before earnings, when heeded
+    weekend and holiday earnings → use the last preceding exchange session
+    retry during that session until an exit is submitted
 ```
 
 # bot
 
-```text:private
-trade(strategies)
-    publish starting → run vendor[engine] → publish running
-    SIGTERM → stop all → publish stopped · failure → publish failed
+## entry limits
 
-cron:export[the export interval]()
-    POST the signed snapshot to web
+```py:private
+enter(strategy, candidate, session)
+    strategy.is_paused → skip
+    positions ≥ risk.positions_max → skip
+    exposure ≥ equity → skip
+    symbol held → skip
+    quote through stop → skip
 
-backtest(strategy, symbols, start, end) → runs/{strategy}-{start}-{end}/
-    market = the given symbols
-    quote = vendor[broker] minute bars after the warm-up for breakout, vendor[engine]'s daily bars for daily
-    equity = the backtest budget
-    writes vendor[engine] stats, trades, settings, log, and plots against the benchmark symbol
+    risk = (strategy.risk_fraction_max or risk.per_trade_max) * equity
+    position ≤ risk.position_fraction_max * equity
 ```
 
-- the engine answers live from vendor[broker] when trading and from its simulation when replaying
-- listing, positions, and tagged orders come from vendor[broker] directly
-- a replay lists every given symbol and holds nothing
-- every past read is bounded by the engine clock, never the wall clock
+## protection
+
+```py:private
+protect(holding)
+    long: stop ≥ last price → exit at market
+    short: stop ≤ last price → exit at market
+```
+
+## daily loss limit
+
+```py:private
+cron:emergency_exit[portfolio.iteration_minutes]()
+    equity ≤ session open value * (1 - risk.per_day_max) →
+        cancel orders
+        exit all
+        end day
+```
+
+## replay
+
+```py:private
+report(strategy, symbols, start, end)
+    listing.symbols = symbols
+    positions = ∅
+    equity = backtest.budget_usd
+
+    candles = vendor[broker] minute bars after backtest.warm_up_days
+    daily: vendor[engine] bars
+
+    writes stats, trades, plots vs benchmark_symbol
+```
 
 # web
 
-```text:surface
-GET  /healthz              public
-GET  /login                public · development → local session · production → vendor[host] oauth
-GET  /auth/callback        production · email ∉ the allowed emails → 403
-POST /internal/state       public · signature within the signature window, else 401
-                           · body within the body limit, else 413 · body parses, else 422
-                           · sequence newer than the last, else 409
-POST /logout               clears the session and site data
-GET  /                     dashboard
-GET  /assets/{file}        immutable
-GET  /api/session          csrf token, browser poll cadence
-GET  /api/strategies       each strategy's rules as it will trade today
-GET  /api/ledger           live orders, fills, P&L · snapshot bot state
-GET  /api/pulse            live · account, positions, open orders
-GET  /api/bars             past · symbol, timeframe ∈ the chart timeframes, opened, closed
-GET  /api/levels           past · symbol, strategy, side, entry, opened → opening range marks and averages
+## bot state
+
+```sketch
+bot ──private signed snapshot per export.interval_seconds──→ web
 ```
 
-- every route outside the public paths needs a session cookie
-- an unsafe method also needs the `X-CSRF-Token` header
-- each read response carries its own server cache, browser max-age, and browser poll cadence
-- a bars or levels response is cached per query, under a bounded key count
-- the bot is stale when no heartbeat arrives within the heartbeat timeout
-- a vendor[broker] 429 becomes 503 with Retry-After
-- any other upstream error becomes 502
+```py:types
+snapshot = {
+    run_id
+    sequence
+    status ∈ starting|running|stopped|failed
+    strategies
+    paused
+    started_at
+    heartbeat_at
+    configuration
+    events ≤ export.events_max
+}
+```
 
-# deploy
+```py:surface
+POST /internal/state
+    reject when:
+        stale signature
+        or body > web.state_body_bytes_max
+        or invalid snapshot
+        or sequence ≤ last within the same run_id
+```
 
-- vendor[host] runs one project of two services: web serves the dashboard, bot runs the trader
-- the bot reaches web over the project's private endpoint
-- web is healthy when `/healthz` answers
-- deploying sets every variable a service reads before shipping
+## access
+
+```py:surface
+public:
+    GET /healthz
+    GET /login
+    GET /auth/callback
+    POST /internal/state
+
+others need a session cookie
+unsafe session-authenticated methods: X-CSRF-Token
+
+GET /login → /auth/callback
+    development: local session
+    production:
+        vendor[host] oauth
+        email ∉ login.allowed_emails → reject
+
+POST /logout
+GET /api/session → csrf token, poll cadence
+```
+
+## dashboard
+
+```py:surface
+GET / → dashboard
+
+GET /api/strategies
+    today's rules per strategy
+
+GET /api/ledger
+    live orders, fills, P&L
+    bot state, stale after web.heartbeat_timeout_seconds
+
+GET /api/pulse
+    live account, positions, open orders
+
+GET /api/bars
+    past bars by timeframe ∈ dashboard.chart_timeframes
+
+GET /api/levels
+    marks and averages at an entry
+```
+
+
+### calendar periods
+
+week = monday-to-date, anchored to the current exchange date
+month = calendar-month-to-date, anchored to the current exchange date
+strategy totals, benchmark comparisons, equity selection → use the same boundaries
+baseline = last available observation strictly before the boundary
+funded within period → first available observation
+zero or missing baseline → percentage unavailable
