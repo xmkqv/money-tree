@@ -1,3 +1,5 @@
+from typing import ClassVar
+
 from pandas import DataFrame, Series
 from pandas_ta_classic.utils import cross as ta_cross
 
@@ -10,20 +12,15 @@ from .daily import Daily
 class DailySma(Daily):
     key = "daily_sma"
     code = "s"
-    is_paused = settings.daily_sma.is_paused
-    positions_max = settings.daily_sma.positions_max
-    equity_risk_fraction_max = settings.daily_sma.equity_risk_fraction_max
-    stop_atr_multiple = settings.daily_sma.stop_atr_multiple
-    does_heed_earnings = settings.daily_sma.does_heed_earnings
-    trend_sessions = settings.daily_sma.trend_sessions
+    trend_sessions_long: ClassVar[int]
+    rsi_min: ClassVar[float]
 
     @classmethod
     def sma_lengths(cls) -> tuple[int, ...]:
-        return (*super().sma_lengths(), settings.daily_sma.trend_sessions_long)
+        return (*super().sma_lengths(), cls.trend_sessions_long)
 
     @classmethod
     def does_enter(cls, frame: DataFrame) -> bool:
-        daily_sma = settings.daily_sma
         period = settings.indicators.period
         close = frame["close"]
         crossed = ta_cross(
@@ -36,7 +33,7 @@ class DailySma(Daily):
                 finite_value(close),
                 finite_value(close, -2),
                 finite_value(frame[f"SMA_{cls.trend_sessions}"]),
-                finite_value(frame[f"SMA_{daily_sma.trend_sessions_long}"]),
+                finite_value(frame[f"SMA_{cls.trend_sessions_long}"]),
                 finite_value(crossed),
                 finite_value(frame[f"RSI_{period}"]),
                 finite_value(frame[f"ADX_{period}"]),
@@ -49,6 +46,6 @@ class DailySma(Daily):
             bool(crossing)
             and latest > previous
             and latest > trend > trend_long
-            and strength_now >= daily_sma.rsi_min
-            and directional_now >= daily_sma.adx_min
+            and strength_now >= cls.rsi_min
+            and directional_now >= cls.adx_min
         )

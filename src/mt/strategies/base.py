@@ -7,7 +7,7 @@ from typing import ClassVar, Protocol
 from pandas import DataFrame
 
 from mt.config.settings import settings
-from mt.config.values import STRATEGY_KEYS, StrategyKey
+from mt.config.values import STRATEGY_KEYS, SettingsSection, StrategyKey
 from mt.position import Direction
 from mt.snapshot import EventLevel
 
@@ -85,10 +85,23 @@ class Strategy(ABC):
     equity_risk_fraction_max: ClassVar[float | None] = None
 
     def __init_subclass__(cls) -> None:
-        if "key" in cls.__dict__:
-            family, _, variation = cls.key.partition("_")
-            cls.family = family
-            cls.variation = variation.upper() if variation.isalpha() else variation
+        if "key" not in cls.__dict__:
+            return
+        family, _, variation = cls.key.partition("_")
+        cls.family = family
+        cls.variation = variation.upper() if variation.isalpha() else variation
+        section = getattr(settings, cls.key)
+        missing = sorted(set(section.model_dump()) - cls.bind(section))
+        if missing:
+            raise ValueError(f"{cls.__name__} must declare {cls.key} settings: {missing}")
+
+    @classmethod
+    def bind(cls, section: SettingsSection) -> set[str]:
+        declared = {name for owner in cls.__mro__ for name in getattr(owner, "__annotations__", {})}
+        bound = declared & set(section.model_dump())
+        for name in bound:
+            setattr(cls, name, getattr(section, name))
+        return bound
 
     def __init__(self, portfolio: Portfolio) -> None:
         self.portfolio = portfolio

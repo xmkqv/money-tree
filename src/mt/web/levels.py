@@ -1,10 +1,11 @@
 from datetime import datetime, timedelta
 from typing import NotRequired, TypedDict
 
+from mt.config.settings import settings
 from mt.data.alpaca import Bar
 from mt.exchange import trading_time
 from mt.position import Direction
-from mt.strategies.breakout import Breakout, range_marks, range_stop
+from mt.strategies.breakout import Breakout, range_level, range_stop
 
 
 class OpeningRange(TypedDict):
@@ -39,9 +40,10 @@ def add_breakout_levels(
 ) -> None:
     stop = range_stop(direction, high, low)
     targets = strategy.target_prices(entry, stop, direction)
-    marks = range_marks(high, low)
     payload["range"] = OpeningRange(
-        high=round(marks.high, 4), mid=round(marks.mid, 4), low=round(marks.low, 4)
+        high=round(high, 4),
+        mid=round(range_level(high, low, settings.breakout.mid_fraction), 4),
+        low=round(low, 4),
     )
     payload["stop"] = round(stop, 4)
     payload["targets"] = [round(value, 4) for value in targets]

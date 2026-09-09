@@ -42,6 +42,7 @@ class Daily(Strategy):
     stop_atr_multiple: ClassVar[float]
     does_heed_earnings: ClassVar[bool]
     trend_sessions: ClassVar[int]
+    adx_min: ClassVar[float]
 
     @classmethod
     def sma_lengths(cls) -> tuple[int, ...]:

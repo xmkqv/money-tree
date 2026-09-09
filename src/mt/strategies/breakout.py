@@ -17,13 +17,6 @@ from .base import Candidate, Ladder, Portfolio, Position, Session, Strategy, fam
 
 
 @dataclass(frozen=True, slots=True)
-class RangeMarks:
-    high: float
-    mid: float
-    low: float
-
-
-@dataclass(frozen=True, slots=True)
 class Signal:
     symbol: str
     direction: Direction
@@ -35,10 +28,6 @@ class Signal:
 
 def range_level(high: float, low: float, fraction: float) -> float:
     return low + (high - low) * fraction
-
-
-def range_marks(high: float, low: float) -> RangeMarks:
-    return RangeMarks(high, range_level(high, low, settings.breakout.mid_fraction), low)
 
 
 def range_stop(direction: Direction, high: float, low: float) -> float:
@@ -112,6 +101,7 @@ class Breakout(Strategy):
     volume_multiple: ClassVar[float]
     target_multiples: ClassVar[tuple[float, float, float]]
     entry_extension_max: ClassVar[float | None]
+    scan_minutes: ClassVar[int] = settings.breakout.scan_minutes
 
     def __init__(self, portfolio: Portfolio) -> None:
         super().__init__(portfolio)
@@ -125,7 +115,7 @@ class Breakout(Strategy):
     def entry_window(cls, opens: datetime, closes: datetime) -> tuple[datetime, datetime]:
         return (
             opens + timedelta(minutes=cls.opening_minutes),
-            opens + timedelta(minutes=settings.breakout.scan_minutes),
+            min(closes, opens + timedelta(minutes=cls.scan_minutes)),
         )
 
     @classmethod
