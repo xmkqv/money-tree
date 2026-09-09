@@ -5,7 +5,8 @@
 - label.words ⊆ context.words
 - sketch.w ≤ 72
 - sketch.h ≤ 2 * sketch.w
-- whitespace ∈ space, newline
+- whitespace ∈ tab, newline
+- strokes are never broken or misaligned
 
 ## architecture
 
