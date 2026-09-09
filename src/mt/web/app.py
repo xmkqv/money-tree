@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import assert_never, cast
 
 import httpx
+import httpx2
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from starlette.middleware.sessions import SessionMiddleware
@@ -110,6 +111,7 @@ def create_app() -> FastAPI:
         https_only=configuration.mode == "production",
     )
 
+    @app.exception_handler(httpx2.HTTPError)
     @app.exception_handler(httpx.HTTPError)
     async def upstream_failed(_: Request, error: Exception) -> JSONResponse:
         if not isinstance(error, httpx.HTTPStatusError) or error.response.status_code != 429:

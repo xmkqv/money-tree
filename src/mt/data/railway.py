@@ -1,7 +1,7 @@
 from types import TracebackType
 from typing import NamedTuple, Protocol, Self, cast
 
-import httpx
+import httpx2
 from authlib.common.security import generate_token
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import TypeAdapter
@@ -41,7 +41,7 @@ class _OAuthClient(Protocol):
 
     async def fetch_token(self, url: str, *, code: str, code_verifier: str) -> object: ...
 
-    async def get(self, url: str) -> httpx.Response: ...
+    async def get(self, url: str) -> httpx2.Response: ...
 
 
 class RailwayOAuthClient:
@@ -58,7 +58,7 @@ class RailwayOAuthClient:
                 scope="openid email",
                 redirect_uri=self._redirect_uri,
                 code_challenge_method="S256",
-                timeout=http_timeout(self._login.timeout),
+                timeout=httpx2.Timeout(**http_timeout(self._login.timeout).as_dict()),
             ),
         )
 
