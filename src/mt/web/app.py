@@ -92,8 +92,7 @@ def create_app() -> FastAPI:
                 ),
                 "bars": BarsClientAlpaca(
                     bars,
-                    configuration.bars.intraday_feed,
-                    configuration.bars.daily_feed,
+                    configuration.bars,
                     configuration.dashboard.bars_max,
                 ),
             }

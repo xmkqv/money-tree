@@ -1,4 +1,5 @@
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -6,7 +7,7 @@ from alpaca.common.enums import BaseURL
 from alpaca.trading.models import Order
 from pydantic import Field, TypeAdapter
 
-from mt.config.sections import BrokerSection
+from mt.config.sections import BarsSection, BrokerSection
 from mt.config.values import BrokerMode, DataFeedName
 
 from .http import Payload
@@ -91,6 +92,14 @@ def trading_api_url(broker_mode: BrokerMode) -> str:
 
 def bars_api_url() -> str:
     return BaseURL.DATA.value
+
+
+def bars_end_at(end: datetime, feed: DataFeedName, sip_delay_minutes: int) -> datetime:
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=UTC)
+    if feed == "sip":
+        return min(end, datetime.now(UTC) - timedelta(minutes=sip_delay_minutes))
+    return end
 
 
 def credential_headers(broker: BrokerSection) -> dict[str, str]:
@@ -208,11 +217,10 @@ class TradingClientAlpaca:
 
 class BarsClientAlpaca:
     def __init__(
-        self, client: httpx.AsyncClient, feed: DataFeedName, daily_feed: DataFeedName, bars_max: int
+        self, client: httpx.AsyncClient, configuration: BarsSection, bars_max: int
     ) -> None:
         self._client = client
-        self._feed = feed
-        self._daily_feed = daily_feed
+        self._configuration = configuration
         self._bars_max = bars_max
 
     async def daily_bars(self, symbol: str, start: str) -> list[Bar]:
@@ -227,15 +235,22 @@ class BarsClientAlpaca:
         limit: int | None = None,
         pages_max: int = 1,
     ) -> list[Bar]:
+        feed = (
+            self._configuration.daily_feed
+            if timeframe.endswith("Day")
+            else self._configuration.intraday_feed
+        )
         params = {
             "timeframe": timeframe,
             "start": start,
             "limit": str(self._bars_max if limit is None else limit),
-            "feed": self._daily_feed if timeframe.endswith("Day") else self._feed,
+            "feed": feed,
             "adjustment": "all",
         }
         if end is not None:
-            params["end"] = end
+            params["end"] = bars_end_at(
+                datetime.fromisoformat(end), feed, self._configuration.sip_delay_minutes
+            ).isoformat()
         return await self._page(symbol, params, pages_max=pages_max)
 
     async def _page(self, symbol: str, params: dict[str, str], pages_max: int) -> list[Bar]:

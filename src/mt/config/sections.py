@@ -44,6 +44,7 @@ class FinnhubSection(SettingsSection):
 class BarsSection(SettingsSection):
     intraday_feed: DataFeedName
     daily_feed: DataFeedName
+    sip_delay_minutes: MaxAge
     timeout: TimeoutSection
 
 

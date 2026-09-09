@@ -34,6 +34,7 @@ series = observations ordered by time
     lookback = days or sessions of earlier data requested
     bars = vendor[broker] price and volume series
     account series = fills, closed orders, equity
+    SIP bar queries end at or before wall clock - bars.sip_delay_minutes
 
 earnings = vendor[calendar] scheduled releases, including upcoming dates
     event date differs from announcement date

@@ -11,6 +11,8 @@ from mt.config.bot import settings
 from mt.config.values import DataFeedName, Timeframe
 from mt.frames import normalize_ohlcv
 
+from .alpaca import bars_end_at
+
 
 class BarsAlpaca:
     def __init__(self) -> None:
@@ -33,7 +35,7 @@ class BarsAlpaca:
             request = StockBarsRequest(
                 symbol_or_symbols=symbols[offset : offset + page],
                 start=start.astimezone(UTC),
-                end=end.astimezone(UTC),
+                end=bars_end_at(end, feed, settings.bars.sip_delay_minutes).astimezone(UTC),
                 timeframe=_timeframe(timeframe),
                 adjustment=Adjustment.ALL,
                 feed=DataFeed(feed),
