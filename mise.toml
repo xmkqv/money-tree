@@ -205,6 +205,9 @@ run = '''
 set -euo pipefail
 
 revision="$(git rev-parse --short HEAD)"
+if [[ -n "$(git status --porcelain)" ]]; then
+  revision="${revision}-dirty"
+fi
 
 for service in web bot; do
   for key in $(uv run mt env list --service "$service"); do
