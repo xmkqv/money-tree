@@ -7,7 +7,7 @@ from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from pandas import DataFrame
 
-from mt.config.settings import settings
+from mt.config.bot import settings
 from mt.config.values import DataFeedName, Timeframe
 from mt.frames import normalize_ohlcv
 

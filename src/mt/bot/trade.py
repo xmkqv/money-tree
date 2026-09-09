@@ -1,6 +1,7 @@
 import signal
 
-from mt.config.settings import settings
+from mt.config.bot import settings
+from mt.config.settings import RuleSettings
 from mt.config.values import StrategyKey
 from mt.strategies.registry import strategy_class
 
@@ -19,7 +20,7 @@ def trade(strategies: list[StrategyKey]) -> None:
         settings.export.secret.get_secret_value(),
         strategies,
         paused,
-        settings.risk,
+        RuleSettings.model_validate(settings.model_dump()),
     )
     exporter.start()
     exporter.publish("starting", "run.started", "info", "Trading run is starting")

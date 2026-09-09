@@ -1,4 +1,4 @@
-from mt.config.settings import settings
+from mt.config.bot import settings
 
 
 def broker_credentials(*, paper: bool) -> dict[str, str | bool]:

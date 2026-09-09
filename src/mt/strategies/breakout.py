@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
-from itertools import accumulate
+from decimal import Decimal
 from math import isfinite
 from typing import Any, ClassVar, cast
 
@@ -11,7 +11,7 @@ from mt.config.values import StrategyKey
 from mt.exchange import TRADING_ZONE
 from mt.frames import frame_between, frame_since, frame_until, regular_session
 from mt.indicators import latest_atr, latest_turnover_usd
-from mt.position import Direction, next_stop
+from mt.position import Direction, next_stop, round_quantity
 
 from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, family_keys, ranked
 
@@ -143,12 +143,9 @@ class Breakout(Strategy):
     def begin(self, day: date) -> None:
         self._scanned.clear()
 
-    def ladder(self, holding: Holding, original: float, remaining: float) -> Ladder | None:
-        fraction = remaining / original if original else 1.0
-        closed = accumulate(settings.breakout.target_fractions[:-1])
-        stage = sum(fraction <= 1.0 - sold for sold in closed)
+    def ladder(self, holding: Holding, quantity: float) -> Ladder | None:
         targets = self.target_prices(holding.entry, holding.stop, holding.direction)
-        return Ladder(original, targets, stage)
+        return Ladder(quantity, targets)
 
     def run(self, session: Session) -> None:
         now = session.now
@@ -227,12 +224,20 @@ class Breakout(Strategy):
             if ladder.stage == len(fractions) - 1:
                 self.portfolio.exit(holding)
                 return
-            quantity = ladder.original_quantity * fractions[ladder.stage]
+            quantity = round_quantity(
+                Decimal(str(ladder.original_quantity)) * Decimal(str(fractions[ladder.stage])),
+                whole=holding.direction == -1,
+            )
             ladder.stage += 1
-            self.portfolio.exit(holding, quantity)
+            holding.stop = next_stop(holding.direction, holding.stop, holding.entry)
+            if quantity > 0:
+                self.portfolio.exit(holding, float(quantity))
+            self.portfolio.protect(holding)
             return
         if ladder.stage == 0:
             return
+        holding.stop = next_stop(holding.direction, holding.stop, holding.entry)
+        self.portfolio.protect(holding)
         recent = self.portfolio.minute_frames(
             [holding.symbol],
             now - timedelta(days=settings.breakout.trail_past_days),
@@ -318,10 +323,7 @@ class Breakout(Strategy):
     ) -> tuple[int, Direction, float] | None:
         for position, value in enumerate(candles["close"].tolist()):
             close = float(value)
-            if not isfinite(close):
-                continue
-            if close > high:
-                return position, 1, close
-            if close < low:
-                return position, -1, close
+            direction = range_break(high, low, close)
+            if direction is not None:
+                return position, direction, close
         return None

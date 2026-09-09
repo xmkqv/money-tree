@@ -1,9 +1,10 @@
-import os
 from datetime import datetime
 from pathlib import Path
 
-from mt.config.settings import settings
-from mt.config.values import StrategyKey
+from pydantic import TypeAdapter
+
+from mt.config.bot import settings
+from mt.config.values import StrategyKey, Symbol
 from mt.strategies.breakout import Breakout
 from mt.strategies.registry import strategy_class
 
@@ -18,10 +19,15 @@ ARTIFACT_NAMES = {
     "plot_file_html": "plot.html",
     "indicators_file": "indicators.html",
 }
-LUMIBOT_DISABLE_UI = "LUMIBOT_DISABLE_UI"
 
 
 def report(strategy: StrategyKey, symbols: list[str], start: datetime, end: datetime) -> Path:
+    if not symbols or len(symbols) != len(set(symbols)):
+        raise ValueError("report symbols must be nonempty and distinct")
+    symbols = TypeAdapter(list[Symbol]).validate_python(symbols)
+    if start.tzinfo != end.tzinfo or end <= start:
+        raise ValueError("report end must follow start in the same timezone")
+
     from lumibot.backtesting import AlpacaBacktesting, YahooDataBacktesting
 
     from .portfolio import Portfolio
@@ -38,7 +44,6 @@ def report(strategy: StrategyKey, symbols: list[str], start: datetime, end: date
             "timestep": "minute",
             "warm_up_trading_days": settings.backtest.warm_up_days,
         }
-    os.environ[LUMIBOT_DISABLE_UI] = "1"
     Portfolio.backtest(
         datasource,
         start,

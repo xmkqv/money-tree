@@ -10,8 +10,8 @@ from uuid import uuid4
 import httpx
 from itsdangerous import TimestampSigner
 
-from mt.config.sections import RiskSection
-from mt.config.settings import settings
+from mt.config.bot import settings
+from mt.config.settings import RuleSettings
 from mt.config.values import StrategyKey
 from mt.snapshot import STATE_SIGNATURE_SALT, EventLevel, RunStatus, StateEvent, StateSnapshot
 
@@ -26,7 +26,7 @@ class StateExporter:
         secret: str,
         strategies: list[StrategyKey],
         paused: list[StrategyKey],
-        configuration: RiskSection,
+        configuration: RuleSettings,
     ) -> None:
         self.url = url
         self.signer = TimestampSigner(

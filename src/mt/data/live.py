@@ -1,13 +1,12 @@
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
-from alpaca.common.enums import Sort
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import AssetClass, AssetStatus, QueryOrderStatus
 from alpaca.trading.models import Order, Position
 from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest
 
-from mt.config.settings import settings
+from mt.config.bot import settings
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,11 +16,11 @@ class Listing:
 
 
 class Live(Protocol):
+    def cancel_orders(self) -> set[str]: ...
+
     def listing(self) -> Listing: ...
 
     def positions(self) -> list[Position]: ...
-
-    def tagged_orders(self, symbols: list[str]) -> list[Order]: ...
 
 
 class BrokerLive:
@@ -31,6 +30,26 @@ class BrokerLive:
             settings.broker.api_secret.get_secret_value(),
             paper=settings.broker.mode == "paper",
         )
+
+    def cancel_orders(self) -> set[str]:
+        orders = cast(
+            list[Order],
+            self._api.get_orders(
+                filter=GetOrdersRequest(
+                    status=QueryOrderStatus.OPEN,
+                    limit=settings.portfolio.orders_per_request,
+                )
+            ),
+        )
+        closing: set[str] = set()
+        for order in orders:
+            if str(order.client_order_id).startswith("mt-liquidate-"):
+                closing.add(str(order.symbol))
+            else:
+                self._api.cancel_order_by_id(str(order.id))
+        if len(orders) >= settings.portfolio.orders_per_request:
+            raise RuntimeError("open orders reach the request limit")
+        return closing
 
     def listing(self) -> Listing:
         request = GetAssetsRequest(asset_class=AssetClass.US_EQUITY, status=AssetStatus.ACTIVE)
@@ -47,25 +66,16 @@ class BrokerLive:
     def positions(self) -> list[Position]:
         return cast(list[Position], self._api.get_all_positions())
 
-    def tagged_orders(self, symbols: list[str]) -> list[Order]:
-        request = GetOrdersRequest(
-            status=QueryOrderStatus.ALL,
-            symbols=symbols,
-            limit=settings.portfolio.orders_per_request,
-            direction=Sort.DESC,
-        )
-        return cast(list[Order], self._api.get_orders(filter=request))
-
 
 class EngineLive:
     def __init__(self, symbols: list[str]) -> None:
         self._listing = frozenset(symbols)
 
+    def cancel_orders(self) -> set[str]:
+        return set()
+
     def listing(self) -> Listing:
         return Listing(self._listing, self._listing)
 
     def positions(self) -> list[Position]:
-        return []
-
-    def tagged_orders(self, symbols: list[str]) -> list[Order]:
         return []

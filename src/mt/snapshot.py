@@ -2,8 +2,7 @@ from typing import Literal
 
 from pydantic import UUID4, AwareDatetime, BaseModel, ConfigDict, Field
 
-from mt.config.sections import RiskSection
-from mt.config.settings import settings
+from mt.config.settings import RuleSettings
 from mt.config.values import STRATEGY_KEYS, StrategyKey
 
 
@@ -35,5 +34,5 @@ class StateSnapshot(_StrictModel):
     )
     started_at: AwareDatetime
     heartbeat_at: AwareDatetime
-    configuration: RiskSection
-    events: list[StateEvent] = Field(max_length=settings.export.events_max)
+    configuration: RuleSettings
+    events: list[StateEvent]

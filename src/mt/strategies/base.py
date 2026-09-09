@@ -114,7 +114,7 @@ class Strategy(ABC):
     def begin(self, day: date) -> None:
         return None
 
-    def ladder(self, holding: Holding, original: float, remaining: float) -> Ladder | None:
+    def ladder(self, holding: Holding, quantity: float) -> Ladder | None:
         return None
 
     def is_capped(self) -> bool:

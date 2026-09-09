@@ -32,9 +32,8 @@ def normalize_ohlcv(frame: DataFrame, required: Collection[str]) -> DataFrame:
 
 def regular_session(frame: DataFrame) -> DataFrame:
     index = cast(DatetimeIndex, frame.index)
-    inside = (_time_index(frame) >= session_starts(index)) & (
-        _time_index(frame) < session_ends(index)
-    )
+    timestamps = _time_index(frame)
+    inside = (timestamps >= session_starts(index)) & (timestamps < session_ends(index))
     return cast(DataFrame, frame[inside])
 
 

@@ -1,5 +1,6 @@
 from abc import abstractmethod
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
+from math import isfinite
 from typing import Any, ClassVar, cast
 
 from pandas import DataFrame, Series
@@ -104,7 +105,16 @@ class Daily(Strategy):
                 return
             if self.portfolio.is_taken(self, candidate.symbol, now.date()):
                 continue
-            self.portfolio.enter(self, candidate, session)
+            price = self.portfolio.last_price(candidate.symbol)
+            if not isfinite(price) or price <= 0:
+                raise ValueError(
+                    f"current price for {candidate.symbol} must be finite and positive"
+                )
+            if price <= candidate.stop:
+                continue
+            distance = candidate.price - candidate.stop
+            refreshed = Candidate(candidate.symbol, price, price - distance, candidate.direction)
+            self.portfolio.enter(self, refreshed, session)
 
     def scan(self, session: Session) -> list[Candidate]:
         now = session.now
@@ -127,10 +137,10 @@ class Daily(Strategy):
         return candidates
 
     def manage(self, holding: Holding, session: Session) -> None:
-        now, closes = session.now, session.closes
+        now = session.now
         if (
             self.does_heed_earnings
-            and now >= closes - timedelta(minutes=settings.earnings.exit_lead_minutes)
+            and session.opens <= now < session.closes
             and is_earnings_exit_due(holding.symbol, now.date())
         ):
             self.portfolio.exit(holding)

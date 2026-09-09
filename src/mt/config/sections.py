@@ -53,6 +53,7 @@ class RiskSection(SettingsSection):
     position_fraction_max: Fraction
     positions_max: Count
     notional_usd_min: Amount
+    quantity_decimal_places: Count
 
     @model_validator(mode="after")
     def check_limits(self) -> Self:
@@ -89,7 +90,6 @@ class PortfolioSection(SettingsSection):
 
 class EarningsSection(SettingsSection):
     block_days: Count
-    exit_lead_minutes: Count
     calendar_cache_max: Count
 
 
@@ -200,7 +200,7 @@ class DashboardSection(SettingsSection):
     equity_daily_timeframe: EquityTimeframe
     equity_intraday_period: EquityPeriod
     equity_intraday_timeframe: EquityTimeframe
-    sma_lengths: tuple[int, ...] = Field(min_length=1)
+    sma_lengths: tuple[Count, ...] = Field(min_length=1)
     ledger_max_age_seconds: MaxAge
     chart_max_age_seconds: MaxAge
     levels_max_age_seconds: MaxAge
@@ -210,6 +210,8 @@ class DashboardSection(SettingsSection):
 
     @model_validator(mode="after")
     def check_chart_timeframes(self) -> Self:
+        if len(set(self.sma_lengths)) != len(self.sma_lengths):
+            raise ValueError("SMA lengths must be distinct")
         if set(self.chart_timeframes) != set(CHART_TIMEFRAMES):
             raise ValueError(f"chart timeframes must be {', '.join(CHART_TIMEFRAMES)}")
         return self

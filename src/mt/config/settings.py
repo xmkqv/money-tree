@@ -26,20 +26,13 @@ from .sections import (
 from .values import Mode, StrategySelection, Symbol
 
 
-class BotSettings(BaseSettings):
+class RuleSettings(BaseSettings):
     model_config = SettingsConfigDict(env_nested_delimiter="__", extra="ignore", frozen=True)
 
-    strategies: Annotated[StrategySelection, NoDecode]
     benchmark_symbol: Symbol
-    broker: BrokerSection
-    finnhub: FinnhubSection
-    past: PastSection
     risk: RiskSection
-    export: ExportSection
     screen: ScreenSection
-    portfolio: PortfolioSection
     earnings: EarningsSection
-    backtest: BacktestSection
     indicators: IndicatorsSection
     breakout: BreakoutSection
     breakout_5m: BreakoutVariationSection
@@ -49,15 +42,23 @@ class BotSettings(BaseSettings):
     daily_tfb: DailyTfbSection
 
 
-class WebSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_nested_delimiter="__", extra="ignore", frozen=True)
-
-    mode: Annotated[Mode, Field(validation_alias="MISE_ENV")]
-    benchmark_symbol: Symbol
-    broker: BrokerSection
+class SharedSettings(RuleSettings):
     finnhub: FinnhubSection
+
+
+class BotSettings(SharedSettings):
+    strategies: Annotated[StrategySelection, NoDecode]
+    broker: BrokerSection
     past: PastSection
-    risk: RiskSection
+    export: ExportSection
+    portfolio: PortfolioSection
+    backtest: BacktestSection
+
+
+class WebSettings(SharedSettings):
+    mode: Annotated[Mode, Field(validation_alias="MISE_ENV")]
+    broker: BrokerSection
+    past: PastSection
     export: ExportSection
     web: WebSection
     dashboard: DashboardSection
@@ -73,4 +74,4 @@ class LoginSettings(BaseSettings):
     login: LoginSection
 
 
-settings = BotSettings()  # pyright: ignore[reportCallIssue]
+settings = SharedSettings()  # pyright: ignore[reportCallIssue]

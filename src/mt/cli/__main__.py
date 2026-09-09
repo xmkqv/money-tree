@@ -2,11 +2,11 @@ from datetime import datetime
 from typing import Annotated
 
 import typer
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
+from mt.config.bot import settings
 from mt.config.services import SERVICE_SETTINGS, ServiceName, service_secrets
-from mt.config.settings import settings
-from mt.config.values import STRATEGY_KEYS, StrategyKey, strategy_selection_adapter
+from mt.config.values import STRATEGY_KEYS, StrategyKey, Symbol, strategy_selection_adapter
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -29,7 +29,15 @@ def _parse_service(value: str) -> ServiceName:
 
 
 def _parse_symbols(value: str) -> list[str]:
-    return [symbol for item in value.split(",") if (symbol := item.strip())]
+    try:
+        symbols = TypeAdapter(list[Symbol]).validate_python(
+            [item.strip() for item in value.split(",")]
+        )
+        if len(set(symbols)) != len(symbols):
+            raise ValueError("symbols must be distinct")
+        return symbols
+    except ValueError as error:
+        raise typer.BadParameter("symbols must be distinct uppercase ticker symbols") from error
 
 
 def _parse_strategies(value: str) -> list[StrategyKey]:
@@ -55,9 +63,13 @@ def run_report(
     start: Annotated[datetime, typer.Option()] = settings.backtest.start_at,
     end: Annotated[datetime, typer.Option()] = settings.backtest.end_at,
 ) -> None:
+    if start.tzinfo != end.tzinfo or end <= start:
+        raise typer.BadParameter("end must follow start in the same timezone")
+    selected = _parse_strategy(strategy)
+    tickers = _parse_symbols(symbols)
     from mt.bot.backtest import report
 
-    typer.echo(report(_parse_strategy(strategy), _parse_symbols(symbols), start, end))
+    typer.echo(report(selected, tickers, start, end))
 
 
 @app.command("trade")
