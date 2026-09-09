@@ -1,23 +1,41 @@
-from collections.abc import Sequence
-from math import isfinite
+from collections.abc import Collection, Sequence
+from math import isfinite, nan
 from typing import Any, cast
 
 from pandas import DataFrame, Series
+from pandas_ta_classic.momentum.rsi import rsi as ta_rsi
+from pandas_ta_classic.overlap.sma import sma as ta_sma
 from pandas_ta_classic.trend.adx import adx as ta_adx
 from pandas_ta_classic.volatility.atr import atr as ta_atr
 
 from mt.frames import last_close
 
 
-def latest_atr(frame: DataFrame, period: int) -> float:
-    values = ta_atr(
-        frame["high"],
-        frame["low"],
-        frame["close"],
-        length=period,
-        talib=False,
+def daily_indicators(frame: DataFrame, lengths: Collection[int], period: int) -> DataFrame:
+    close = frame["close"]
+    columns: dict[str, object] = {
+        f"SMA_{length}": ta_sma(close, length=length, talib=False) for length in lengths
+    }
+    columns[f"RSI_{period}"] = ta_rsi(close, length=period, talib=False)
+    columns[f"ATRr_{period}"] = ta_atr(
+        frame["high"], frame["low"], close, length=period, talib=False
     )
-    indicator = indicator_series(values, f"ATRr_{period}", 1)
+    directional = ta_adx(frame["high"], frame["low"], frame["close"], length=period, talib=False)
+    columns[f"ADX_{period}"] = indicator_column(directional, f"ADX_{period}", 1)
+    prepared: dict[str, Any] = {
+        name: value if isinstance(value, Series) else nan for name, value in columns.items()
+    }
+    return frame.assign(**prepared)
+
+
+def latest_atr(frame: DataFrame, period: int) -> float:
+    name = f"ATRr_{period}"
+    values = (
+        frame[name]
+        if name in frame.columns
+        else ta_atr(frame["high"], frame["low"], frame["close"], length=period, talib=False)
+    )
+    indicator = indicator_series(values, name, 1)
     latest = None if indicator is None else finite_value(indicator)
     if latest is None:
         raise ValueError(f"ATR requires at least {period} price bars")
@@ -41,16 +59,6 @@ def average_turnover_usd(frame: DataFrame, sessions: int) -> float:
         return 0.0
     traded = float((closes * volumes).mean())
     return traded if isfinite(traded) and traded > 0.0 else 0.0
-
-
-def adx(frame: DataFrame, period: int) -> object:
-    return ta_adx(
-        frame["high"],
-        frame["low"],
-        frame["close"],
-        length=period,
-        talib=False,
-    )
 
 
 def finite_value(values: "Series[Any]", offset: int = -1) -> float | None:

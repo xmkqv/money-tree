@@ -3,49 +3,35 @@ from datetime import date, datetime
 from math import isfinite
 from typing import Any, ClassVar, cast
 
-from pandas import DataFrame, Series
-from pandas_ta_classic.momentum.rsi import rsi as ta_rsi
-from pandas_ta_classic.overlap.sma import sma as ta_sma
+from pandas import DataFrame
 
 from mt.config.settings import settings
 from mt.data.earnings import is_earnings_blocked, is_earnings_exit_due
 from mt.exchange import TRADING_ZONE
 from mt.frames import frame_since, last_close
-from mt.indicators import (
-    finite_row,
-    finite_value,
-    indicator_series,
-    latest_atr,
-    latest_turnover_usd,
-)
+from mt.indicators import finite_row, finite_value, latest_atr, latest_turnover_usd
 
 from .base import Candidate, Portfolio, Position, Session, Strategy, ranked
 
 
 def is_market_favorable(frame: DataFrame) -> bool:
-    close = frame["close"]
-    if close.count() < settings.daily.average_sessions:
-        return False
-    average = ta_sma(close, length=settings.daily.average_sessions, talib=False)
-    if not isinstance(average, Series):
-        return False
-    row = finite_row([finite_value(close), finite_value(average)])
-    if row is None:
-        return False
-    latest, latest_average = row
-    return latest > latest_average
+    row = finite_row(
+        [
+            finite_value(frame["close"]),
+            finite_value(frame[f"SMA_{settings.daily.average_sessions}"]),
+        ]
+    )
+    return row is not None and row[0] > row[1]
 
 
 def does_signal_exit(frame: DataFrame) -> bool:
-    close = frame["close"]
-    if close.count() < settings.daily.average_sessions:
-        return False
-    average = ta_sma(close, length=settings.daily.average_sessions, talib=False)
-    period = settings.indicators.period
-    strength = indicator_series(ta_rsi(close, length=period, talib=False), f"RSI_{period}", 1)
-    if not isinstance(average, Series) or strength is None:
-        return False
-    row = finite_row([finite_value(close), finite_value(average), finite_value(strength)])
+    row = finite_row(
+        [
+            finite_value(frame["close"]),
+            finite_value(frame[f"SMA_{settings.daily.average_sessions}"]),
+            finite_value(frame[f"RSI_{settings.indicators.period}"]),
+        ]
+    )
     if row is None:
         return False
     latest, latest_average, strength_now = row
@@ -55,6 +41,11 @@ def does_signal_exit(frame: DataFrame) -> bool:
 class Daily(Strategy):
     stop_atr_multiple: ClassVar[float]
     does_heed_earnings: ClassVar[bool]
+    trend_sessions: ClassVar[int]
+
+    @classmethod
+    def sma_lengths(cls) -> tuple[int, ...]:
+        return (settings.daily.average_sessions, cls.trend_sessions)
 
     def __init__(self, portfolio: Portfolio) -> None:
         super().__init__(portfolio)
@@ -79,7 +70,7 @@ class Daily(Strategy):
 
     def run(self, session: Session) -> None:
         now = session.now
-        benchmark = self.portfolio.benchmark_frame(now)
+        benchmark = self.portfolio.benchmark_frame()
         if benchmark is None:
             return
         if not is_market_favorable(benchmark):
@@ -145,7 +136,7 @@ class Daily(Strategy):
         ):
             self.portfolio.exit(position)
             return
-        frame = self.portfolio.daily_frame(position.symbol, now)
+        frame = self.portfolio.daily_frame(position.symbol)
         if frame is None or len(frame) < settings.daily.average_sessions:
             return
         since = frame_since(frame, position.entered_at.astimezone(TRADING_ZONE))
@@ -161,7 +152,7 @@ class Daily(Strategy):
         rows = [
             (symbol, frame)
             for symbol in self.portfolio.symbols()
-            if (frame := self.portfolio.daily_frame(symbol, now)) is not None
+            if (frame := self.portfolio.daily_frame(symbol)) is not None
         ]
         return ranked(
             rows,

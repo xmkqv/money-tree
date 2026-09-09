@@ -14,7 +14,7 @@ from mt.data.broker import Broker, BrokerAlpaca, BrokerEngine
 from mt.data.finnhub import stocks
 from mt.exchange import TRADING_ZONE, session_bounds
 from mt.frames import last_close, normalize_ohlcv
-from mt.indicators import average_turnover_usd
+from mt.indicators import average_turnover_usd, daily_indicators
 from mt.position import entry_quantity, round_quantity, round_stop
 from mt.snapshot import EventLevel
 from mt.strategies.base import Candidate, Position, Session, Strategy, ranked
@@ -163,12 +163,11 @@ class Portfolio(LumibotStrategy):
     def symbols(self) -> list[str]:
         return self._symbols
 
-    def daily_frame(self, symbol: str, now: datetime) -> DataFrame | None:
-        frame = self._daily_frames.get(symbol)
-        return None if frame is None else self._completed(frame, now)
+    def daily_frame(self, symbol: str) -> DataFrame | None:
+        return self._daily_frames.get(symbol)
 
-    def benchmark_frame(self, now: datetime) -> DataFrame | None:
-        return self.daily_frame(settings.benchmark_symbol, now)
+    def benchmark_frame(self) -> DataFrame | None:
+        return self._daily_frames.get(settings.benchmark_symbol)
 
     def minute_frames(
         self, symbols: list[str], start: datetime, now: datetime, minutes: int
@@ -328,24 +327,30 @@ class Portfolio(LumibotStrategy):
         start = datetime.combine(first, time(), TRADING_ZONE)
         self._assets = self._broker.assets()
         symbols = self._given or self._screen(now, self._assets)
-        held = set(self._positions)
-        requested = sorted(set(symbols).union({settings.benchmark_symbol}, held))
+        requested = sorted(set(symbols).union({settings.benchmark_symbol}, self._positions))
+        frames: dict[str, DataFrame] = {}
         if self.is_backtesting and all(
             isinstance(self._strategies[key], Daily) for key in self._selected
         ):
-            self._daily_frames = {}
             for symbol in requested:
                 bars = self.get_historical_prices(
                     symbol, settings.portfolio.lookback_days, timestep="day"
                 )
                 if bars is not None:
-                    self._daily_frames[symbol] = normalize_ohlcv(
-                        bars.df, {"high", "low", "close", "volume"}
-                    )
+                    frames[symbol] = normalize_ohlcv(bars.df, {"high", "low", "close", "volume"})
         else:
-            self._daily_frames = self._bars.bars(
-                requested, "1Day", start, now, settings.bars.daily_feed
-            )
+            frames = self._bars.bars(requested, "1Day", start, now, settings.bars.daily_feed)
+        lengths = {
+            length
+            for strategy in self._strategies.values()
+            if isinstance(strategy, Daily)
+            for length in strategy.sma_lengths()
+        }
+        period = settings.indicators.period
+        self._daily_frames = {
+            symbol: daily_indicators(self._completed(frame, now), lengths, period)
+            for symbol, frame in frames.items()
+        }
         self._symbols = list(symbols)
         self._prepared_at = day
 
@@ -354,22 +359,16 @@ class Portfolio(LumibotStrategy):
         first = now.date() - timedelta(days=settings.screen.lookback_days)
         start = datetime.combine(first, time(), TRADING_ZONE)
         frames = self._bars.bars(symbols, "1Day", start, now, settings.bars.daily_feed)
+        cleared: dict[str, float] = {}
+        for symbol, frame in frames.items():
+            completed = self._completed(frame, now)
+            if completed.empty or last_close(completed) < settings.screen.price_usd_min:
+                continue
+            turnover = average_turnover_usd(completed, settings.screen.turnover_sessions)
+            if turnover >= settings.screen.turnover_usd_min:
+                cleared[symbol] = turnover
         return ranked(
-            (symbol for symbol, frame in frames.items() if self._does_clear(frame, now)),
-            symbol=lambda symbol: symbol,
-            turnover=lambda symbol: average_turnover_usd(
-                self._completed(frames[symbol], now), settings.screen.turnover_sessions
-            ),
-        )
-
-    def _does_clear(self, frame: DataFrame, now: datetime) -> bool:
-        completed = self._completed(frame, now)
-        if completed.empty:
-            return False
-        return (
-            last_close(completed) >= settings.screen.price_usd_min
-            and average_turnover_usd(completed, settings.screen.turnover_sessions)
-            >= settings.screen.turnover_usd_min
+            cleared, symbol=lambda symbol: symbol, turnover=lambda symbol: cleared[symbol]
         )
 
     def _completed(self, frame: DataFrame, now: datetime, minutes: int = 0) -> DataFrame:
@@ -383,9 +382,12 @@ class Portfolio(LumibotStrategy):
         now = session.now
         symbol, price, stop = candidate.symbol, candidate.price, candidate.stop
         direction = candidate.direction
+        positions = self._engine_positions()
+        owned = positions.keys() | self._pending.keys()
         if (
             not self._is_runnable(strategy)
-            or self._is_owned(symbol)
+            or symbol in owned
+            or symbol in self._positions
             or direction * (price - stop) <= 0
         ):
             return False
@@ -398,15 +400,11 @@ class Portfolio(LumibotStrategy):
             )
             return False
         equity = self._equity()
-        positions = self._engine_positions()
         gross = sum(
             abs(float(position.quantity) * float(self.get_last_price(position.asset)))
             for position in positions.values()
         ) + sum(pending.notional for pending in self._pending.values())
-        if (
-            len(positions.keys() | self._pending.keys()) >= settings.risk.positions_max
-            or gross >= equity
-        ):
+        if len(owned) >= settings.risk.positions_max or gross >= equity:
             self.record(
                 strategy,
                 f"portfolio.capped.{symbol}.{now.date()}",

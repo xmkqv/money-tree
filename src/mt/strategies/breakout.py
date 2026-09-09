@@ -171,7 +171,7 @@ class Breakout(Strategy):
         signals = ranked(
             signals,
             symbol=lambda found: found.symbol,
-            turnover=lambda found: self._turnover(found.symbol, now),
+            turnover=lambda found: self._turnover(found.symbol),
         )
         histories = self.portfolio.minute_frames(
             [found.symbol for found in signals],
@@ -281,8 +281,8 @@ class Breakout(Strategy):
             if symbol not in self._scanned and not self.portfolio.is_taken(self, symbol, day)
         ]
 
-    def _turnover(self, symbol: str, now: datetime) -> float:
-        frame = self.portfolio.daily_frame(symbol, now)
+    def _turnover(self, symbol: str) -> float:
+        frame = self.portfolio.daily_frame(symbol)
         return 0.0 if frame is None else latest_turnover_usd(frame)
 
     def _price(self, found: Signal) -> float:

@@ -1,12 +1,8 @@
-from typing import cast
-
 from pandas import DataFrame, Series
-from pandas_ta_classic.momentum.rsi import rsi as ta_rsi
-from pandas_ta_classic.overlap.sma import sma as ta_sma
 from pandas_ta_classic.utils import cross as ta_cross
 
 from mt.config.settings import settings
-from mt.indicators import adx, finite_row, finite_value, indicator_column, indicator_series
+from mt.indicators import finite_row, finite_value
 
 from .daily import Daily
 
@@ -19,36 +15,31 @@ class DailySma(Daily):
     equity_risk_fraction_max = settings.daily_sma.equity_risk_fraction_max
     stop_atr_multiple = settings.daily_sma.stop_atr_multiple
     does_heed_earnings = settings.daily_sma.does_heed_earnings
+    trend_sessions = settings.daily_sma.trend_sessions
+
+    @classmethod
+    def sma_lengths(cls) -> tuple[int, ...]:
+        return (*super().sma_lengths(), settings.daily_sma.trend_sessions_long)
 
     @classmethod
     def does_enter(cls, frame: DataFrame) -> bool:
         daily_sma = settings.daily_sma
         period = settings.indicators.period
         close = frame["close"]
-        if close.count() < daily_sma.trend_sessions_long:
-            return False
-        average_signal = ta_sma(close, length=settings.daily.average_sessions, talib=False)
-        average_trend = ta_sma(close, length=daily_sma.trend_sessions, talib=False)
-        average_trend_long = ta_sma(close, length=daily_sma.trend_sessions_long, talib=False)
-        strength = indicator_series(ta_rsi(close, length=period, talib=False), f"RSI_{period}", 1)
-        directional = indicator_column(adx(frame, period), f"ADX_{period}", 1)
-        averages = (average_signal, average_trend, average_trend_long)
-        if not all(isinstance(value, Series) for value in averages):
-            return False
-        if strength is None or directional is None:
-            return False
-        crossed = ta_cross(close, cast(Series, average_signal), above=True, asint=False)
+        crossed = ta_cross(
+            close, frame[f"SMA_{settings.daily.average_sessions}"], above=True, asint=False
+        )
         if not isinstance(crossed, Series):
             return False
         row = finite_row(
             [
                 finite_value(close),
                 finite_value(close, -2),
-                finite_value(cast(Series, average_trend)),
-                finite_value(cast(Series, average_trend_long)),
+                finite_value(frame[f"SMA_{cls.trend_sessions}"]),
+                finite_value(frame[f"SMA_{daily_sma.trend_sessions_long}"]),
                 finite_value(crossed),
-                finite_value(strength),
-                finite_value(directional),
+                finite_value(frame[f"RSI_{period}"]),
+                finite_value(frame[f"ADX_{period}"]),
             ]
         )
         if row is None:
