@@ -8,11 +8,13 @@ requires-python = ">=3.13"
 dependencies = [
     "alpaca-py>=0.44",
     "authlib>=1.8",
+    "cachetools>=6.2",
     "exchange-calendars>=4.13",
     "fastapi>=0.141",
     "httpx>=0.28",
     "httpx2>=2.12",
     "itsdangerous>=2.2",
+    "limits>=5.8",
     "lumibot>=4.5.90",
     "pandas>=2.3",
     "pandas-ta-classic>=0.6",

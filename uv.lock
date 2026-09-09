@@ -445,6 +445,15 @@ wheels = [
 ]
 
 [[package]]
+name = "cachetools"
+version = "7.1.8"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/4b/39/9a4689914dd907915cee74733b95888fc1d8a21aad47a24a0a2deec73ac4/cachetools-7.1.8.tar.gz", hash = "sha256:1221d547a0b24b7f26fa891d40d488b5258beab9aebd8ed68c729be3af849c43", size = 40909, upload-time = "2026-08-31T19:02:53.985Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d7/3d/9487690d0e937854db587205c66bab3c3cf88d9f00ed380b74cb88cc94ee/cachetools-7.1.8-py3-none-any.whl", hash = "sha256:a81e3844acaa7355b6567f97bd67a94a14ec3a9bc2cbbdae45b9592cc036775b", size = 16842, upload-time = "2026-08-31T19:02:52.554Z" },
+]
+
+[[package]]
 name = "ccxt"
 version = "4.5.64"
 source = { registry = "https://pypi.org/simple" }
@@ -2550,6 +2559,20 @@ wheels = [
 ]
 
 [[package]]
+name = "limits"
+version = "5.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "deprecated" },
+    { name = "packaging" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/71/69/826a5d1f45426c68d8f6539f8d275c0e4fcaa57f0c017ec3100986558a41/limits-5.8.0.tar.gz", hash = "sha256:c9e0d74aed837e8f6f50d1fcebcf5fd8130957287206bc3799adaee5092655da", size = 226104, upload-time = "2026-02-05T07:17:35.859Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b9/98/cb5ca20618d205a09d5bec7591fbc4130369c7e6308d9a676a28ff3ab22c/limits-5.8.0-py3-none-any.whl", hash = "sha256:ae1b008a43eb43073c3c579398bd4eb4c795de60952532dc24720ab45e1ac6b8", size = 60954, upload-time = "2026-02-05T07:17:34.425Z" },
+]
+
+[[package]]
 name = "litellm"
 version = "1.83.7"
 source = { registry = "https://pypi.org/simple" }
@@ -3008,11 +3031,13 @@ source = { editable = "." }
 dependencies = [
     { name = "alpaca-py" },
     { name = "authlib" },
+    { name = "cachetools" },
     { name = "exchange-calendars" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "httpx2" },
     { name = "itsdangerous" },
+    { name = "limits" },
     { name = "lumibot" },
     { name = "pandas" },
     { name = "pandas-ta-classic" },
@@ -3034,11 +3059,13 @@ dev = [
 requires-dist = [
     { name = "alpaca-py", specifier = ">=0.44" },
     { name = "authlib", specifier = ">=1.8" },
+    { name = "cachetools", specifier = ">=6.2" },
     { name = "exchange-calendars", specifier = ">=4.13" },
     { name = "fastapi", specifier = ">=0.141" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "httpx2", specifier = ">=2.12" },
     { name = "itsdangerous", specifier = ">=2.2" },
+    { name = "limits", specifier = ">=5.8" },
     { name = "lumibot", specifier = ">=4.5.90" },
     { name = "pandas", specifier = ">=2.3" },
     { name = "pandas-ta-classic", specifier = ">=0.6" },
