@@ -14,7 +14,7 @@ class OpeningRange(TypedDict):
 
 
 class Levels(TypedDict):
-    strategy: str
+    strategy_key: str
     range: NotRequired[OpeningRange]
     stop: NotRequired[float]
     targets: NotRequired[list[float]]

@@ -41,7 +41,7 @@ class FinnhubSection(SettingsSection):
     timeout: TimeoutSection
 
 
-class PastSection(SettingsSection):
+class BarsSection(SettingsSection):
     intraday_feed: DataFeedName
     daily_feed: DataFeedName
     timeout: TimeoutSection
@@ -75,13 +75,13 @@ class ScreenSection(SettingsSection):
     price_usd_min: Amount
     turnover_usd_min: Amount
     turnover_sessions: Count
-    past_days: Count
+    lookback_days: Count
 
 
 class PortfolioSection(SettingsSection):
     symbols_per_request: Count
     orders_per_request: Count
-    past_days: Count
+    lookback_days: Count
     pending_ttl_minutes: Count
     opening_lead_minutes: Count
     iteration_minutes: Count
@@ -94,6 +94,7 @@ class EarningsSection(SettingsSection):
 
 
 class BacktestSection(SettingsSection):
+    asset_defaults: dict[str, str | bool]
     warm_up_days: Count
     budget_usd: Amount
     start_at: datetime
@@ -119,18 +120,22 @@ class BreakoutSection(SettingsSection):
     stop_fraction_max: Fraction
     positions_max: Count
     target_fractions: tuple[Fraction, Fraction, Fraction]
-    past_sessions: Count
-    signal_candles_max: Count
+    lookback_sessions: Count
+    signal_bars_max: Count
     trail_atr_multiple: Amount
-    trail_candles_min: Count
+    trail_bars_min: Count
     scan_minutes: Count
     close_lead_minutes: Count
-    confirm_past_days: Count
-    trail_past_days: Count
+    confirm_lookback_days: Count
+    trail_lookback_days: Count
+
+
+class OrderTagSection(SettingsSection):
+    stop_fraction_scale: Count
 
 
 class StrategySection(SettingsSection):
-    risk_fraction_max: OptionalFraction
+    equity_risk_fraction_max: OptionalFraction
     is_paused: bool
 
 
@@ -184,7 +189,7 @@ class DashboardSection(SettingsSection):
     pulse_ttl_seconds: Count
     chart_ttl_seconds: Count
     chart_cache_max: Count
-    levels_past_days: Count
+    levels_lookback_days: Count
     levels_source: Timeframe
     levels_source_bars_max: Count
     levels_range_multiple: Count

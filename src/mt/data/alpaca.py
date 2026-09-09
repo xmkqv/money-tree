@@ -24,12 +24,12 @@ class Account(Payload):
 class Position(Payload):
     symbol: str
     side: str
-    qty: float
+    quantity: float = Field(validation_alias="qty")
     avg_entry_price: float
     current_price: float
     market_value: float
-    unrealized_pl: float
-    unrealized_plpc: float
+    unrealized_pnl: float = Field(validation_alias="unrealized_pl")
+    unrealized_pnl_fraction: float = Field(validation_alias="unrealized_plpc")
 
 
 class Clock(Payload):
@@ -44,7 +44,7 @@ class Fill(Payload):
     symbol: str
     side: str
     transaction_time: str
-    qty: float
+    quantity: float = Field(validation_alias="qty")
     price: float
 
 
@@ -84,12 +84,12 @@ fills_adapter = TypeAdapter(list[Fill])
 closed_orders_adapter = TypeAdapter(list[ClosedOrder])
 
 
-def live_api_url(broker_mode: BrokerMode) -> str:
+def trading_api_url(broker_mode: BrokerMode) -> str:
     target = BaseURL.TRADING_PAPER if broker_mode == "paper" else BaseURL.TRADING_LIVE
     return target.value
 
 
-def past_api_url() -> str:
+def bars_api_url() -> str:
     return BaseURL.DATA.value
 
 
@@ -100,7 +100,7 @@ def credential_headers(broker: BrokerSection) -> dict[str, str]:
     }
 
 
-class AlpacaLiveClient:
+class TradingClientAlpaca:
     def __init__(self, client: httpx.AsyncClient, page_rows_max: int, pages_max: int) -> None:
         self._client = client
         self._page_rows_max = page_rows_max
@@ -206,7 +206,7 @@ class AlpacaLiveClient:
         return response.json()
 
 
-class AlpacaPastClient:
+class BarsClientAlpaca:
     def __init__(
         self, client: httpx.AsyncClient, feed: DataFeedName, daily_feed: DataFeedName, bars_max: int
     ) -> None:

@@ -71,7 +71,7 @@ def daily_prose(settings: RuleSettings) -> dict[StrategyKey, DailyProse]:
                 f"average. The price is above the "
                 f"{settings.daily_sma.trend_sessions}-day average, and that average above the "
                 f"{settings.daily_sma.trend_sessions_long}-day average. Requires "
-                f"{settings.daily_sma.trend_sessions_long} sessions of past bars."
+                f"{settings.daily_sma.trend_sessions_long} sessions of historical bars."
             ),
             setup_source="strategies/daily_sma.py · does_enter",
             confirmation=(
@@ -128,7 +128,7 @@ def strategy_rows(
 
 def max_risk_row(cls: type[Strategy], settings: RuleSettings, source: str) -> Row:
     per_trade = settings.risk.per_trade_max
-    own = cls.risk_fraction_max
+    own = cls.equity_risk_fraction_max
     limit = per_trade if own is None else own
     return Row(
         field="Max Risk",
@@ -158,10 +158,10 @@ def _breakout_rows(
     exit_at = f"{closes - timedelta(minutes=breakout.close_lead_minutes):%H:%M}"
 
     confirmation = (
-        f"Volume traded up to the signal candle's close is at least "
+        f"Volume traded up to the signal bar's close is at least "
         f"{cls.volume_multiple:g}x the "
-        f"{breakout.past_sessions}-session average at the same time of day. "
-        f"Requires {breakout.past_sessions} earlier sessions. "
+        f"{breakout.lookback_sessions}-session average at the same time of day. "
+        f"Requires {breakout.lookback_sessions} earlier sessions. "
         "Use volume at the signal close, including when bars arrive late. "
         "Include only regular trading hours for each session."
     )
@@ -174,7 +174,7 @@ def _breakout_rows(
     extension = (
         ""
         if cls.entry_extension_max is None
-        else f" Skip the entry if the live quote is more than "
+        else f" Skip the entry if the realtime quote is more than "
         f"{percent(cls.entry_extension_max)} of the opening range beyond the breakout "
         "level."
     )
@@ -195,7 +195,7 @@ def _breakout_rows(
         ),
         Row(
             field="Range",
-            value=f"The opening range is the first {minutes}-minute candle, from the "
+            value=f"The opening range is the first {minutes}-minute bar, from the "
             f"opening bell to {opening_end}. The last trade before {opening_end} closes "
             "it. Its high "
             "and low set the levels for the day. The bell is read from the exchange "
@@ -204,16 +204,16 @@ def _breakout_rows(
         ),
         Row(
             field="Setup",
-            value=f"The first completed {minutes}-minute candle since the range that closes "
-            "above the range high (long) or below the range low (short). A candle still "
+            value=f"The first completed {minutes}-minute bar since the range that closes "
+            "above the range high (long) or below the range low (short). A bar still "
             f"forming never signals. Checked every {minutes} minutes from {opening_end}, "
-            f"when the opening candle closes, to {scan_end}, at most once per stock per "
+            f"when the opening bar closes, to {scan_end}, at most once per stock per "
             "day. Every "
             "pass re-reads the whole session since the range rather than only its newest "
-            "candle, so a breakout whose bars reached the scan late still supplies the "
+            "bar, so a breakout whose bars reached the scan late still supplies the "
             "signal "
-            f"candle. It must be one of the last {breakout.signal_candles_max} completed "
-            f"candles, which is {breakout.signal_candles_max * minutes} minutes of the move. "
+            f"bar. It must be one of the last {breakout.signal_bars_max} completed "
+            f"bars, which is {breakout.signal_bars_max * minutes} minutes of the move. "
             "An older close "
             "has already run, and is passed over. Once this strategy has traded a stock, it "
             "leaves it alone for the rest of the session. The range itself "
@@ -239,16 +239,16 @@ def _breakout_rows(
             field="Entry",
             value="A market order goes in the moment the scan reads the breakout, and fills "
             f"at the next executable price. That is the open of the next {minutes}-minute "
-            f"candle when the signal is read on its own boundary, and {first_entry} at the "
-            "earliest, because the opening candle cannot break its own range. Good for the "
-            "day only. The size is worked out from the live quote, and falls back to the "
-            "breakout candle's close. The fill then sets the entry, the risk and the "
+            f"bar when the signal is read on its own boundary, and {first_entry} at the "
+            "earliest, because the opening bar cannot break its own range. Good for the "
+            "day only. The size is worked out from the realtime quote, and falls back to the "
+            "breakout bar's close. The fill then sets the entry, the stop distance and the "
             "targets. "
             "The entry is passed over if another strategy already holds the stock, if the "
             "account is at its position cap or fully invested, if the size that fits the "
             "risk "
             f"limits comes to less than ${settings.risk.notional_usd_min:.0f}, or if that "
-            "live quote has "
+            "realtime quote has "
             f"already run back through the stop the breakout would have been given."
             f"{extension}",
             source="portfolio.py · on_trading_iteration, enter",
@@ -262,10 +262,10 @@ def _breakout_rows(
             f"{breakout.trail_atr_multiple:g}x the {period}-period ATR behind the best price "
             f"the trade has seen, and never moves back past the entry price. That "
             f"ATR({period}) "
-            f"is calculated from {minutes}-minute candles across trading sessions, using "
+            f"is calculated from {minutes}-minute bars across trading sessions, using "
             "prior-session bars where they are available, so overnight gaps contribute to "
-            f"true range. At least {breakout.trail_candles_min} completed {minutes}-minute "
-            "candles "
+            f"true range. At least {breakout.trail_bars_min} completed {minutes}-minute "
+            "bars "
             "must be available. Prior sessions count towards that total, so the trade "
             "normally starts with enough. The level rests as an order at the broker. It "
             "is replaced whenever it moves, and re-sent if it stops covering the whole "
@@ -321,7 +321,7 @@ def _daily_rows(cls: type[Daily], settings: RuleSettings, closes: datetime) -> l
         Row(field="Direction", value="Long only.", source="portfolio.py · enter"),
         Row(
             field="Range",
-            value="Not used. This strategy reads daily candles and has no opening range.",
+            value="Not used. This strategy reads daily bars and has no opening range.",
             source="strategies/daily.py · run",
         ),
         Row(field="Setup", value=prose.setup, source=prose.setup_source),

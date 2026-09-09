@@ -639,7 +639,7 @@ table.data .r { text-align: right; padding-left: 12px; }
   background: color-mix(in oklab, var(--hold-mark) 15%, var(--surface));
   border-color: color-mix(in oklab, var(--hold-mark) 32%, transparent);
 }
-.run-state.switch.is-offline {
+.run-state.switch.is-unselected {
   color: var(--loss-ink);
   background: color-mix(in oklab, var(--loss-mark) 13%, var(--surface));
   border-color: color-mix(in oklab, var(--loss-mark) 30%, transparent);

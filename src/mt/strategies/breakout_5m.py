@@ -11,4 +11,4 @@ class Breakout5m(Breakout):
     volume_multiple = settings.breakout_5m.volume_multiple
     target_multiples = settings.breakout_5m.target_multiples
     entry_extension_max = settings.breakout_5m.entry_extension_max
-    risk_fraction_max = settings.breakout_5m.risk_fraction_max
+    equity_risk_fraction_max = settings.breakout_5m.equity_risk_fraction_max

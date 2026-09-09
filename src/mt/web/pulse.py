@@ -4,7 +4,7 @@ from typing import TypedDict
 
 from alpaca.trading.models import Order
 
-from mt.data.alpaca import AlpacaLiveClient, Position
+from mt.data.alpaca import Position, TradingClientAlpaca
 from mt.exchange import TRADING_ZONE
 from mt.snapshot import StateEvent, StateSnapshot
 
@@ -22,12 +22,12 @@ class BotState(TypedDict):
 class PulsePosition(TypedDict):
     symbol: str
     side: str
-    qty: float
+    quantity: float
     entry: float
     last: float
     value: float
-    unreal: float
-    unrealPct: float
+    unrealized_pnl: float
+    unrealized_pnl_percent: float
     weight: float
 
 
@@ -38,15 +38,15 @@ class Pulse(TypedDict):
     cash: float
     buyingPower: float
     marketValue: float
-    unrealised: float
+    unrealized_pnl: float
     positions: list[PulsePosition]
 
 
-async def build_pulse(live: AlpacaLiveClient) -> Pulse:
+async def build_pulse(trading: TradingClientAlpaca) -> Pulse:
     async with asyncio.TaskGroup() as reads:
-        open_orders_read = reads.create_task(live.open_orders())
-        account_read = reads.create_task(live.account())
-        positions_read = reads.create_task(live.positions())
+        open_orders_read = reads.create_task(trading.open_orders())
+        account_read = reads.create_task(trading.account())
+        positions_read = reads.create_task(trading.positions())
 
     account = account_read.result()
     positions = positions_read.result()
@@ -59,7 +59,7 @@ async def build_pulse(live: AlpacaLiveClient) -> Pulse:
         cash=round(account.cash, 2),
         buyingPower=round(account.buying_power, 2),
         marketValue=round(sum(row["value"] for row in held), 2),
-        unrealised=round(sum(row["unreal"] for row in held), 2),
+        unrealized_pnl=round(sum(row["unrealized_pnl"] for row in held), 2),
         positions=held,
     )
 
@@ -82,12 +82,12 @@ def pulse_positions(raw: list[Position], equity: float) -> list[PulsePosition]:
         PulsePosition(
             symbol=item.symbol,
             side="long" if item.side == "long" else "short",
-            qty=round(abs(item.qty), 4),
+            quantity=round(abs(item.quantity), 4),
             entry=round(item.avg_entry_price, 4),
             last=round(item.current_price, 4),
             value=round(abs(item.market_value), 2),
-            unreal=round(item.unrealized_pl, 2),
-            unrealPct=round(item.unrealized_plpc * 100, 2),
+            unrealized_pnl=round(item.unrealized_pnl, 2),
+            unrealized_pnl_percent=round(item.unrealized_pnl_fraction * 100, 2),
             weight=round(abs(item.market_value) / equity * 100, 2) if equity else 0.0,
         )
         for item in raw

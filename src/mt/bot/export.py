@@ -57,7 +57,7 @@ class StateExporter:
         level: EventLevel,
         message: str,
         *,
-        strategy: StrategyKey | None = None,
+        strategy_key: StrategyKey | None = None,
     ) -> None:
         with self.lock:
             self.status = status
@@ -68,7 +68,7 @@ class StateExporter:
                     occurred_at=datetime.now(UTC),
                     level=level,
                     message=message,
-                    strategy=strategy,
+                    strategy_key=strategy_key,
                 )
             )
             self.events = self.events[-settings.export.events_max :]

@@ -12,11 +12,11 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from mt.config.settings import LoginSettings, WebSettings
 from mt.data.alpaca import (
-    AlpacaLiveClient,
-    AlpacaPastClient,
+    BarsClientAlpaca,
+    TradingClientAlpaca,
+    bars_api_url,
     credential_headers,
-    live_api_url,
-    past_api_url,
+    trading_api_url,
 )
 from mt.data.http import http_timeout
 from mt.data.railway import RailwayOAuthClient
@@ -74,26 +74,26 @@ def create_app() -> FastAPI:
     async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, object]]:
         async with (
             httpx.AsyncClient(
-                base_url=live_api_url(configuration.broker.mode),
+                base_url=trading_api_url(configuration.broker.mode),
                 headers=credentials,
                 timeout=http_timeout(configuration.broker.timeout),
-            ) as live,
+            ) as trading,
             httpx.AsyncClient(
-                base_url=past_api_url(),
+                base_url=bars_api_url(),
                 headers=credentials,
-                timeout=http_timeout(configuration.past.timeout),
-            ) as past,
+                timeout=http_timeout(configuration.bars.timeout),
+            ) as bars,
         ):
             yield {
-                "live": AlpacaLiveClient(
-                    live,
+                "trading": TradingClientAlpaca(
+                    trading,
                     configuration.dashboard.page_rows_max,
                     configuration.dashboard.pages_max,
                 ),
-                "past": AlpacaPastClient(
-                    past,
-                    configuration.past.intraday_feed,
-                    configuration.past.daily_feed,
+                "bars": BarsClientAlpaca(
+                    bars,
+                    configuration.bars.intraday_feed,
+                    configuration.bars.daily_feed,
                     configuration.dashboard.bars_max,
                 ),
             }

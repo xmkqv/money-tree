@@ -261,7 +261,7 @@
 
       <div class="rail">
         <section class="panel">
-          <div class="panel-head"><h2>Holdings</h2><span class="eyebrow">USD</span></div>
+          <div class="panel-head"><h2>Positions</h2><span class="eyebrow">USD</span></div>
           <div class="panel-body">
             <div class="value-row">
               <span class="label">Market value</span>
@@ -272,7 +272,7 @@
               <span class="figure" id="pf-cash">—</span>
             </div>
             <div class="stat-grid">
-              <div class="stat"><span class="k">Unrealised</span><span class="v" id="pf-unreal">—</span></div>
+              <div class="stat"><span class="k">Unrealized</span><span class="v" id="pf-unrealized-pnl">—</span></div>
               <div class="stat"><span class="k">Positions</span><span class="v" id="pf-count">—</span></div>
               <div class="stat"><span class="k">Exposure</span><span class="v" id="pf-exposure">—</span></div>
               <div class="stat"><span class="k">Largest</span><span class="v" id="pf-largest">—</span></div>
@@ -404,9 +404,9 @@
           <button type="button" class="ghost step" id="tc-next" title="Later trade in this stock">›</button>
         </span>
         <div class="segmented" id="tc-range" role="group" aria-label="Bar size">
-          <button type="button" data-bar="5Min" aria-pressed="true">5 min</button>
-          <button type="button" data-bar="1Hour" aria-pressed="false">1 hour</button>
-          <button type="button" data-bar="1Day" aria-pressed="false">Day</button>
+          <button type="button" data-timeframe="5Min" aria-pressed="true">5 min</button>
+          <button type="button" data-timeframe="1Hour" aria-pressed="false">1 hour</button>
+          <button type="button" data-timeframe="1Day" aria-pressed="false">Day</button>
         </div>
       </div>
       <div class="trade-facts" id="tc-facts"></div>
@@ -427,7 +427,7 @@
       </div>
       <p class="tc-open-note" id="tc-open-note" hidden></p>
       <p class="phone-note">
-        Drag sideways to move through time · pinch to zoom · tap a candle to read it ·
+        Drag sideways to move through time · pinch to zoom · tap a bar to read it ·
         double-tap resets. The price scale fits itself to whatever is on screen.
       </p>
       <p class="tc-hint">drag to move · scroll to zoom · drag the price axis to stretch it · double-click resets</p>

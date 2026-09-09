@@ -12,14 +12,14 @@ from .rules import KINDS, RULE_FIELDS, Row, percent, strategy_rows
 
 
 class StrategyCard(TypedDict):
-    id: str
+    key: str
     name: str
     kind: str
     rows: list[Row]
 
 
 class StrategyLabel(TypedDict):
-    id: str
+    key: str
     short: str
     label: str
 
@@ -51,11 +51,13 @@ def entry_windows(configuration: RuleSettings) -> dict[str, EntryWindow]:
 
 def strategy_labels() -> list[StrategyLabel]:
     labels = [
-        StrategyLabel(id=cls.key, short=cls.name(), label=f"{cls.name()} · {KINDS[cls.family]}")
+        StrategyLabel(key=cls.key, short=cls.name(), label=f"{cls.name()} · {KINDS[cls.family]}")
         for cls in STRATEGIES
     ]
     labels.append(
-        StrategyLabel(id=UNATTRIBUTED, short="Untagged", label=f"No {ORDER_TAG_PREFIX}- order tag")
+        StrategyLabel(
+            key=UNATTRIBUTED, short="Unattributed", label=f"No {ORDER_TAG_PREFIX}- order tag"
+        )
     )
     return labels
 
@@ -116,7 +118,7 @@ def _card(
     rows = strategy_rows(described, configuration, opens, closes)
     if [row["field"] for row in rows] != list(RULE_FIELDS):
         raise ValueError(f"{cls.__name__} must describe every rule field in order")
-    return StrategyCard(id=cls.key, name=cls.name(), kind=KINDS[cls.family], rows=rows)
+    return StrategyCard(key=cls.key, name=cls.name(), kind=KINDS[cls.family], rows=rows)
 
 
 def _window(opens: datetime, closes: datetime) -> EntryWindow:

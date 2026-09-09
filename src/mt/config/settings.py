@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Annotated
 
 from pydantic import Field
@@ -5,6 +6,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .sections import (
     BacktestSection,
+    BarsSection,
     BreakoutSection,
     BreakoutVariationSection,
     BrokerSection,
@@ -17,7 +19,7 @@ from .sections import (
     FinnhubSection,
     IndicatorsSection,
     LoginSection,
-    PastSection,
+    OrderTagSection,
     PortfolioSection,
     RiskSection,
     ScreenSection,
@@ -43,13 +45,14 @@ class RuleSettings(BaseSettings):
 
 
 class SharedSettings(RuleSettings):
+    order_tag: OrderTagSection
     finnhub: FinnhubSection
 
 
 class BotSettings(SharedSettings):
     strategies: Annotated[StrategySelection, NoDecode]
     broker: BrokerSection
-    past: PastSection
+    bars: BarsSection
     export: ExportSection
     portfolio: PortfolioSection
     backtest: BacktestSection
@@ -58,7 +61,7 @@ class BotSettings(SharedSettings):
 class WebSettings(SharedSettings):
     mode: Annotated[Mode, Field(validation_alias="MISE_ENV")]
     broker: BrokerSection
-    past: PastSection
+    bars: BarsSection
     export: ExportSection
     web: WebSection
     dashboard: DashboardSection
@@ -66,6 +69,13 @@ class WebSettings(SharedSettings):
     @property
     def oauth_redirect_uri(self) -> str:
         return f"{str(self.web.base_url).rstrip('/')}/auth/callback"
+
+
+class DeploymentSettings(BaseSettings):
+    model_config = SettingsConfigDict(extra="ignore", frozen=True)
+
+    project_root: Path = Field(validation_alias="MISE_PROJECT_ROOT")
+    mode: Mode = Field(validation_alias="MISE_ENV")
 
 
 class LoginSettings(BaseSettings):

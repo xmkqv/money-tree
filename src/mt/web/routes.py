@@ -13,7 +13,7 @@ from starlette.responses import FileResponse
 
 from mt.config.settings import WebSettings
 from mt.config.values import ChartTimeframe, StrategyKey, Symbol, is_strategy_key
-from mt.data.alpaca import AlpacaLiveClient, AlpacaPastClient
+from mt.data.alpaca import BarsClientAlpaca, TradingClientAlpaca
 from mt.exchange import TRADING_ZONE, session_bounds
 from mt.position import Direction
 from mt.snapshot import STATE_SIGNATURE_SALT, StateSnapshot
@@ -99,11 +99,11 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
     bar_cache = Cache[list[BarRow]](chart_ttl, chart_cache_max)
     levels_cache = Cache[Levels](chart_ttl, chart_cache_max)
 
-    def live(request: Request) -> AlpacaLiveClient:
-        return request.state.live
+    def trading(request: Request) -> TradingClientAlpaca:
+        return request.state.trading
 
-    def past(request: Request) -> AlpacaPastClient:
-        return request.state.past
+    def bars_client(request: Request) -> BarsClientAlpaca:
+        return request.state.bars
 
     def read_state() -> tuple[StateSnapshot | None, bool]:
         snapshot = state_store.read()
@@ -157,7 +157,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
 
         async def build() -> list[BarRow]:
             if timeframe == "1Hour":
-                half = await past(request).bars(
+                half = await bars_client(request).bars(
                     symbol,
                     dashboard_section.session_source,
                     start.isoformat(),
@@ -166,7 +166,9 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                     pages_max=dashboard_section.session_source_pages_max,
                 )
                 return session_hour_bars(half)
-            read = await past(request).bars(symbol, timeframe, start.isoformat(), end.isoformat())
+            read = await bars_client(request).bars(
+                symbol, timeframe, start.isoformat(), end.isoformat()
+            )
             return [bar_row(bar) for bar in read]
 
         key = f"{symbol}|{timeframe}|{start.isoformat()}|{end.isoformat()}"
@@ -186,7 +188,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
     async def levels(
         request: Request,
         symbol: Annotated[Symbol, Query()],
-        strategy: Annotated[StrategyKey | Unattributed, Query()],
+        strategy_key: Annotated[StrategyKey | Unattributed, Query()],
         side: Annotated[Literal["long", "short"], Query()],
         entry: Annotated[float, Query(gt=0)],
         opened: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
@@ -198,14 +200,14 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
 
         async def build() -> Levels:
             direction: Direction = 1 if side == "long" else -1
-            payload = Levels(strategy=strategy)
+            payload = Levels(strategy_key=strategy_key)
             bounds = session_bounds(opened_at)
-            found_class = strategy_class(strategy) if is_strategy_key(strategy) else None
+            found_class = strategy_class(strategy_key) if is_strategy_key(strategy_key) else None
             if found_class is not None and issubclass(found_class, Breakout) and bounds:
                 opens = bounds[0]
                 minutes = found_class.opening_minutes
                 span = dashboard_section.levels_range_multiple * minutes
-                opening_bars = await past(request).bars(
+                opening_bars = await bars_client(request).bars(
                     symbol,
                     dashboard_section.levels_source,
                     opens.isoformat(),
@@ -216,21 +218,23 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 if found is not None:
                     add_breakout_levels(payload, found_class, direction, entry, *found)
             elif found_class is not None and issubclass(found_class, Daily):
-                past_bars = await past(request).bars(
+                historical_bars = await bars_client(request).bars(
                     symbol,
                     "1Day",
-                    (opened_at - timedelta(days=dashboard_section.levels_past_days)).isoformat(),
+                    (
+                        opened_at - timedelta(days=dashboard_section.levels_lookback_days)
+                    ).isoformat(),
                     datetime.combine(opened_at, dtime(0, 0), TRADING_ZONE).isoformat(),
-                    limit=dashboard_section.levels_past_days,
+                    limit=dashboard_section.levels_lookback_days,
                 )
-                average_range = bars_atr(past_bars)
+                average_range = bars_atr(historical_bars)
                 if average_range is not None:
                     distance = found_class.stop_atr_multiple * average_range
                     payload["stop"] = round(entry - direction * distance, 4)
                     payload["atr"] = round(average_range, 4)
             return payload
 
-        key = f"levels|{symbol}|{strategy}|{side}|{entry}|{opened}"
+        key = f"levels|{symbol}|{strategy_key}|{side}|{entry}|{opened}"
         payload = await levels_cache.get_or_build(key, build)
         return read_response(payload, dashboard_section.levels_max_age_seconds)
 
@@ -250,8 +254,8 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         cached = await ledger_cache.get_or_build(
             LEDGER_KEY,
             lambda: build_ledger(
-                live(request),
-                past(request),
+                trading(request),
+                bars_client(request),
                 benchmark_symbol,
                 dashboard_section,
             ),
@@ -271,7 +275,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
 
     @router.get("/api/pulse")
     async def pulse(request: Request) -> JSONResponse:
-        cached = await pulse_cache.get_or_build(PULSE_KEY, lambda: build_pulse(live(request)))
+        cached = await pulse_cache.get_or_build(PULSE_KEY, lambda: build_pulse(trading(request)))
 
         held = ledger_cache.fresh(LEDGER_KEY)
         if held is not None and {row["symbol"] for row in held["positions"]} != {

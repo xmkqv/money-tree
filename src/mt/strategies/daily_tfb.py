@@ -18,7 +18,7 @@ class DailyTfb(Daily):
     code = "t"
     is_paused = settings.daily_tfb.is_paused
     positions_max = settings.daily_tfb.positions_max
-    risk_fraction_max = settings.daily_tfb.risk_fraction_max
+    equity_risk_fraction_max = settings.daily_tfb.equity_risk_fraction_max
     stop_atr_multiple = settings.daily_tfb.stop_atr_multiple
     does_heed_earnings = settings.daily_tfb.does_heed_earnings
 

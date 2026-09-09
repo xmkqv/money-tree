@@ -16,7 +16,7 @@ class DailySma(Daily):
     code = "s"
     is_paused = settings.daily_sma.is_paused
     positions_max = settings.daily_sma.positions_max
-    risk_fraction_max = settings.daily_sma.risk_fraction_max
+    equity_risk_fraction_max = settings.daily_sma.equity_risk_fraction_max
     stop_atr_multiple = settings.daily_sma.stop_atr_multiple
     does_heed_earnings = settings.daily_sma.does_heed_earnings
 

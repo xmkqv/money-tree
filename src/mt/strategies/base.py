@@ -35,13 +35,13 @@ class Ladder:
 
 
 @dataclass(slots=True)
-class Holding:
+class Position:
     strategy: "Strategy"
     symbol: str
     direction: Direction
     entry: float
     stop: float
-    risk: float
+    stop_distance: float
     entered_at: datetime
     highest: float
     lowest: float
@@ -67,9 +67,9 @@ class Portfolio(Protocol):
 
     def enter(self, strategy: "Strategy", candidate: Candidate, session: Session) -> bool: ...
 
-    def exit(self, holding: Holding, quantity: float | None = None) -> None: ...
+    def exit(self, position: Position, quantity: float | None = None) -> None: ...
 
-    def protect(self, holding: Holding, quantity: float | None = None) -> None: ...
+    def protect(self, position: Position, quantity: float | None = None) -> None: ...
 
     def record(self, strategy: "Strategy", kind: str, level: EventLevel, message: str) -> None: ...
 
@@ -82,7 +82,7 @@ class Strategy(ABC):
     is_paused: ClassVar[bool] = False
     is_stop_resting: ClassVar[bool] = False
     positions_max: ClassVar[int] = settings.risk.positions_max
-    risk_fraction_max: ClassVar[float | None] = None
+    equity_risk_fraction_max: ClassVar[float | None] = None
 
     def __init_subclass__(cls) -> None:
         if "key" in cls.__dict__:
@@ -109,12 +109,12 @@ class Strategy(ABC):
     def run(self, session: Session) -> None: ...
 
     @abstractmethod
-    def manage(self, holding: Holding, session: Session) -> None: ...
+    def manage(self, position: Position, session: Session) -> None: ...
 
     def begin(self, day: date) -> None:
         return None
 
-    def ladder(self, holding: Holding, quantity: float) -> Ladder | None:
+    def ladder(self, position: Position, quantity: float) -> Ladder | None:
         return None
 
     def is_capped(self) -> bool:

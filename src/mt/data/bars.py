@@ -12,7 +12,7 @@ from mt.config.values import DataFeedName, Timeframe
 from mt.frames import normalize_ohlcv
 
 
-class Past:
+class BarsAlpaca:
     def __init__(self) -> None:
         self._bars = StockHistoricalDataClient(
             settings.broker.api_key.get_secret_value(),

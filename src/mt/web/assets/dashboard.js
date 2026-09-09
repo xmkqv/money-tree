@@ -15,7 +15,7 @@ function token(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-let GAIN = "#21AD71", LOSS = "#CB3B45", C = {};
+let GAIN, LOSS, C = {};
 
 function readTheme() {
   GAIN = token("--gain-mark");
@@ -57,7 +57,7 @@ const weekStart = d => {
   return at.getFullYear() + "-" + (at.getMonth() + 1) + "-" + at.getDate();
 };
 
-let LEDGER, ACCOUNT, STRATEGIES, STRAT_BY_ID, OPEN_POSITIONS, ALL_TRADES, tradesByDate;
+let LEDGER, ACCOUNT, STRATEGIES, STRAT_BY_KEY, OPEN_POSITIONS, ALL_TRADES, tradesByDate;
 let SESSION = {}, TOTALS, SESSIONS, LAST_SESSION, DAY_PNL, BENCH, BENCH_SYMBOL, DAILY, INTRADAY, LATEST;
 let FIRST_MONTH, LAST_MONTH, FIRST_IX, LAST_IX;
 let STRATEGY_PERIODS = {};
@@ -71,17 +71,17 @@ const monthIndex = (y, m) => y * 12 + m;
 function statsFor(trades) {
   const wins = trades.filter(t => t.pnl > 0);
   const losses = trades.filter(t => t.pnl <= 0);
-  const gross = wins.reduce((a, t) => a + t.pnl, 0);
-  const bleed = Math.abs(losses.reduce((a, t) => a + t.pnl, 0));
-  const net = trades.reduce((a, t) => a + t.pnl, 0);
+  const gross_profit = wins.reduce((a, t) => a + t.pnl, 0);
+  const gross_loss = Math.abs(losses.reduce((a, t) => a + t.pnl, 0));
+  const net_pnl = trades.reduce((a, t) => a + t.pnl, 0);
   return {
     n: trades.length, wins: wins.length, losses: losses.length,
     winRate: trades.length ? (wins.length / trades.length) * 100 : 0,
-    net, gross, bleed,
-    profitFactor: bleed ? gross / bleed : Infinity,
-    expectancy: trades.length ? net / trades.length : 0,
-    avgWin: wins.length ? gross / wins.length : 0,
-    avgLoss: losses.length ? bleed / losses.length : 0,
+    net_pnl, gross_profit, gross_loss,
+    profitFactor: gross_loss ? gross_profit / gross_loss : Infinity,
+    expectancy: trades.length ? net_pnl / trades.length : 0,
+    avgWin: wins.length ? gross_profit / wins.length : 0,
+    avgLoss: losses.length ? gross_loss / losses.length : 0,
     best: trades.length ? Math.max(...trades.map(t => t.pnl)) : 0,
     worst: trades.length ? Math.min(...trades.map(t => t.pnl)) : 0,
   };
@@ -89,13 +89,14 @@ function statsFor(trades) {
 
 function periodFromTrades(key, base, trades) {
   const rows = {};
-  for (const st of STRATEGIES) rows[st.id] = [0, 0];
+  for (const st of STRATEGIES) rows[st.key] = [0, 0];
   for (const t of trades) {
-    if (!rows[t.strategy]) rows[t.strategy] = [0, 0];
-    rows[t.strategy][0] += 1;
-    rows[t.strategy][1] += t.pnl;
+    if (!rows[t.strategy_key]) rows[t.strategy_key] = [0, 0];
+    rows[t.strategy_key][0] += 1;
+    rows[t.strategy_key][1] += t.pnl;
   }
-  for (const id of Object.keys(rows)) rows[id][1] = Math.round(rows[id][1] * 100) / 100;
+  for (const strategy_key of Object.keys(rows))
+      rows[strategy_key][1] = Math.round(rows[strategy_key][1] * 100) / 100;
   STRATEGY_PERIODS[key] = { base, rows };
 }
 
@@ -166,16 +167,16 @@ function derive(ledger) {
   STRATEGY_PERIODS = {};
 
   STRATEGIES = ledger.strategies.map(s => ({
-    id: s.id, label: s.short, sub: s.label, color: STRATEGY_COLOURS[s.id] || "var(--ink-3)",
+    key: s.key, label: s.short, sub: s.label, color: STRATEGY_COLOURS[s.key] || "var(--ink-3)",
   }));
-  STRAT_BY_ID = Object.fromEntries(STRATEGIES.map(x => [x.id, x]));
+  STRAT_BY_KEY = Object.fromEntries(STRATEGIES.map(x => [x.key, x]));
 
   ACCOUNT = {
     invested: ledger.invested,
     portfolio: ledger.equity,
     cash: ledger.cash,
     deployed: ledger.marketValue,
-    unrealised: ledger.unrealised,
+    unrealized_pnl: ledger.unrealized_pnl,
     buyingPower: ledger.buyingPower,
     openPositions: ledger.positions.length,
     positionCapPct: ledger.positionCapPct,
@@ -316,7 +317,7 @@ function renderToday() {
 
   if (todayTab === "open") {
     sum.innerHTML =
-      "Unrealised <b class='" + tone(ACCOUNT.unrealised) + "'>" + signedMoney(ACCOUNT.unrealised) + "</b>" +
+      "Unrealized <b class='" + tone(ACCOUNT.unrealized_pnl) + "'>" + signedMoney(ACCOUNT.unrealized_pnl) + "</b>" +
       "<span>Deployed <b>" + money(ACCOUNT.deployed) + "</b></span>" +
       "<span>Exposure <b>" + ACCOUNT.exposurePct.toFixed(1) + "%</b></span>" +
       "<span>Largest <b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "% cap</span>";
@@ -324,11 +325,11 @@ function renderToday() {
       ["Symbol", "Strategy", "Entry", "Last", "Value", "Unreal."],
       OPEN_POSITIONS.map(pos => [
         symbolCell(pos.symbol, pos.side),
-        stratCell(pos.strategy),
+        stratCell(pos.strategy_key),
         { t: money(pos.entry), r: true },
         { t: money(pos.last), r: true },
         { t: money(pos.value), r: true, dim: true },
-        { t: signedMoney(pos.unreal), r: true, cls: tone(pos.unreal) },
+        { t: signedMoney(pos.unrealized_pnl), r: true, cls: tone(pos.unrealized_pnl) },
       ]), 2);
     return;
   }
@@ -357,7 +358,7 @@ function renderToday() {
     trades.map(t => [
       { t: clockLabel(t.minute), dim: true },
       symbolCell(t.symbol, t.side),
-      stratCell(t.strategy),
+      stratCell(t.strategy_key),
       { t: money(t.entry), r: true },
       { t: money(t.exit), r: true },
       { t: signedMoney(t.pnl), r: true, cls: tone(t.pnl) },
@@ -383,8 +384,8 @@ function symbolCell(symbol, side, trade) {
   return { node: wrap };
 }
 
-function stratCell(id) {
-  const s = STRAT_BY_ID[id];
+function stratCell(strategy_key) {
+  const s = STRAT_BY_KEY[strategy_key];
   const wrap = document.createElement("span");
   wrap.className = "tstrat";
   const chip = document.createElement("span");
@@ -430,7 +431,7 @@ function buildTable(table, headers, rows, rightFrom, rowClass) {
     }
     const key = cells.find(td => td.querySelector(".sym")) || cells[0];
     if (key) key.classList.add("key");
-    const lead = cells.find(td => /^(p&l|unreal)/i.test(td.dataset.label)) || cells[cells.length - 1];
+    const lead = cells.find(td => /^(p&l|unrealized)/i.test(td.dataset.label)) || cells[cells.length - 1];
     if (lead && lead !== key) lead.classList.add("lead");
     tbody.append(tr);
   });
@@ -534,8 +535,8 @@ function periodCell(label, pnl, pct, benchPct) {
 
 const SWITCH_STATE = {
   online:  { label: "Online",  hint: "This strategy is selected and can open positions" },
-  paused:  { label: "Paused",  hint: "This strategy manages existing holdings and opens no new positions" },
-  offline: { label: "Unselected", hint: "This strategy is not selected; existing holdings are still managed" },
+  paused:  { label: "Paused",  hint: "This strategy manages existing positions and opens no new positions" },
+  unselected: { label: "Unselected", hint: "This strategy is not selected; existing positions are still managed" },
   unknown: { label: "Unknown", hint: "The bot has not reported its selected strategies" },
 };
 
@@ -544,11 +545,11 @@ const SESSION_STATE = {
   closed: { label: "Closed", hint: "Outside its entry window — no new trade will start" },
 };
 
-function switchState(id) {
+function switchState(strategy_key) {
   const bot = LEDGER.bot || {};
   if (!bot.reported) return "unknown";
-  if (!(bot.strategies || []).includes(id)) return "offline";
-  return (bot.paused || []).includes(id) ? "paused" : "online";
+  if (!(bot.strategies || []).includes(strategy_key)) return "unselected";
+  return (bot.paused || []).includes(strategy_key) ? "paused" : "online";
 }
 
 function tradingMinutes() {
@@ -564,15 +565,15 @@ function toMinutes(clock) {
   return Number(h) * 60 + Number(m);
 }
 
-function sessionState(id) {
-  const window = (LEDGER.windows || {})[id];
+function sessionState(strategy_key) {
+  const window = (LEDGER.windows || {})[strategy_key];
   if (!LEDGER.marketOpen || !window) return "closed";
   const now = tradingMinutes();
   return now >= toMinutes(window.from) && now <= toMinutes(window.to) ? "open" : "closed";
 }
 
-function windowLabel(id) {
-  const window = (LEDGER.windows || {})[id];
+function windowLabel(strategy_key) {
+  const window = (LEDGER.windows || {})[strategy_key];
   return window ? window.from + "–" + window.to + " ET" : "";
 }
 
@@ -584,12 +585,12 @@ function stateBadge(kind, key, table, extra) {
   return pill;
 }
 
-function stateBadges(id) {
+function stateBadges(strategy_key) {
   const wrap = document.createElement("span");
   wrap.className = "states";
   wrap.append(
-    stateBadge("switch", switchState(id), SWITCH_STATE),
-    stateBadge("session", sessionState(id), SESSION_STATE, windowLabel(id)),
+    stateBadge("switch", switchState(strategy_key), SWITCH_STATE),
+    stateBadge("session", sessionState(strategy_key), SESSION_STATE, windowLabel(strategy_key)),
   );
   return wrap;
 }
@@ -600,8 +601,8 @@ function renderStrategies(period) {
   body.replaceChildren();
 
   for (const s of STRATEGIES) {
-    const [trades, pnl] = p.rows[s.id];
-    if (s.id === "unattributed" && trades === 0) continue;
+    const [trades, pnl] = p.rows[s.key];
+    if (s.key === "unattributed" && trades === 0) continue;
     const tr = document.createElement("tr");
 
     const nameCell = document.createElement("td");
@@ -615,7 +616,7 @@ function renderStrategies(period) {
     nm.className = "name";
     nm.textContent = s.label;
     strat.append(chip, nm);
-    if (s.id !== "unattributed") strat.append(stateBadges(s.id));
+    if (s.key !== "unattributed") strat.append(stateBadges(s.key));
     nameCell.append(strat);
 
     const tradeCell = document.createElement("td");
@@ -1155,9 +1156,9 @@ function renderPortfolio() {
   document.getElementById("pf-value").textContent = money(ACCOUNT.deployed);
   document.getElementById("pf-cash").textContent = money(ACCOUNT.cash);
 
-  const un = document.getElementById("pf-unreal");
-  un.textContent = signedMoney(ACCOUNT.unrealised);
-  un.className = "v " + tone(ACCOUNT.unrealised);
+  const un = document.getElementById("pf-unrealized-pnl");
+  un.textContent = signedMoney(ACCOUNT.unrealized_pnl);
+  un.className = "v " + tone(ACCOUNT.unrealized_pnl);
 
   document.getElementById("pf-count").textContent = OPEN_POSITIONS.length;
   document.getElementById("pf-exposure").textContent = ACCOUNT.exposurePct.toFixed(1) + "%";
@@ -1174,7 +1175,7 @@ function renderPortfolio() {
   const alloc = document.getElementById("pf-alloc");
   alloc.replaceChildren();
   for (const st of STRATEGIES) {
-    const held = OPEN_POSITIONS.filter(x => x.strategy === st.id);
+    const held = OPEN_POSITIONS.filter(x => x.strategy_key === st.key);
     if (!held.length) continue;
     const value = held.reduce((a, x) => a + x.value, 0);
 
@@ -1237,17 +1238,17 @@ function renderPortfolio() {
 
   const openCharts = new Map(OPEN_POSITIONS.map(pos => [pos.symbol, positionTrade(pos)]));
   buildTable(document.getElementById("pf-open-table"),
-    ["Symbol", "Strategy", "Opened", "Qty", "Entry", "Last", "Value", "Weight", "Unrealised"],
+    ["Symbol", "Strategy", "Opened", "Quantity", "Entry", "Last", "Value", "Weight", "Unrealized"],
     OPEN_POSITIONS.map(pos => [
       symbolCell(pos.symbol, pos.side, openCharts.get(pos.symbol)),
-      stratCell(pos.strategy),
-      { t: pos.opened, dim: true },
-      { t: String(pos.qty), r: true, dim: true },
+      stratCell(pos.strategy_key),
+      { t: pos.entered_at ? dayOf(pos.entered_at) : "—", dim: true },
+      { t: String(pos.quantity), r: true, dim: true },
       { t: money(pos.entry), r: true },
       { t: money(pos.last), r: true },
       { t: money(pos.value), r: true },
       { t: pos.weight.toFixed(1) + "%", r: true, dim: true },
-      { t: signedMoney(pos.unreal) + "  " + signedPct(pos.unrealPct), r: true, cls: tone(pos.unreal) },
+      { t: signedMoney(pos.unrealized_pnl) + "  " + signedPct(pos.unrealized_pnl_percent), r: true, cls: tone(pos.unrealized_pnl) },
     ]), 3);
 
   const prev = [...SESSIONS].reverse().find(session => session.date !== LEDGER.today);
@@ -1267,7 +1268,7 @@ function renderPortfolio() {
     trades.map(t => [
       { t: clockLabel(t.minute), dim: true },
       symbolCell(t.symbol, t.side, t),
-      stratCell(t.strategy),
+      stratCell(t.strategy_key),
       { t: money(t.entry), r: true },
       { t: money(t.exit), r: true },
       { t: signedMoney(t.pnl), r: true, cls: tone(t.pnl) },
@@ -1301,10 +1302,10 @@ function renderHistory() {
   const L = TOTALS;
   const tiles = document.getElementById("hs-tiles");
   tiles.replaceChildren(
-    tile("Realised P&L", signedMoney(L.net), tone(L.net), "closed round trips"),
+    tile("Realised P&L", signedMoney(L.net_pnl), tone(L.net_pnl), "closed round trips"),
     tile("Trades", plainNum(L.n), "", SESSIONS.length + " sessions"),
     tile("Win rate", L.winRate.toFixed(1) + "%", "", L.wins + "W / " + L.losses + "L"),
-    tile("Profit factor", L.profitFactor.toFixed(2), L.profitFactor >= 1 ? "pos" : "neg", "gross won ÷ lost"),
+    tile("Profit factor", L.profitFactor.toFixed(2), L.profitFactor >= 1 ? "pos" : "neg", "gross profit ÷ gross loss"),
     tile("Expectancy", signedMoney(L.expectancy), tone(L.expectancy), "per trade"),
     tile("Average win", signedMoney(L.avgWin), "pos", plainNum(L.wins) + " trades"),
     tile("Average loss", signedMoney(-L.avgLoss), "neg", plainNum(L.losses) + " trades"),
@@ -1351,19 +1352,19 @@ function renderHistory() {
   buildTable(document.getElementById("hs-strats"),
     ["Strategy", "Trades", "Win rate", "Factor", "P&L"],
     STRATEGIES.map(st => {
-      const st2 = statsFor(ALL_TRADES.filter(t => t.strategy === st.id));
+      const st2 = statsFor(ALL_TRADES.filter(t => t.strategy_key === st.key));
       return [
-        stratCell(st.id),
+        stratCell(st.key),
         { t: plainNum(st2.n), r: true, dim: true },
         { t: st2.n ? st2.winRate.toFixed(1) + "%" : "—", r: true, dim: true },
         { t: st2.n ? st2.profitFactor.toFixed(2) : "—", r: true, cls: st2.profitFactor >= 1 ? "pos" : "neg" },
-        { t: signedMoney(st2.net), r: true, cls: tone(st2.net) },
+        { t: signedMoney(st2.net_pnl), r: true, cls: tone(st2.net_pnl) },
       ];
     }), 1);
 
   const fs = document.getElementById("f-strategy");
   if (fs.options.length === 1) {
-    for (const st of STRATEGIES) fs.append(new Option(st.label, st.id));
+    for (const st of STRATEGIES) fs.append(new Option(st.label, st.key));
     const sessions = document.getElementById("f-session");
     for (const session of [...SESSIONS].reverse()) sessions.append(new Option(session.long, session.date));
   }
@@ -1375,10 +1376,10 @@ function openedCell(trade) {
   const wrap = document.createElement("span");
   wrap.className = "in-time";
   const clock = document.createElement("span");
-  clock.textContent = clockLabel(trade.inMinute);
+  clock.textContent = clockOf(trade.entered_at);
   wrap.append(clock);
-  if (trade.inDate && trade.inDate !== trade.date) {
-    const [, m, day] = dparts(trade.inDate);
+  if (dateOf(trade.entered_at) !== trade.date) {
+    const [, m, day] = dparts(dateOf(trade.entered_at));
     const tag = document.createElement("span");
     tag.className = "in-day";
     tag.textContent = day + " " + MON3[m - 1];
@@ -1389,14 +1390,14 @@ function openedCell(trade) {
 }
 
 function renderLog() {
-  const strategy = document.getElementById("f-strategy").value;
+  const strategy_key = document.getElementById("f-strategy").value;
   const side = document.getElementById("f-side").value;
   const result = document.getElementById("f-result").value;
   const session = document.getElementById("f-session").value;
   const symbol = document.getElementById("f-symbol").value.trim().toUpperCase();
 
   const rows = ALL_TRADES.filter(t =>
-    (!strategy || t.strategy === strategy) &&
+    (!strategy_key || t.strategy_key === strategy_key) &&
     (!side || t.side === side) &&
     (!result || (result === "win" ? t.pnl > 0 : t.pnl <= 0)) &&
     (!session || session === t.date) &&
@@ -1407,7 +1408,7 @@ function renderLog() {
   document.getElementById("hs-count").textContent = rows.length === ALL_TRADES.length
     ? plainNum(rows.length) + " trades"
     : plainNum(rows.length) + " of " + plainNum(ALL_TRADES.length) + " · " +
-      signedMoney(st.net) + " · " + st.winRate.toFixed(1) + "% won";
+      signedMoney(st.net_pnl) + " · " + st.winRate.toFixed(1) + "% won";
 
   const table = document.getElementById("hs-log");
   table.replaceChildren();
@@ -1429,7 +1430,7 @@ function renderLog() {
       openedCell(t),
       { t: clockLabel(t.minute), dim: true },
       symbolCell(t.symbol, t.side, t),
-      stratCell(t.strategy),
+      stratCell(t.strategy_key),
       { t: money(t.entry), r: true },
       { t: money(t.exit), r: true },
       { t: signedMoney(t.pnl), r: true, cls: tone(t.pnl) },
@@ -1441,16 +1442,15 @@ function renderLog() {
 
 
 
-const TC_BARS = { "5Min": "5 min", "1Hour": "1 hour", "1Day": "Day" };
-let TRADE = null, TC_STATE = { bar: "5Min", bars: null, hover: null };
+let TRADE = null, TC_STATE = { timeframe: "5Min", bars: null, hover: null };
 let TC_LEVELS = null, TC_COTRADES = [];
 const TC_VIEW = { i0: 0, i1: 0, yManual: null, custom: false };
 let TC_ORIGIN = "history";
 
 const TC_SHOW = { range: true, stop: true, targets: true };
 
-function selectTradeState(bar) {
-  TC_STATE = { bar, bars: null, averages: [], hover: null };
+function selectTradeState(timeframe) {
+  TC_STATE = { timeframe, bars: null, averages: [], hover: null };
   TC_LEVELS = null;
   Object.assign(TC_VIEW, { i0: 0, i1: 0, yManual: null, custom: false });
   document.getElementById("tc-host").querySelectorAll("svg, .tc-mark").forEach(n => n.remove());
@@ -1464,6 +1464,12 @@ function clockOf(iso) {
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false,
   }).format(at);
+}
+
+function dateOf(iso) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(iso));
 }
 
 function monthOf(iso) {
@@ -1502,21 +1508,20 @@ function barStamp(iso) {
 }
 
 function positionTrade(position) {
-  if (!position.inDate) return null;
+  if (!position.entered_at) return null;
   return {
     symbol: position.symbol,
     side: position.side,
-    strategy: position.strategy,
+    strategy_key: position.strategy_key,
     entry: position.entry,
     exit: position.last,
-    pnl: position.unreal,
-    qty: position.qty,
-    inDate: position.inDate,
-    inMinute: position.inMinute,
+    pnl: position.unrealized_pnl,
+    quantity: position.quantity,
+    entered_at: position.entered_at,
     date: LEDGER.today,
     minute: tradingMinutes(),
-    heldMin: Math.max(0,
-      stampOf(LEDGER.today, tradingMinutes()) - stampOf(position.inDate, position.inMinute)),
+    duration_minutes: Math.max(0,
+      Math.floor((Date.now() - Date.parse(position.entered_at)) / 60000)),
     fills: position.fills || [],
     open: true,
   };
@@ -1529,7 +1534,7 @@ async function openTradeChart(trade, from) {
   TC_COTRADES = ALL_TRADES.filter(t => t.symbol === trade.symbol).reverse();
   if (trade.open) TC_COTRADES.push(trade);
   for (const b of document.querySelectorAll("#tc-range button"))
-    b.setAttribute("aria-pressed", String(b.dataset.bar === "5Min"));
+    b.setAttribute("aria-pressed", String(b.dataset.timeframe === "5Min"));
   document.getElementById("chart-back").textContent =
     TC_ORIGIN === "portfolio" ? "← Portfolio" : "← Trade log";
   switchView("chart");
@@ -1542,9 +1547,9 @@ async function openTradeChart(trade, from) {
 async function loadTradeLevels() {
   const state = TC_STATE;
   const t = TRADE;
-  if (t.strategy === "unattributed") { TC_LEVELS = {}; paintRail(); return; }
+  if (t.strategy_key === "unattributed") { TC_LEVELS = {}; paintRail(); return; }
   const query = new URLSearchParams({
-    symbol: t.symbol, strategy: t.strategy, side: t.side, entry: String(t.entry), opened: t.inDate,
+    symbol: t.symbol, strategy_key: t.strategy_key, side: t.side, entry: String(t.entry), opened: dateOf(t.entered_at),
   });
   try {
     const response = await fetch("/api/levels?" + query, { headers: { Accept: "application/json" } });
@@ -1593,7 +1598,7 @@ function paintRail() {
     railToggle("targets", "Targets", null, Boolean(has.targets), has.targets ? "" : "Breakout trades only"),
   );
   document.getElementById("tc-rail-note").textContent =
-    has.strategy ? "Stop and targets are reconstructed from the rules." : "";
+    has.strategy_key ? "Stop and targets are reconstructed from the rules." : "";
 }
 
 function averageColor(index) {
@@ -1622,29 +1627,29 @@ function railToggle(key, label, tokenName, enabled, why) {
 function paintTradeFacts() {
   const t = TRADE;
   document.getElementById("tc-title").textContent = t.symbol;
-  const strategy = STRAT_BY_ID[t.strategy];
+  const strategy = STRAT_BY_KEY[t.strategy_key];
   document.getElementById("tc-sub").textContent =
-    (strategy ? strategy.label : t.strategy) + " · " + (t.side === "short" ? "Short" : "Long") +
+    (strategy ? strategy.label : t.strategy_key) + " · " + (t.side === "short" ? "Short" : "Long") +
     (t.open ? " · Open" : "");
 
   const openNote = document.getElementById("tc-open-note");
   openNote.textContent = t.open
     ? "This position is still open. The second mark is the current price, not an exit, and "
-      + "the figure beside it is unrealised."
+      + "the figure beside it is unrealized P&L."
     : "";
   openNote.hidden = !t.open;
 
-  const held = t.heldMin >= 1440
-    ? Math.round(t.heldMin / 1440) + "d"
-    : t.heldMin >= 60 ? Math.floor(t.heldMin / 60) + "h " + (t.heldMin % 60) + "m" : t.heldMin + "m";
+  const held = t.duration_minutes >= 1440
+    ? Math.round(t.duration_minutes / 1440) + "d"
+    : t.duration_minutes >= 60 ? Math.floor(t.duration_minutes / 60) + "h " + (t.duration_minutes % 60) + "m" : t.duration_minutes + "m";
 
   const facts = [
-    ["Entry", money(t.entry), dayLabel(t.inDate) + " " + clockLabel(t.inMinute)],
+    ["Entry", money(t.entry), dayOf(t.entered_at) + " " + clockOf(t.entered_at)],
     [t.open ? "Last" : "Exit", money(t.exit),
       t.open ? "still open" : dayLabel(t.date) + " " + clockLabel(t.minute)],
-    ["Quantity", plainNum(Math.round(t.qty * 100) / 100), ""],
+    ["Quantity", plainNum(Math.round(t.quantity * 100) / 100), ""],
     [t.open ? "Held so far" : "Held", held, ""],
-    [t.open ? "Unrealised" : "P&L", signedMoney(t.pnl),
+    [t.open ? "Unrealized" : "P&L", signedMoney(t.pnl),
       signedPct(((t.exit - t.entry) / t.entry) * 100 * (t.side === "short" ? -1 : 1))],
   ];
   const host = document.getElementById("tc-facts");
@@ -1683,9 +1688,9 @@ function tcState(message) {
 async function loadTradeBars() {
   const state = TC_STATE;
   const t = TRADE;
-  tcState("Loading " + TC_BARS[TC_STATE.bar].toLowerCase() + " bars…");
+  tcState("Loading " + document.querySelector("#tc-range [aria-pressed=true]").textContent.trim().toLowerCase() + " bars…");
   const query = new URLSearchParams({
-    symbol: t.symbol, timeframe: TC_STATE.bar, opened: t.inDate, closed: t.date,
+    symbol: t.symbol, timeframe: TC_STATE.timeframe, opened: dateOf(t.entered_at), closed: t.date,
   });
   try {
     const response = await fetch("/api/bars?" + query, { headers: { Accept: "application/json" } });
@@ -1701,7 +1706,7 @@ async function loadTradeBars() {
   } catch (error) {
     if (TC_STATE !== state) return;
     TC_STATE.bars = null;
-    tcState("Past bars could not be read. Try again in a moment.");
+    tcState("Historical bars could not be read. Try again in a moment.");
     return;
   }
   if (!TC_STATE.bars.length) {
@@ -1747,7 +1752,7 @@ function drawTradeChart() {
     all.forEach((b, i) => { const d = Math.abs(b.x - x); if (d < gap) { gap = d; best = i; } });
     return best;
   };
-  const inIndex = nearest(stampOf(t.inDate, t.inMinute));
+  const inIndex = nearest(barStamp(t.entered_at));
   const outIndex = nearest(stampOf(t.date, t.minute));
 
   const i0 = TC_VIEW.i0, i1 = TC_VIEW.i1;
@@ -1809,7 +1814,7 @@ function drawTradeChart() {
     shown.forEach((b, k) => { const at = key(b.t); if (!seen.has(at)) seen.set(at, k + lo); });
     return seen;
   };
-  const daily = TC_STATE.bar === "1Day";
+  const daily = TC_STATE.timeframe === "1Day";
   const byDay = firstOf(dayOf);
   const byMonth = firstOf(monthOf);
   const byMonths = daily && byDay.size > roomFor;
@@ -1942,7 +1947,7 @@ function drawTradeChart() {
   }
 
   const bodyW = Math.max(1.5, Math.min(9, step * 0.62));
-  const candles = shown.map((b, k) => {
+  const barMarks = shown.map((b, k) => {
     const i = k + lo;
     const up = b.c >= b.o;
     const colour = up ? GAIN : LOSS;
@@ -1982,7 +1987,7 @@ function drawTradeChart() {
   }).join("");
 
   const plotted =
-    overlays + candles + smaLines +
+    overlays + barMarks + smaLines +
     level(y1, C.axis) + level(y2, C.axis) + trend + fillMarks + entryMark + exitMark;
 
   host.querySelectorAll("svg").forEach(n => n.remove());
@@ -2017,7 +2022,7 @@ function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
   const result = TRADE.pnl >= 0 ? GAIN : LOSS;
   const host = document.getElementById("tc-host");
   host.querySelectorAll(".tc-mark").forEach(n => n.remove());
-  const strategy = STRAT_BY_ID[TRADE.strategy];
+  const strategy = STRAT_BY_KEY[TRADE.strategy_key];
   const place = (x, y, title, price, cls) => {
     const el = document.createElement("div");
     el.className = "tc-mark " + cls;
@@ -2029,7 +2034,7 @@ function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
     val.textContent = money(price);
     const who = document.createElement("span");
     who.className = "tc-s";
-    who.textContent = strategy ? strategy.label : TRADE.strategy;
+    who.textContent = strategy ? strategy.label : TRADE.strategy_key;
     el.append(head, val, who);
     el.style.left = Math.round(x) + "px";
     el.style.top = Math.round(y) + "px";
@@ -2060,7 +2065,7 @@ function paintTradeTable() {
   const rows = TC_STATE.bars.map(b =>
     `${dayOf(b.t)} ${clockOf(b.t)} open ${money(b.o)} high ${money(b.h)} low ${money(b.l)} close ${money(b.c)}`);
   document.getElementById("tc-table").textContent =
-    TRADE.symbol + " " + TC_BARS[TC_STATE.bar] + " bars. " + rows.join(". ");
+    TRADE.symbol + " " + document.querySelector("#tc-range [aria-pressed=true]").textContent.trim() + " bars. " + rows.join(". ");
 }
 
 function tradeHover(event) {
@@ -2088,8 +2093,8 @@ function wireTradeChart() {
   document.getElementById("tc-next").addEventListener("click", () => stepTrade(1));
   document.getElementById("tc-range").addEventListener("click", event => {
     const button = event.target.closest("button");
-    if (!button || button.dataset.bar === TC_STATE.bar) return;
-    selectTradeState(button.dataset.bar);
+    if (!button || button.dataset.timeframe === TC_STATE.timeframe) return;
+    selectTradeState(button.dataset.timeframe);
     loadTradeLevels();
     for (const b of document.querySelectorAll("#tc-range button"))
       b.setAttribute("aria-pressed", String(b === button));
@@ -2195,11 +2200,11 @@ function renderRuleStates() {
     warning.hidden = !warning.textContent;
   }
   for (const card of document.querySelectorAll("#rules-cards .rule-card")) {
-    const id = card.dataset.strategy;
+    const strategy_key = card.dataset.strategyKey;
     const host = card.querySelector(".states");
     if (!host) continue;
-    host.replaceWith(stateBadges(id));
-    card.classList.toggle("is-idle", switchState(id) !== "online");
+    host.replaceWith(stateBadges(strategy_key));
+    card.classList.toggle("is-idle", switchState(strategy_key) !== "online");
   }
 }
 
@@ -2223,18 +2228,18 @@ function paintRules() {
   for (const strategy of RULES.strategies) {
     const card = document.createElement("section");
     card.className = "panel rule-card";
-    card.dataset.strategy = strategy.id;
+    card.dataset.strategyKey = strategy.key;
 
     const head = document.createElement("div");
     head.className = "panel-head";
     const title = document.createElement("h2");
     const chip = document.createElement("span");
     chip.className = "chip";
-    chip.style.background = STRATEGY_COLOURS[strategy.id] || "var(--ink-3)";
+    chip.style.background = STRATEGY_COLOURS[strategy.key] || "var(--ink-3)";
     const name = document.createElement("span");
     name.textContent = strategy.name;
     title.append(chip, name);
-    head.append(title, stateBadges(strategy.id));
+    head.append(title, stateBadges(strategy.key));
 
     const sub = document.createElement("div");
     sub.className = "rule-sub";
@@ -2302,7 +2307,7 @@ function applyPulse(pulsed) {
   ACCOUNT.portfolio = pulsed.equity;
   ACCOUNT.cash = pulsed.cash;
   ACCOUNT.deployed = pulsed.marketValue;
-  ACCOUNT.unrealised = pulsed.unrealised;
+  ACCOUNT.unrealized_pnl = pulsed.unrealized_pnl;
   ACCOUNT.buyingPower = pulsed.buyingPower;
   ACCOUNT.totalReturn = Math.round((ACCOUNT.portfolio - ACCOUNT.invested) * 100) / 100;
   ACCOUNT.rateOfReturn = ACCOUNT.invested ? (ACCOUNT.totalReturn / ACCOUNT.invested) * 100 : 0;

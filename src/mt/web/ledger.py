@@ -10,12 +10,12 @@ from alpaca.trading.models import Order
 from mt.config.sections import DashboardSection
 from mt.config.values import StrategyKey, Symbol
 from mt.data.alpaca import (
-    AlpacaLiveClient,
-    AlpacaPastClient,
+    BarsClientAlpaca,
     ClosedOrder,
     EquityPoint,
     Fill,
     Position,
+    TradingClientAlpaca,
 )
 from mt.exchange import TRADING_ZONE, trading_time
 from mt.strategies.order_tag import UNATTRIBUTED, find_order_tag
@@ -28,31 +28,28 @@ class FillRow(TypedDict):
     d: str
     m: int
     p: float
-    q: float
+    quantity: float
     s: str
 
 
-class Cycle(TypedDict):
+class Trade(TypedDict):
     symbol: str
     side: str
-    strategy: str
-    qty: float
+    strategy_key: str
+    quantity: float
     entry: float
     exit: float
     pnl: float
     date: str
     minute: int
-    inDate: str
-    inMinute: int
-    heldMin: int
+    entered_at: str
+    duration_minutes: int
     fills: list[FillRow]
 
 
-class OpenCycle(TypedDict):
-    strategy: str
-    opened: str
-    inDate: str
-    inMinute: int
+class OpenTrade(TypedDict):
+    strategy_key: str
+    entered_at: str
     fills: list[FillRow]
 
 
@@ -60,9 +57,9 @@ class Totals(TypedDict):
     n: int
     wins: int
     losses: int
-    net: float
-    gross: float
-    bleed: float
+    net_pnl: float
+    gross_profit: float
+    gross_loss: float
 
 
 class Day(TypedDict):
@@ -74,10 +71,8 @@ class Day(TypedDict):
 
 
 class PositionRow(PulsePosition):
-    strategy: str
-    opened: str
-    inDate: str | None
-    inMinute: int | None
+    strategy_key: str
+    entered_at: str | None
     fills: list[FillRow]
 
 
@@ -120,10 +115,10 @@ class Ledger(TypedDict):
     cash: float
     buyingPower: float
     marketValue: float
-    unrealised: float
+    unrealized_pnl: float
     strategies: list[StrategyLabel]
     positions: list[PositionRow]
-    trades: list[Cycle]
+    trades: list[Trade]
     days: list[Day]
     totals: Totals
     equityDaily: list[EquityDay]
@@ -136,8 +131,8 @@ class Ledger(TypedDict):
 @dataclass(slots=True)
 class _Tally:
     direction: int
-    opened_at: datetime
-    strategy: StrategyKey | None
+    entered_at: datetime
+    strategy_key: StrategyKey | None
     in_quantity: float = 0.0
     in_value: float = 0.0
     out_quantity: float = 0.0
@@ -145,134 +140,133 @@ class _Tally:
     fills: list[FillRow] = field(default_factory=list[FillRow])
 
 
-def match_cycles(
+def match_trades(
     fills: list[Fill],
     orders: list[ClosedOrder],
     flat_quantity_max: float,
-) -> tuple[list[Cycle], dict[str, OpenCycle]]:
+) -> tuple[list[Trade], dict[str, OpenTrade]]:
     strategies: dict[str, StrategyKey | None] = {
-        order.id: _order_strategy(order.client_order_id or "") for order in orders
+        order.id: _order_strategy_key(order.client_order_id or "") for order in orders
     }
     held: defaultdict[str, float] = defaultdict(float)
     tallies: dict[str, _Tally] = {}
-    cycles: list[Cycle] = []
+    trades: list[Trade] = []
 
     pending_fills = sorted(fills, key=lambda row: row.transaction_time, reverse=True)
     while pending_fills:
         fill = pending_fills.pop()
         symbol = fill.symbol
-        quantity = fill.qty
+        quantity = fill.quantity
         price = fill.price
         when = trading_time(fill.transaction_time)
         signed = quantity if fill.side == "buy" else -quantity
         current = held[symbol]
         if current * signed < 0 and quantity > abs(current) + flat_quantity_max:
-            pending_fills.append(fill.model_copy(update={"qty": quantity - abs(current)}))
+            pending_fills.append(fill.model_copy(update={"quantity": quantity - abs(current)}))
             quantity = abs(current)
             signed = quantity if fill.side == "buy" else -quantity
         held[symbol] += signed
 
-        cycle = tallies.get(symbol)
-        if cycle is None:
-            cycle = tallies[symbol] = _Tally(
+        trade = tallies.get(symbol)
+        if trade is None:
+            trade = tallies[symbol] = _Tally(
                 direction=1 if signed > 0 else -1,
-                opened_at=when,
-                strategy=strategies.get(fill.order_id),
+                entered_at=when,
+                strategy_key=strategies.get(fill.order_id),
             )
 
-        entering = (signed > 0) == (cycle.direction > 0)
-        cycle.fills.append(
+        entering = (signed > 0) == (trade.direction > 0)
+        trade.fills.append(
             FillRow(
                 d=when.date().isoformat(),
                 m=_clock_minute(when),
                 p=round(price, 4),
-                q=round(quantity, 4),
+                quantity=round(quantity, 4),
                 s="in" if entering else "out",
             )
         )
         if entering:
-            cycle.in_quantity += quantity
-            cycle.in_value += quantity * price
-            if cycle.strategy is None:
-                cycle.strategy = strategies.get(fill.order_id)
+            trade.in_quantity += quantity
+            trade.in_value += quantity * price
+            if trade.strategy_key is None:
+                trade.strategy_key = strategies.get(fill.order_id)
         else:
-            cycle.out_quantity += quantity
-            cycle.out_value += quantity * price
+            trade.out_quantity += quantity
+            trade.out_value += quantity * price
 
         if abs(held[symbol]) > flat_quantity_max:
             continue
 
-        cycles.append(
-            Cycle(
+        trades.append(
+            Trade(
                 symbol=symbol,
-                side="long" if cycle.direction > 0 else "short",
-                strategy=cycle.strategy or UNATTRIBUTED,
-                qty=round(cycle.out_quantity, 4),
-                entry=round(cycle.in_value / cycle.in_quantity, 4),
-                exit=round(cycle.out_value / cycle.out_quantity, 4),
-                pnl=round((cycle.out_value - cycle.in_value) * cycle.direction, 2),
+                side="long" if trade.direction > 0 else "short",
+                strategy_key=trade.strategy_key or UNATTRIBUTED,
+                quantity=round(trade.out_quantity, 4),
+                entry=round(trade.in_value / trade.in_quantity, 4),
+                exit=round(trade.out_value / trade.out_quantity, 4),
+                pnl=round((trade.out_value - trade.in_value) * trade.direction, 2),
                 date=when.date().isoformat(),
                 minute=_clock_minute(when),
-                inDate=cycle.opened_at.date().isoformat(),
-                inMinute=_clock_minute(cycle.opened_at),
-                heldMin=max(0, int((when - cycle.opened_at).total_seconds() // 60)),
-                fills=cycle.fills,
+                entered_at=trade.entered_at.isoformat(),
+                duration_minutes=max(
+                    0, int((when.timestamp() - trade.entered_at.timestamp()) // 60)
+                ),
+                fills=trade.fills,
             )
         )
         del tallies[symbol]
         held[symbol] = 0.0
 
     still_open = {
-        symbol: OpenCycle(
-            strategy=cycle.strategy or UNATTRIBUTED,
-            opened=f"{cycle.opened_at:%-d %b}",
-            inDate=cycle.opened_at.date().isoformat(),
-            inMinute=_clock_minute(cycle.opened_at),
-            fills=cycle.fills,
+        symbol: OpenTrade(
+            strategy_key=trade.strategy_key or UNATTRIBUTED,
+            entered_at=trade.entered_at.isoformat(),
+            fills=trade.fills,
         )
-        for symbol, cycle in tallies.items()
+        for symbol, trade in tallies.items()
     }
-    return cycles, still_open
+    return trades, still_open
 
 
-def totals(cycles: list[Cycle]) -> Totals:
-    wins = [cycle for cycle in cycles if cycle["pnl"] > 0]
-    losses = [cycle for cycle in cycles if cycle["pnl"] <= 0]
+def totals(trades: list[Trade]) -> Totals:
+    wins = [trade for trade in trades if trade["pnl"] > 0]
+    losses = [trade for trade in trades if trade["pnl"] <= 0]
     return Totals(
-        n=len(cycles),
+        n=len(trades),
         wins=len(wins),
         losses=len(losses),
-        net=round(sum(cycle["pnl"] for cycle in cycles), 2),
-        gross=round(sum(cycle["pnl"] for cycle in wins), 2),
-        bleed=round(abs(sum(cycle["pnl"] for cycle in losses)), 2),
+        net_pnl=round(sum(trade["pnl"] for trade in trades), 2),
+        gross_profit=round(sum(trade["pnl"] for trade in wins), 2),
+        gross_loss=round(abs(sum(trade["pnl"] for trade in losses)), 2),
     )
 
 
-def days(cycles: list[Cycle], closes: dict[str, float], opening: float) -> list[Day]:
-    grouped: defaultdict[str, list[Cycle]] = defaultdict(list)
-    for cycle in cycles:
-        grouped[cycle["date"]].append(cycle)
+def days(trades: list[Trade], closes: dict[str, float], opening: float) -> list[Day]:
+    grouped: defaultdict[str, list[Trade]] = defaultdict(list)
+    for trade in trades:
+        grouped[trade["date"]].append(trade)
 
     ordered = sorted(closes)
     days: list[Day] = []
     for day in sorted(grouped):
-        position = bisect_left(ordered, day)
-        before = closes[ordered[position - 1]] if position else opening
+        index = bisect_left(ordered, day)
+        before = closes[ordered[index - 1]] if index else opening
         days.append(
             Day(
                 date=day,
-                pnl=round(sum(cycle["pnl"] for cycle in grouped[day]), 2),
+                pnl=round(sum(trade["pnl"] for trade in grouped[day]), 2),
                 trades=len(grouped[day]),
-                wins=sum(1 for cycle in grouped[day] if cycle["pnl"] > 0),
+                wins=sum(1 for trade in grouped[day] if trade["pnl"] > 0),
                 before=round(before, 2),
             )
         )
     return days
 
 
-def _order_strategy(client_order_id: str) -> StrategyKey | None:
+def _order_strategy_key(client_order_id: str) -> StrategyKey | None:
     tag = find_order_tag(client_order_id)
-    return None if tag is None else tag.strategy
+    return None if tag is None else tag.strategy_key
 
 
 def _clock_minute(when: datetime) -> int:
@@ -280,30 +274,30 @@ def _clock_minute(when: datetime) -> int:
 
 
 async def build_ledger(
-    live: AlpacaLiveClient,
-    past: AlpacaPastClient,
+    trading: TradingClientAlpaca,
+    bars_client: BarsClientAlpaca,
     benchmark: Symbol,
     dashboard: DashboardSection,
 ) -> Ledger:
     async with asyncio.TaskGroup() as reads:
-        open_orders_read = reads.create_task(live.open_orders())
-        account_read = reads.create_task(live.account())
-        positions_read = reads.create_task(live.positions())
-        fills_read = reads.create_task(live.fills())
-        orders_read = reads.create_task(live.closed_orders())
+        open_orders_read = reads.create_task(trading.open_orders())
+        account_read = reads.create_task(trading.account())
+        positions_read = reads.create_task(trading.positions())
+        fills_read = reads.create_task(trading.fills())
+        orders_read = reads.create_task(trading.closed_orders())
         daily_read = reads.create_task(
-            live.equity(dashboard.equity_daily_period, dashboard.equity_daily_timeframe)
+            trading.equity(dashboard.equity_daily_period, dashboard.equity_daily_timeframe)
         )
         intraday_read = reads.create_task(
-            live.equity(dashboard.equity_intraday_period, dashboard.equity_intraday_timeframe)
+            trading.equity(dashboard.equity_intraday_period, dashboard.equity_intraday_timeframe)
         )
-        clock_read = reads.create_task(live.clock())
+        clock_read = reads.create_task(trading.clock())
 
     account = account_read.result()
     positions = positions_read.result()
     clock = clock_read.result()
 
-    cycles, open_cycles = match_cycles(
+    trades, open_trades = match_trades(
         fills_read.result(), orders_read.result(), dashboard.flat_quantity_max
     )
     equity_daily = _equity_series(daily_read.result())
@@ -320,10 +314,10 @@ async def build_ledger(
     if not equity_daily or equity_daily[-1]["date"] != today:
         equity_daily.append(EquityDay(date=today, equity=equity))
 
-    rows = _position_rows(positions, equity, open_cycles)
+    rows = _position_rows(positions, equity, open_trades)
     benchmark_start = funded or today
 
-    bars = await past.daily_bars(benchmark, benchmark_start)
+    bars = await bars_client.daily_bars(benchmark, benchmark_start)
 
     benchmark_closes = [BenchmarkClose(date=bar.opened_at[:10], close=bar.close) for bar in bars]
     return Ledger(
@@ -343,12 +337,12 @@ async def build_ledger(
         cash=round(account.cash, 2),
         buyingPower=round(account.buying_power, 2),
         marketValue=round(sum(row["value"] for row in rows), 2),
-        unrealised=round(sum(row["unreal"] for row in rows), 2),
+        unrealized_pnl=round(sum(row["unrealized_pnl"] for row in rows), 2),
         strategies=strategy_labels(),
         positions=rows,
-        trades=cycles,
-        days=days(cycles, closes, invested),
-        totals=totals(cycles),
+        trades=trades,
+        days=days(trades, closes, invested),
+        totals=totals(trades),
         equityDaily=equity_daily,
         intraday=intraday_points,
         intradayDate=intraday_date,
@@ -403,18 +397,16 @@ def _intraday_series(points: list[EquityPoint]) -> tuple[list[IntradayPoint], st
 def _position_rows(
     raw: list[Position],
     equity: float,
-    open_cycles: dict[str, OpenCycle],
+    open_trades: dict[str, OpenTrade],
 ) -> list[PositionRow]:
     rows: list[PositionRow] = []
     for position in pulse_positions(raw, equity):
-        held = open_cycles.get(position["symbol"])
+        held = open_trades.get(position["symbol"])
         rows.append(
             PositionRow(
                 **position,
-                strategy=held["strategy"] if held else UNATTRIBUTED,
-                opened=held["opened"] if held else "—",
-                inDate=held["inDate"] if held else None,
-                inMinute=held["inMinute"] if held else None,
+                strategy_key=held["strategy_key"] if held else UNATTRIBUTED,
+                entered_at=held["entered_at"] if held else None,
                 fills=held["fills"] if held else [],
             )
         )

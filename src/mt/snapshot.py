@@ -21,7 +21,7 @@ class StateEvent(_StrictModel):
     occurred_at: AwareDatetime
     level: EventLevel
     message: str = Field(min_length=1, max_length=500)
-    strategy: StrategyKey | None = None
+    strategy_key: StrategyKey | None = None
 
 
 class StateSnapshot(_StrictModel):

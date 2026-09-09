@@ -13,7 +13,7 @@ from mt.frames import frame_between, frame_since, frame_until, regular_session
 from mt.indicators import latest_atr, latest_turnover_usd
 from mt.position import Direction, next_stop, round_quantity
 
-from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, family_keys, ranked
+from .base import Candidate, Ladder, Portfolio, Position, Session, Strategy, family_keys, ranked
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +64,7 @@ def is_setup_ready(high: float, low: float, close: float) -> bool:
 
 
 def relative_volume(frame: DataFrame, day: date, clock: time) -> float | None:
-    sessions = settings.breakout.past_sessions
+    sessions = settings.breakout.lookback_sessions
     regular = regular_session(frame)
     index = cast(DatetimeIndex, regular.index)
     pandas_index = cast(Any, index)
@@ -90,13 +90,13 @@ def relative_volume(frame: DataFrame, day: date, clock: time) -> float | None:
     if current_session not in grouped.index:
         return None
     grouped_index = cast(Any, cast(DatetimeIndex, grouped.index))
-    past = cast(
+    volumes = cast(
         DataFrame,
         cast(Any, grouped).loc[grouped_index < current_session].tail(sessions),
     )
-    if len(past) != sessions:
+    if len(volumes) != sessions:
         return None
-    clock_average = float(cast(Any, past["cumulative_volume"]).mean())
+    clock_average = float(cast(Any, volumes["cumulative_volume"]).mean())
     current = float(cast(Any, grouped).loc[current_session, "cumulative_volume"])
     if not all(isfinite(value) for value in (clock_average, current)):
         return None
@@ -132,19 +132,19 @@ class Breakout(Strategy):
     def target_prices(
         cls, entry: float, stop: float, direction: Direction
     ) -> tuple[float, float, float]:
-        risk = abs(entry - stop)
+        stop_distance = abs(entry - stop)
         first, second, third = cls.target_multiples
         return (
-            entry + direction * risk * first,
-            entry + direction * risk * second,
-            entry + direction * risk * third,
+            entry + direction * stop_distance * first,
+            entry + direction * stop_distance * second,
+            entry + direction * stop_distance * third,
         )
 
     def begin(self, day: date) -> None:
         self._scanned.clear()
 
-    def ladder(self, holding: Holding, quantity: float) -> Ladder | None:
-        targets = self.target_prices(holding.entry, holding.stop, holding.direction)
+    def ladder(self, position: Position, quantity: float) -> Ladder | None:
+        targets = self.target_prices(position.entry, position.stop, position.direction)
         return Ladder(quantity, targets)
 
     def run(self, session: Session) -> None:
@@ -175,7 +175,7 @@ class Breakout(Strategy):
         )
         histories = self.portfolio.minute_frames(
             [found.symbol for found in signals],
-            now - timedelta(days=settings.breakout.confirm_past_days),
+            now - timedelta(days=settings.breakout.confirm_lookback_days),
             now,
             self.opening_minutes,
         )
@@ -203,60 +203,60 @@ class Breakout(Strategy):
                 self, Candidate(found.symbol, price, stop, found.direction), session
             )
 
-    def manage(self, holding: Holding, session: Session) -> None:
+    def manage(self, position: Position, session: Session) -> None:
         now = session.now
         if now >= session.closes - timedelta(minutes=settings.breakout.close_lead_minutes):
-            self.portfolio.exit(holding)
+            self.portfolio.exit(position)
             return
-        price = self.portfolio.last_price(holding.symbol)
-        holding.highest = max(holding.highest, price)
-        holding.lowest = min(holding.lowest, price)
-        ladder = holding.ladder
+        price = self.portfolio.last_price(position.symbol)
+        position.highest = max(position.highest, price)
+        position.lowest = min(position.lowest, price)
+        ladder = position.ladder
         if ladder is None:
             return
         reached = (
             price >= ladder.targets[ladder.stage]
-            if holding.direction == 1
+            if position.direction == 1
             else price <= ladder.targets[ladder.stage]
         )
         if reached:
             fractions = settings.breakout.target_fractions
             if ladder.stage == len(fractions) - 1:
-                self.portfolio.exit(holding)
+                self.portfolio.exit(position)
                 return
             quantity = round_quantity(
                 Decimal(str(ladder.original_quantity)) * Decimal(str(fractions[ladder.stage])),
-                whole=holding.direction == -1,
+                whole=position.direction == -1,
             )
             ladder.stage += 1
-            holding.stop = next_stop(holding.direction, holding.stop, holding.entry)
+            position.stop = next_stop(position.direction, position.stop, position.entry)
             if quantity > 0:
-                self.portfolio.exit(holding, float(quantity))
-            self.portfolio.protect(holding)
+                self.portfolio.exit(position, float(quantity))
+            self.portfolio.protect(position)
             return
         if ladder.stage == 0:
             return
-        holding.stop = next_stop(holding.direction, holding.stop, holding.entry)
-        self.portfolio.protect(holding)
+        position.stop = next_stop(position.direction, position.stop, position.entry)
+        self.portfolio.protect(position)
         recent = self.portfolio.minute_frames(
-            [holding.symbol],
-            now - timedelta(days=settings.breakout.trail_past_days),
+            [position.symbol],
+            now - timedelta(days=settings.breakout.trail_lookback_days),
             now,
             self.opening_minutes,
-        ).get(holding.symbol)
+        ).get(position.symbol)
         if recent is None:
             return
         frame = regular_session(recent)
-        if len(frame) < settings.breakout.trail_candles_min:
+        if len(frame) < settings.breakout.trail_bars_min:
             return
         trail = settings.breakout.trail_atr_multiple * latest_atr(frame, settings.indicators.period)
         candidate = (
-            max(holding.entry, holding.highest - trail)
-            if holding.direction == 1
-            else min(holding.entry, holding.lowest + trail)
+            max(position.entry, position.highest - trail)
+            if position.direction == 1
+            else min(position.entry, position.lowest + trail)
         )
-        holding.stop = next_stop(holding.direction, holding.stop, candidate)
-        self.portfolio.protect(holding)
+        position.stop = next_stop(position.direction, position.stop, candidate)
+        self.portfolio.protect(position)
 
     def is_confirmed(self, frame: DataFrame, now: datetime) -> bool:
         if frame.empty:
@@ -307,23 +307,23 @@ class Breakout(Strategy):
             found = self._first_break(after, high, low)
             if found is None:
                 continue
-            position, direction, close = found
+            index, direction, close = found
             self._scanned.add(symbol)
             if not is_setup_ready(high, low, close):
                 continue
-            if len(after) - position > settings.breakout.signal_candles_max:
+            if len(after) - index > settings.breakout.signal_bars_max:
                 continue
             signals.append(
-                Signal(symbol, direction, high, low, close, cast(Timestamp, after.index[position]))
+                Signal(symbol, direction, high, low, close, cast(Timestamp, after.index[index]))
             )
         return signals
 
     def _first_break(
-        self, candles: DataFrame, high: float, low: float
+        self, bars: DataFrame, high: float, low: float
     ) -> tuple[int, Direction, float] | None:
-        for position, value in enumerate(candles["close"].tolist()):
+        for index, value in enumerate(bars["close"].tolist()):
             close = float(value)
             direction = range_break(high, low, close)
             if direction is not None:
-                return position, direction, close
+                return index, direction, close
         return None

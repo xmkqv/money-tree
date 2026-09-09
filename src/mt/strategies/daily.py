@@ -19,7 +19,7 @@ from mt.indicators import (
     latest_turnover_usd,
 )
 
-from .base import Candidate, Holding, Portfolio, Session, Strategy, ranked
+from .base import Candidate, Portfolio, Position, Session, Strategy, ranked
 
 
 def is_market_favorable(frame: DataFrame) -> bool:
@@ -136,26 +136,26 @@ class Daily(Strategy):
             )
         return candidates
 
-    def manage(self, holding: Holding, session: Session) -> None:
+    def manage(self, position: Position, session: Session) -> None:
         now = session.now
         if (
             self.does_heed_earnings
             and session.opens <= now < session.closes
-            and is_earnings_exit_due(holding.symbol, now.date())
+            and is_earnings_exit_due(position.symbol, now.date())
         ):
-            self.portfolio.exit(holding)
+            self.portfolio.exit(position)
             return
-        frame = self.portfolio.daily_frame(holding.symbol, now)
+        frame = self.portfolio.daily_frame(position.symbol, now)
         if frame is None or len(frame) < settings.daily.average_sessions:
             return
-        since = frame_since(frame, holding.entered_at.astimezone(TRADING_ZONE))
+        since = frame_since(frame, position.entered_at.astimezone(TRADING_ZONE))
         last = last_close(frame)
         if len(since):
-            holding.highest = max(holding.highest, float(cast(Any, since["close"]).max()))
+            position.highest = max(position.highest, float(cast(Any, since["close"]).max()))
         distance = self.stop_atr_multiple * latest_atr(frame, settings.indicators.period)
-        holding.stop = max(holding.stop, holding.highest - distance)
-        if last < holding.stop or does_signal_exit(frame):
-            self.portfolio.exit(holding)
+        position.stop = max(position.stop, position.highest - distance)
+        if last < position.stop or does_signal_exit(frame):
+            self.portfolio.exit(position)
 
     def _ranked(self, now: datetime) -> list[tuple[str, DataFrame]]:
         rows = [

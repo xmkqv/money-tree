@@ -1,13 +1,11 @@
 from collections.abc import Iterator
-from os import environ
-from pathlib import Path
 from tomllib import loads
 from typing import Literal
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 
-from .settings import BotSettings, LoginSettings, WebSettings
+from .settings import BotSettings, DeploymentSettings, LoginSettings, WebSettings
 
 
 type ServiceName = Literal["web", "bot"]
@@ -19,7 +17,8 @@ SERVICE_SETTINGS: dict[ServiceName, tuple[type[BaseSettings], ...]] = {
 
 
 def secret_keys() -> set[str]:
-    path = Path(environ["MISE_PROJECT_ROOT"]) / f"mise.{environ['MISE_ENV']}.toml"
+    configuration = DeploymentSettings()  # pyright: ignore[reportCallIssue]
+    path = configuration.project_root / f"mise.{configuration.mode}.toml"
     declared: dict[str, str] = loads(path.read_text())["vars"]
     return set(declared["secrets"].split())
 

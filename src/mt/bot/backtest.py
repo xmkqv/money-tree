@@ -21,7 +21,7 @@ ARTIFACT_NAMES = {
 }
 
 
-def report(strategy: StrategyKey, symbols: list[str], start: datetime, end: datetime) -> Path:
+def report(strategy_key: StrategyKey, symbols: list[str], start: datetime, end: datetime) -> Path:
     if not symbols or len(symbols) != len(set(symbols)):
         raise ValueError("report symbols must be nonempty and distinct")
     symbols = TypeAdapter(list[Symbol]).validate_python(symbols)
@@ -32,12 +32,12 @@ def report(strategy: StrategyKey, symbols: list[str], start: datetime, end: date
 
     from .portfolio import Portfolio
 
-    output_dir = Path("runs") / f"{strategy}-{start:%Y%m%d}-{end:%Y%m%d}"
+    output_dir = Path("runs") / f"{strategy_key}-{start:%Y%m%d}-{end:%Y%m%d}"
     output_dir.mkdir(parents=True, exist_ok=True)
     datasource = YahooDataBacktesting
     datasource_configuration: dict[str, str | bool] | None = None
     datasource_options: dict[str, object] = {}
-    if issubclass(strategy_class(strategy), Breakout):
+    if issubclass(strategy_class(strategy_key), Breakout):
         datasource = AlpacaBacktesting
         datasource_configuration = broker_credentials(paper=True)
         datasource_options = {
@@ -49,7 +49,7 @@ def report(strategy: StrategyKey, symbols: list[str], start: datetime, end: date
         start,
         end,
         config=datasource_configuration,
-        parameters={"strategies": [strategy], "symbols": symbols},
+        parameters={"strategies": [strategy_key], "symbols": symbols},
         benchmark_asset=settings.benchmark_symbol,
         budget=settings.backtest.budget_usd,
         show_plot=True,
