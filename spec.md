@@ -307,7 +307,6 @@ GET /api/levels
 
 ### terminology and trade data
 
-- vendor field names remain at integration boundaries
 - strategy records use `key`; references to a strategy key use `strategy_key`
 - price observations are bars; selected intervals are timeframes
 - sequence offsets use `index`; holdings remain positions
