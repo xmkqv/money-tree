@@ -21,8 +21,11 @@ WORKDIR /app
 COPY mise.toml mise.production.toml ./
 RUN mise install
 
+COPY package.json package-lock.json ./
+RUN npm ci
+
 COPY pyproject.toml uv.lock ./
 RUN uv sync --locked --no-dev --no-install-project
 
 COPY . .
-RUN uv sync --locked --no-dev
+RUN uv sync --locked --no-dev && npm run build
