@@ -9,6 +9,7 @@ from .values import (
     BrokerMode,
     ChartTimeframe,
     Count,
+    CssToken,
     DataFeedName,
     EquityPeriod,
     EquityTimeframe,
@@ -170,6 +171,36 @@ class DailyTfbSection(DailyVariationSection):
     trend_lag_sessions: Count
 
 
+class RequestSection(SettingsSection):
+    trading_per_minute: Count
+    market_data_per_minute: Count
+    bot_replicas: Count
+    web_replicas: Count
+    bot_reads_per_minute: Count
+    bot_actions_per_minute: Count
+    bot_market_data_per_minute: Count
+    web_reads_per_minute: Count
+    web_market_data_per_minute: Count
+    web_concurrency_max: Count
+    pause_seconds: Count
+
+    @model_validator(mode="after")
+    def check_allocations(self) -> Self:
+        if (
+            self.bot_replicas * (self.bot_reads_per_minute + self.bot_actions_per_minute)
+            + self.web_replicas * self.web_reads_per_minute
+            > self.trading_per_minute
+        ):
+            raise ValueError("trading allocations exceed the provider allowance")
+        if (
+            self.bot_replicas * self.bot_market_data_per_minute
+            + self.web_replicas * self.web_market_data_per_minute
+            > self.market_data_per_minute
+        ):
+            raise ValueError("market data allocations exceed the provider allowance")
+        return self
+
+
 class WebSection(SettingsSection):
     base_url: AnyHttpUrl
     session_secret: SigningSecret
@@ -186,6 +217,8 @@ class ChartTimeframeSection(SettingsSection):
 
 
 class DashboardSection(SettingsSection):
+    history_overlap_days: Count
+    history_cache_max: Count
     ledger_ttl_seconds: Count
     pulse_ttl_seconds: Count
     chart_ttl_seconds: Count
@@ -207,7 +240,7 @@ class DashboardSection(SettingsSection):
     equity_intraday_period: EquityPeriod
     equity_intraday_timeframe: EquityTimeframe
     sma_lengths: tuple[Count, ...] = Field(min_length=1)
-    sma_colors: tuple[Annotated[str, Field(min_length=1)], ...] = Field(min_length=1)
+    sma_colors: tuple[CssToken, ...] = Field(min_length=1)
     ledger_max_age_seconds: MaxAge
     chart_max_age_seconds: MaxAge
     levels_max_age_seconds: MaxAge

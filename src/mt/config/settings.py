@@ -21,6 +21,7 @@ from .sections import (
     LoginSection,
     OrderTagSection,
     PortfolioSection,
+    RequestSection,
     RiskSection,
     ScreenSection,
     WebSection,
@@ -59,6 +60,7 @@ class BotSettings(SharedSettings):
 
 
 class WebSettings(SharedSettings):
+    requests: RequestSection
     mode: Annotated[Mode, Field(validation_alias="MISE_ENV")]
     broker: BrokerSection
     bars: BarsSection
