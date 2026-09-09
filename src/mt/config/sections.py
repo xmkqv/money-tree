@@ -201,6 +201,7 @@ class DashboardSection(SettingsSection):
     equity_intraday_period: EquityPeriod
     equity_intraday_timeframe: EquityTimeframe
     sma_lengths: tuple[Count, ...] = Field(min_length=1)
+    sma_colors: tuple[Annotated[str, Field(min_length=1)], ...] = Field(min_length=1)
     ledger_max_age_seconds: MaxAge
     chart_max_age_seconds: MaxAge
     levels_max_age_seconds: MaxAge

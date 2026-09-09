@@ -1837,5 +1837,3 @@ body[data-view="chart"] .chart-panel { min-height: 74vh; }
   .stage { grid-template-rows: 240px auto; }
   .trade-host { min-height: 220px; }
 }
-
-:root { --chart-average: var(--s-daily-tfb); }

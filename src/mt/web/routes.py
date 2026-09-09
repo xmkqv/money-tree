@@ -131,6 +131,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
                 "csrf_token": token,
                 "refresh_seconds": dashboard_section.refresh_poll_seconds,
                 "pulse_seconds": dashboard_section.pulse_poll_seconds,
+                "sma_colors": dashboard_section.sma_colors,
             },
             headers=NO_STORE,
         )

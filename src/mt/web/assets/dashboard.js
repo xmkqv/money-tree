@@ -1453,8 +1453,9 @@ function selectTradeState(bar) {
   TC_STATE = { bar, bars: null, averages: [], hover: null };
   TC_LEVELS = null;
   Object.assign(TC_VIEW, { i0: 0, i1: 0, yManual: null, custom: false });
-  document.getElementById("tc-host").querySelectorAll("svg").forEach(n => n.remove());
+  document.getElementById("tc-host").querySelectorAll("svg, .tc-mark").forEach(n => n.remove());
   document.getElementById("tc-tip").classList.remove("on");
+  document.getElementById("tc-table").textContent = "";
   paintRail();
 }
 
@@ -1524,7 +1525,6 @@ function positionTrade(position) {
 async function openTradeChart(trade, from) {
   TRADE = trade;
   if (from) TC_ORIGIN = from;
-  TC_LEVELS = null;
   selectTradeState("5Min");
   TC_COTRADES = ALL_TRADES.filter(t => t.symbol === trade.symbol).reverse();
   if (trade.open) TC_COTRADES.push(trade);
@@ -1534,7 +1534,6 @@ async function openTradeChart(trade, from) {
     TC_ORIGIN === "portfolio" ? "← Portfolio" : "← Trade log";
   switchView("chart");
   paintTradeFacts();
-  paintRail();
   paintStepper();
   loadTradeLevels();
   await loadTradeBars();
@@ -1578,10 +1577,10 @@ function stepTrade(by) {
 function paintRail() {
   const host = document.getElementById("tc-smas");
   host.replaceChildren();
-  for (const { length, values } of TC_STATE.averages || []) {
+  for (const [index, { length, values }] of (TC_STATE.averages || []).entries()) {
     const key = "sma" + length;
     const enough = values.some(value => value !== null);
-    host.append(railToggle(key, "SMA " + length, "--chart-average", enough,
+    host.append(railToggle(key, "SMA " + length, averageColor(index), enough,
       enough ? "" : "Not enough bars at this size"));
   }
 
@@ -1595,6 +1594,10 @@ function paintRail() {
   );
   document.getElementById("tc-rail-note").textContent =
     has.strategy ? "Stop and targets are reconstructed from the rules." : "";
+}
+
+function averageColor(index) {
+  return SESSION.sma_colors[index % SESSION.sma_colors.length];
 }
 
 function railToggle(key, label, tokenName, enabled, why) {
@@ -1681,7 +1684,6 @@ async function loadTradeBars() {
   const state = TC_STATE;
   const t = TRADE;
   tcState("Loading " + TC_BARS[TC_STATE.bar].toLowerCase() + " bars…");
-  document.getElementById("tc-host").querySelectorAll("svg").forEach(n => n.remove());
   const query = new URLSearchParams({
     symbol: t.symbol, timeframe: TC_STATE.bar, opened: t.inDate, closed: t.date,
   });
@@ -1881,10 +1883,10 @@ function drawTradeChart() {
   ).join("");
 
   const smaEnds = [];
-  const smaLines = TC_STATE.averages.map(({ length }) => {
+  const smaLines = TC_STATE.averages.map(({ length }, index) => {
     const values = averages[length];
     if (!values) return "";
-    const colour = token("--chart-average");
+    const colour = token(averageColor(index));
     let path = "", lastY = null;
     shown.forEach((_, k) => {
       const i = k + lo;
