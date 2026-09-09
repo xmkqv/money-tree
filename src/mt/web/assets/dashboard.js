@@ -1,4 +1,4 @@
-"use strict";
+import { html, render, repeat, nothing, styleMap } from "/assets/gen.vendor.js";
 
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -15,21 +15,6 @@ function token(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-let GAIN, LOSS, C = {};
-
-function readTheme() {
-  GAIN = token("--gain-mark");
-  LOSS = token("--loss-mark");
-  C = {
-    grid: token("--grid"),
-    gridZero: token("--grid-zero"),
-    axis: token("--axis-ink"),
-    crosshair: token("--crosshair"),
-    ring: token("--ring"),
-    tintMin: parseFloat(token("--tint-min")) || 0.09,
-    tintMax: parseFloat(token("--tint-max")) || 0.30,
-  };
-}
 
 const MONTHS = ["January","February","March","April","May","June",
                 "July","August","September","October","November","December"];
@@ -37,16 +22,19 @@ const MON3 = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov",
 const DAY3 = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 
 
-const PHONE = window.matchMedia("(max-width: 720px)");
-const onPhone = () => PHONE.matches;
+const onPhone = () => token("--is-phone") === "1";
 
-const STRATEGY_COLOURS = {
-  breakout_5m: "var(--s-breakout-5m)",
-  breakout_10m: "var(--s-breakout-10m)",
-  daily_sma: "var(--s-daily-sma)",
-  daily_tfb: "var(--s-daily-tfb)",
-  unattributed: "var(--ink-3)",
-};
+const strategyHue = key => "var(--s-" + key.replaceAll("_", "-") + "-h)";
+
+function strategyChip(hue) {
+  return html`<span class=${"chip" + (hue ? "" : " plain")}
+    style=${styleMap({"--strategy-h": hue})}></span>`;
+}
+
+function meterBar(fill, extraClass = "", hue) {
+  return html`<div class=${"meter " + extraClass}
+    style=${styleMap({"--meter-fill": fill, "--strategy-h": hue})}><i></i></div>`;
+}
 
 const clockLabel = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
 const dparts = d => d.split("-").map(Number);
@@ -68,35 +56,31 @@ let stratRange = "D";
 
 const monthIndex = (y, m) => y * 12 + m;
 
-function statsFor(trades) {
-  const wins = trades.filter(t => t.pnl > 0);
-  const losses = trades.filter(t => t.pnl <= 0);
-  const gross_profit = wins.reduce((a, t) => a + t.pnl, 0);
-  const gross_loss = Math.abs(losses.reduce((a, t) => a + t.pnl, 0));
-  const net_pnl = trades.reduce((a, t) => a + t.pnl, 0);
+function statsFor(trades, summary) {
+  const profits = trades.map(trade => trade.pnl);
+  const n = summary?.n ?? profits.length;
+  const wins = summary?.wins ?? profits.filter(value => value > 0).length;
+  const losses = n - wins;
+  const gross_profit = summary?.gross_profit ?? profits.reduce((sum, value) => sum + Math.max(value, 0), 0);
+  const gross_loss = summary?.gross_loss ?? -profits.reduce((sum, value) => sum + Math.min(value, 0), 0);
+  const net_pnl = summary?.net_pnl ?? profits.reduce((sum, value) => sum + value, 0);
   return {
-    n: trades.length, wins: wins.length, losses: losses.length,
-    winRate: trades.length ? (wins.length / trades.length) * 100 : 0,
-    net_pnl, gross_profit, gross_loss,
+    n, wins, losses, net_pnl, gross_profit, gross_loss,
+    winRate: n ? wins / n * 100 : 0,
     profitFactor: gross_loss ? gross_profit / gross_loss : Infinity,
-    expectancy: trades.length ? net_pnl / trades.length : 0,
-    avgWin: wins.length ? gross_profit / wins.length : 0,
-    avgLoss: losses.length ? gross_loss / losses.length : 0,
-    best: trades.length ? Math.max(...trades.map(t => t.pnl)) : 0,
-    worst: trades.length ? Math.min(...trades.map(t => t.pnl)) : 0,
+    expectancy: n ? net_pnl / n : 0,
+    avgWin: wins ? gross_profit / wins : 0,
+    avgLoss: losses ? gross_loss / losses : 0,
+    best: n ? Math.max(...profits) : 0,
+    worst: n ? Math.min(...profits) : 0,
   };
 }
 
 function periodFromTrades(key, base, trades) {
-  const rows = {};
-  for (const st of STRATEGIES) rows[st.key] = [0, 0];
-  for (const t of trades) {
-    if (!rows[t.strategy_key]) rows[t.strategy_key] = [0, 0];
-    rows[t.strategy_key][0] += 1;
-    rows[t.strategy_key][1] += t.pnl;
+  const rows = Object.fromEntries(STRATEGIES.map(st => [st.key, [0, 0]]));
+  for (const [strategy_key, group] of Map.groupBy(trades, t => t.strategy_key)) {
+    rows[strategy_key] = [group.length, Math.round(group.reduce((sum, t) => sum + t.pnl, 0) * 100) / 100];
   }
-  for (const strategy_key of Object.keys(rows))
-      rows[strategy_key][1] = Math.round(rows[strategy_key][1] * 100) / 100;
   STRATEGY_PERIODS[key] = { base, rows };
 }
 
@@ -161,114 +145,111 @@ function tradesFor(cell) {
   return tradesByDate.get(cell.iso) || [];
 }
 
-function derive(ledger) {
+let accountReadAt = 0, accountObservation;
+
+function derive(ledger, readAt) {
+  if (readAt < accountReadAt) {
+    const attribution = new Map(ledger.positions.map(pos => [pos.symbol, pos]));
+    ledger = { ...ledger, ...accountObservation, positions: accountObservation.positions.map(pos => {
+      const history = attribution.get(pos.symbol);
+      return history ? { ...pos, strategy_key: history.strategy_key, entered_at: history.entered_at, fills: history.fills } : pos;
+    }) };
+  }
+  const changed = keys => keys.some(key => JSON.stringify(ledger[key]) !== JSON.stringify(LEDGER?.[key]));
+  const historyChanged = changed(["trades", "strategies", "days", "periods", "invested", "benchmark", "benchmarkSymbol", "today", "totals", "windows"]) || ledger.equityDaily[0]?.date !== LEDGER?.equityDaily[0]?.date || !ledger.days.length && ledger.equityDaily.at(-1)?.date !== LEDGER?.equityDaily.at(-1)?.date;
+  const seriesChanged = changed(["equityDaily", "intraday", "intradayDate", "invested", "today"]);
   LEDGER = ledger;
-  monthCache = new Map();
-  STRATEGY_PERIODS = {};
+  if (historyChanged) {
+    monthCache.clear();
+    STRATEGY_PERIODS = {};
 
-  STRATEGIES = ledger.strategies.map(s => ({
-    key: s.key, label: s.short, sub: s.label, color: STRATEGY_COLOURS[s.key] || "var(--ink-3)",
-  }));
-  STRAT_BY_KEY = Object.fromEntries(STRATEGIES.map(x => [x.key, x]));
+    STRATEGIES = ledger.strategies.map(s => ({
+      key: s.key, label: s.short, sub: s.label,
+      hue: s.key === "unattributed" ? null : strategyHue(s.key),
+    }));
+    STRAT_BY_KEY = Object.fromEntries(STRATEGIES.map(x => [x.key, x]));
 
+    ALL_TRADES = ledger.trades.map(t => {
+      const [y, m, day] = dparts(t.date);
+      return { ...t, y, m: m - 1, day, weekday: parseDate(t.date).getDay() };
+    }).reverse();
+
+    tradesByDate = Map.groupBy([...ALL_TRADES].reverse(), t => t.date);
+
+    TOTALS = statsFor(ALL_TRADES, ledger.totals);
+
+
+    SESSIONS = ledger.days.map(d => ({
+      ...d,
+      pct: d.before ? (d.pnl / d.before) * 100 : 0,
+      label: parseDate(d.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+      long: parseDate(d.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" }),
+    }));
+
+    LAST_SESSION = SESSIONS[SESSIONS.length - 1] || { date: ledger.equityDaily.at(-1).date, pnl: 0, before: ledger.equity, pct: 0, trades: 0, wins: 0 };
+    DAY_PNL = LAST_SESSION.pnl;
+
+    periodFromTrades("D", LAST_SESSION.before, tradesByDate.get(LAST_SESSION.date) || []);
+    for (const key of ["W", "M"]) {
+      const period = ledger.periods[key];
+      periodFromTrades(key, period.base, ledger.trades.filter(t => t.date >= period.start && t.date <= ledger.today));
+    }
+    periodFromTrades("ALL", ledger.invested, ledger.trades);
+
+    const bench = ledger.benchmark;
+    const at = i => bench[i].close;
+    BENCH_SYMBOL = ledger.benchmarkSymbol;
+    BENCH = bench.length > 1
+      ? { D: (at(bench.length - 1) / at(bench.length - 2) - 1) * 100, W: ledger.periods.W.benchmarkPct,
+          M: ledger.periods.M.benchmarkPct, ALL: (at(bench.length - 1) / at(0) - 1) * 100 }
+      : { D: 0, W: ledger.periods.W.benchmarkPct, M: ledger.periods.M.benchmarkPct, ALL: 0 };
+
+    const [ly, lm, lday] = dparts(LAST_SESSION.date);
+    LATEST = { y: ly, m: lm - 1, day: lday };
+
+    const funded = ledger.equityDaily.length ? ledger.equityDaily[0].date : LAST_SESSION.date;
+    const [fy, fm] = dparts(funded);
+    const [ty, tm] = dparts(ledger.today);
+    FIRST_MONTH = { y: fy, m: fm - 1 };
+    LAST_MONTH = { y: ty, m: tm - 1 };
+    FIRST_IX = monthIndex(FIRST_MONTH.y, FIRST_MONTH.m);
+    LAST_IX = Math.max(FIRST_IX, monthIndex(LAST_MONTH.y, LAST_MONTH.m));
+
+  }
   ACCOUNT = {
+    ...ACCOUNT,
     invested: ledger.invested,
-    portfolio: ledger.equity,
-    cash: ledger.cash,
-    deployed: ledger.marketValue,
-    unrealized_pnl: ledger.unrealized_pnl,
-    buyingPower: ledger.buyingPower,
-    openPositions: ledger.positions.length,
     positionCapPct: ledger.positionCapPct,
     dailyLossLimitPct: ledger.dailyLossLimitPct,
   };
-  ACCOUNT.totalReturn = Math.round((ACCOUNT.portfolio - ACCOUNT.invested) * 100) / 100;
-  ACCOUNT.rateOfReturn = ACCOUNT.invested ? (ACCOUNT.totalReturn / ACCOUNT.invested) * 100 : 0;
-  ACCOUNT.exposurePct = ACCOUNT.portfolio ? (ACCOUNT.deployed / ACCOUNT.portfolio) * 100 : 0;
-  ACCOUNT.largestPositionPct = ledger.positions.length
-    ? Math.max(...ledger.positions.map(p => p.weight)) : 0;
 
-  OPEN_POSITIONS = ledger.positions;
-
-  ALL_TRADES = ledger.trades.map(t => {
-    const [y, m, day] = dparts(t.date);
-    return { ...t, y, m: m - 1, day, weekday: parseDate(t.date).getDay() };
-  }).reverse();
-
-  tradesByDate = new Map();
-  for (const t of [...ALL_TRADES].reverse()) {
-    if (!tradesByDate.has(t.date)) tradesByDate.set(t.date, []);
-    tradesByDate.get(t.date).push(t);
-  }
-
-  TOTALS = statsFor(ALL_TRADES);
   ACCOUNT.closed = TOTALS.n;
   ACCOUNT.wins = TOTALS.wins;
   ACCOUNT.losses = TOTALS.losses;
-  ACCOUNT.winRate = TOTALS.winRate;
-
-  SESSIONS = ledger.days.map(d => ({
-    ...d,
-    pct: d.before ? (d.pnl / d.before) * 100 : 0,
-    label: parseDate(d.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
-    long: parseDate(d.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" }),
-  }));
-
-  LAST_SESSION = SESSIONS[SESSIONS.length - 1] || { date: ledger.equityDaily.at(-1).date, pnl: 0, before: ledger.equity, pct: 0, trades: 0, wins: 0 };
-  DAY_PNL = LAST_SESSION.pnl;
-
-  periodFromTrades("D", LAST_SESSION.before, tradesByDate.get(LAST_SESSION.date) || []);
-  for (const key of ["W", "M"]) {
-    const period = ledger.periods[key];
-    periodFromTrades(key, period.base, ledger.trades.filter(t => t.date >= period.start && t.date <= ledger.today));
+  ACCOUNT.winRate = TOTALS.n ? TOTALS.wins / TOTALS.n * 100 : 0;
+  if (seriesChanged) {
+    [DAILY, INTRADAY] = [ledger.equityDaily, ledger.intraday].map((rows, intraday) => {
+      const series = rows.map((r, i) => {
+        const date = parseDate(intraday ? ledger.intradayDate : r.date);
+        return {
+          label: intraday ? r.t : date.toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
+          long: date.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) + (intraday ? ", " + r.t : ""),
+          value: Math.round((r.equity - ledger.invested) * 100) / 100,
+          before: Math.round(((i ? rows[i - 1].equity : intraday ? r.equity : ledger.invested) - ledger.invested) * 100) / 100,
+        };
+      });
+      series.equityBase = ledger.invested;
+      series.todayTip = rows.length > 0 && (intraday ? ledger.intradayDate : rows.at(-1).date) === ledger.today;
+      return series;
+    });
+    if (!INTRADAY.length) INTRADAY = DAILY;
+    ACCOUNT.dayOpening = ledger.intraday[0]?.equity || 0;
+    ACCOUNT.dayLowEquity = ledger.intraday.length
+      ? ratchetLow(ledger.intradayDate, Math.min(...ledger.intraday.map(r => r.equity), ledger.equity))
+      : 0;
   }
-  periodFromTrades("ALL", ACCOUNT.invested, ledger.trades);
-
-  const bench = ledger.benchmark;
-  const at = i => bench[i].close;
-  BENCH_SYMBOL = ledger.benchmarkSymbol;
-  BENCH = bench.length > 1
-    ? { D: (at(bench.length - 1) / at(bench.length - 2) - 1) * 100, W: ledger.periods.W.benchmarkPct,
-        M: ledger.periods.M.benchmarkPct, ALL: (at(bench.length - 1) / at(0) - 1) * 100 }
-    : { D: 0, W: ledger.periods.W.benchmarkPct, M: ledger.periods.M.benchmarkPct, ALL: 0 };
-
-  const [ly, lm, lday] = dparts(LAST_SESSION.date);
-  LATEST = { y: ly, m: lm - 1, day: lday };
-
-  const funded = ledger.equityDaily.length ? ledger.equityDaily[0].date : LAST_SESSION.date;
-  const [fy, fm] = dparts(funded);
-  const [ty, tm] = dparts(ledger.today);
-  FIRST_MONTH = { y: fy, m: fm - 1 };
-  LAST_MONTH = { y: ty, m: tm - 1 };
-  FIRST_IX = monthIndex(FIRST_MONTH.y, FIRST_MONTH.m);
-  LAST_IX = Math.max(FIRST_IX, monthIndex(LAST_MONTH.y, LAST_MONTH.m));
-
-  DAILY = ledger.equityDaily.map((r, i) => ({
-    label: parseDate(r.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
-    long: parseDate(r.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }),
-    value: Math.round((r.equity - ledger.invested) * 100) / 100,
-    before: i ? Math.round((ledger.equityDaily[i - 1].equity - ledger.invested) * 100) / 100 : 0,
-  }));
-  DAILY.equityBase = ledger.invested;
-
-  DAILY.todayTip = ledger.equityDaily.length > 0 && ledger.equityDaily.at(-1).date === ledger.today;
-
-  const opening = ledger.intraday.length ? ledger.intraday[0].equity : ledger.equity;
-  INTRADAY = ledger.intraday.map((r, i) => ({
-    label: r.t,
-    long: (ledger.intradayDate ? parseDate(ledger.intradayDate).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) + ", " : "") + r.t,
-    value: Math.round((r.equity - ledger.invested) * 100) / 100,
-    before: Math.round(((i ? ledger.intraday[i - 1].equity : opening) - ledger.invested) * 100) / 100,
-  }));
-  INTRADAY.equityBase = ledger.invested;
-  INTRADAY.todayTip = ledger.intraday.length > 0 && ledger.intradayDate === ledger.today;
-  if (!INTRADAY.length) INTRADAY = DAILY;
-
-  ACCOUNT.dayOpening = ledger.intraday.length ? opening : 0;
-  ACCOUNT.dayLowEquity = ledger.intraday.length
-    ? ratchetLow(ledger.intradayDate, Math.min(...ledger.intraday.map(r => r.equity), ledger.equity))
-    : 0;
-  ACCOUNT.dayDrawdownPct = drawdownPct();
+  applyPulse(ledger, Math.max(readAt, accountReadAt));
+  return historyChanged;
 }
 
 let SESSION_LOW = { date: "", equity: 0 };
@@ -312,15 +293,11 @@ function renderToday() {
 
   const sum = document.getElementById("today-sum");
   const table = document.getElementById("today-table");
-  sum.replaceChildren();
-  table.replaceChildren();
 
   if (todayTab === "open") {
-    sum.innerHTML =
-      "Unrealized <b class='" + tone(ACCOUNT.unrealized_pnl) + "'>" + signedMoney(ACCOUNT.unrealized_pnl) + "</b>" +
-      "<span>Deployed <b>" + money(ACCOUNT.deployed) + "</b></span>" +
-      "<span>Exposure <b>" + ACCOUNT.exposurePct.toFixed(1) + "%</b></span>" +
-      "<span>Largest <b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "% cap</span>";
+    render(html`Unrealized <b class=${tone(ACCOUNT.unrealized_pnl)}>${signedMoney(ACCOUNT.unrealized_pnl)}</b>
+      <span>Deployed <b>${money(ACCOUNT.deployed)}</b></span><span>Exposure <b>${ACCOUNT.exposurePct.toFixed(1)}%</b></span>
+      <span>Largest <b>${ACCOUNT.largestPositionPct.toFixed(1)}%</b> of ${ACCOUNT.positionCapPct.toFixed(1)}% cap</span>`, sum);
     buildTable(table,
       ["Symbol", "Strategy", "Entry", "Last", "Value", "Unreal."],
       OPEN_POSITIONS.map(pos => [
@@ -335,107 +312,73 @@ function renderToday() {
   }
 
   if (!cell) {
-    sum.innerHTML = "<span>No session</span>";
-    table.innerHTML = "<tbody><tr><td class='empty'>No session on this date.</td></tr></tbody>";
+    render(html`<span>No session</span>`, sum);
+    render(html`<tbody><tr><td class="empty">No session on this date.</td></tr></tbody>`, table);
     return;
   }
 
   if (!trades.length) {
-    sum.innerHTML = "<span>No closed trades</span>";
-    table.innerHTML = "<tbody><tr><td class='empty'>No trades closed in this session.</td></tr></tbody>";
+    render(html`<span>No closed trades</span>`, sum);
+    render(html`<tbody><tr><td class="empty">No trades closed in this session.</td></tr></tbody>`, table);
     return;
   }
 
-  const realised = trades.reduce((a, t) => a + t.pnl, 0);
-  const wins = trades.filter(t => t.pnl > 0).length;
-  sum.innerHTML =
-    "Realised <b class='" + tone(realised) + "'>" + signedMoney(realised) + "</b>" +
-    "<span><b>" + wins + "</b> of <b>" + trades.length + "</b> won</span>" +
-    "<span>Return <b class='" + tone(cell.pct) + "'>" + signedPct(cell.pct) + "</b></span>";
+  render(sessionSummary(cell), sum);
 
   buildTable(table,
     ["Time", "Symbol", "Strategy", "In", "Out", "P&L"],
-    trades.map(t => [
-      { t: clockLabel(t.minute), dim: true },
-      symbolCell(t.symbol, t.side),
-      stratCell(t.strategy_key),
-      { t: money(t.entry), r: true },
-      { t: money(t.exit), r: true },
-      { t: signedMoney(t.pnl), r: true, cls: tone(t.pnl) },
-    ]), 3);
+    trades.map(t => tradeCells(t)), 3);
+}
+
+function tradeCells(trade, linked = false) {
+  return [
+    { t: clockLabel(trade.minute), dim: true },
+    symbolCell(trade.symbol, trade.side, linked ? trade : null),
+    stratCell(trade.strategy_key),
+    { t: money(trade.entry), r: true },
+    { t: money(trade.exit), r: true },
+    { t: signedMoney(trade.pnl), r: true, cls: tone(trade.pnl) },
+  ];
+}
+
+function sessionSummary(session) {
+  return html`Realised <b class=${tone(session.pnl)}>${signedMoney(session.pnl)}</b>
+    <span><b>${session.wins}</b> of <b>${session.trades}</b> won</span>
+    <span>Return <b class=${tone(session.pct)}>${signedPct(session.pct)}</b></span>`;
 }
 
 function symbolCell(symbol, side, trade) {
-  const wrap = document.createElement("span");
-  const sym = document.createElement(trade ? "button" : "span");
-  sym.className = "sym";
-  sym.textContent = symbol;
-  if (trade) {
-    sym.type = "button";
-    sym.classList.add("linked");
-    sym.title = "Chart this trade";
-    sym.addEventListener("click", () => openTradeChart(trade, currentView));
-  }
-  const tag = document.createElement("span");
-  tag.className = "side" + (side === "short" ? " short" : "");
-  tag.textContent = side === "short" ? "S" : "L";
-  tag.title = side === "short" ? "Short" : "Long";
-  wrap.append(sym, tag);
-  return { node: wrap };
+  return { symbol, node: html`<span>
+    ${trade ? html`<button class="sym linked" type="button" title="Chart this trade"
+      @click=${() => openTradeChart(trade.open ? positionTrade(OPEN_POSITIONS.find(pos => pos.symbol === symbol)) : trade, currentView)}>${symbol}</button>`
+      : html`<span class="sym">${symbol}</span>`}
+    <span class=${"side" + (side === "short" ? " short" : "")}
+      title=${side === "short" ? "Short" : "Long"}>${side === "short" ? "S" : "L"}</span>
+  </span>` };
 }
 
 function stratCell(strategy_key) {
-  const s = STRAT_BY_KEY[strategy_key];
-  const wrap = document.createElement("span");
-  wrap.className = "tstrat";
-  const chip = document.createElement("span");
-  chip.className = "chip";
-  chip.style.background = s.color;
-  const name = document.createElement("span");
-  name.textContent = s.label;
-  wrap.append(chip, name);
-  wrap.title = s.sub;
-  return { node: wrap };
+  const strategy = STRAT_BY_KEY[strategy_key];
+  return { node: html`<span class="tstrat" title=${strategy.sub}>
+    ${strategyChip(strategy.hue)}<span>${strategy.label}</span>
+  </span>` };
 }
 
 function buildTable(table, headers, rows, rightFrom, rowClass) {
-  const thead = document.createElement("thead");
-  const hr = document.createElement("tr");
-  headers.forEach((h, i) => {
-    const th = document.createElement("th");
-    th.scope = "col";
-    th.textContent = h;
-    if (i >= rightFrom) th.className = "r";
-    hr.append(th);
-  });
-  thead.append(hr);
-
-  const tbody = document.createElement("tbody");
-  rows.forEach((row, index) => {
-    const tr = document.createElement("tr");
-    if (rowClass) {
-      const extra = rowClass(row, index);
-      if (extra) tr.className = extra;
-    }
-    const cells = [];
-    for (const [i, c] of row.entries()) {
-      const td = document.createElement("td");
-      if (c.node) td.append(c.node);
-      else td.textContent = c.t;
-      td.dataset.label = headers[i];
-      if (c.r) td.classList.add("r");
-      if (c.cls) td.classList.add(c.cls);
-      if (c.dim) td.classList.add("flat");
-      cells.push(td);
-      tr.append(td);
-    }
-    const key = cells.find(td => td.querySelector(".sym")) || cells[0];
-    if (key) key.classList.add("key");
-    const lead = cells.find(td => /^(p&l|unrealized)/i.test(td.dataset.label)) || cells[cells.length - 1];
-    if (lead && lead !== key) lead.classList.add("lead");
-    tbody.append(tr);
-  });
-  table.replaceChildren(thead, tbody);
+  const rowTemplate = (row, index) => {
+    const key = Math.max(0, row.findIndex(cell => cell.symbol));
+    const lead = headers.findIndex(header => /^(p&l|unrealized)/i.test(header));
+    return html`<tr class=${rowClass?.(row, index) || ""}>${row.map((cell, column) => html`
+      <td data-label=${headers[column]} class=${[
+        cell.r ? "r" : "", cell.cls, cell.dim ? "flat" : "",
+        column === key ? "key" : column === (lead < 0 ? row.length - 1 : lead) ? "lead" : "",
+      ].filter(Boolean).join(" ")}>${cell.node ?? cell.t}</td>`)}</tr>`;
+  };
+  const retained = table.id === "pf-open-table" || table.id === "today-table" && todayTab === "open";
+  render(html`<thead><tr>${headers.map((header, index) => html`
+    <th scope="col" class=${index >= rightFrom ? "r" : ""}>${header}</th>`)}</tr></thead>
+    <tbody>${retained ? repeat(rows, row => row.find(cell => cell.symbol).symbol, rowTemplate)
+      : rows.map(rowTemplate)}</tbody>`, table);
 }
 
 function selectDay(y, m, day) {
@@ -446,98 +389,79 @@ function selectDay(y, m, day) {
 
 
 function renderAccount() {
-  document.getElementById("chart-funded").textContent =
-    "Funded " + money(ACCOUNT.invested) + " · " + LEDGER.funded;
-  document.getElementById("v-portfolio").textContent = money(ACCOUNT.portfolio);
-  document.getElementById("v-cash").textContent = money(ACCOUNT.cash);
-
-  const tr = document.getElementById("v-tr");
-  tr.className = "v " + tone(ACCOUNT.totalReturn);
-  tr.innerHTML = signedMoney(ACCOUNT.totalReturn) +
-    '<span class="u">' + signedPct(ACCOUNT.rateOfReturn) + "</span>";
-
-  const dayPct = (DAY_PNL / STRATEGY_PERIODS.D.base) * 100;
-  const d24 = document.getElementById("v-d24");
-  d24.className = "v " + tone(DAY_PNL);
-  d24.innerHTML = signedMoney(DAY_PNL) + '<span class="u">' + signedPct(dayPct) + "</span>";
-
-  document.getElementById("v-open").textContent = ACCOUNT.openPositions;
-  document.getElementById("v-exposure").textContent = ACCOUNT.exposurePct.toFixed(1) + "%";
-
-  document.getElementById("v-dll").innerHTML =
-    "<b>" + ACCOUNT.dayDrawdownPct.toFixed(2) + "%</b> of " + ACCOUNT.dailyLossLimitPct.toFixed(2) + "%";
-  const dllUsed = clamp(ACCOUNT.dayDrawdownPct / ACCOUNT.dailyLossLimitPct, 0, 1) * 100;
-  const dll = document.getElementById("m-dll");
-  dll.style.width = Math.max(dllUsed, 1.5) + "%";
-  dll.style.background = "var(--loss-mark)";
-
-  document.getElementById("v-cap").innerHTML =
-    "<b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "%";
-  const cap = document.getElementById("m-cap");
-  cap.style.width = clamp(ACCOUNT.largestPositionPct / ACCOUNT.positionCapPct, 0, 1) * 100 + "%";
-  cap.style.background = "var(--ink-3)";
-
-  document.getElementById("v-winrate").textContent = ACCOUNT.winRate.toFixed(1) + "%";
-  document.getElementById("bar-w").style.flex = String(ACCOUNT.wins);
-  document.getElementById("bar-l").style.flex = String(ACCOUNT.losses);
-  document.getElementById("lg-w").textContent = ACCOUNT.wins + " wins";
-  document.getElementById("lg-l").textContent = ACCOUNT.losses + " losses";
-  document.getElementById("winrate-bar").setAttribute("aria-label",
-    "Win rate " + ACCOUNT.winRate.toFixed(1) + " percent: " + ACCOUNT.wins + " wins and " +
-    ACCOUNT.losses + " losses across " + ACCOUNT.closed + " closed trades");
-
   const bar = document.getElementById("status");
   bar.classList.toggle("closed", !LEDGER.marketOpen);
-  document.getElementById("st-word").textContent = LEDGER.marketOpen ? "Market open" : "Market closed";
-  document.getElementById("st-session").textContent =
-    LEDGER.marketOpen ? "closes " + LEDGER.nextClose : "opens " + LEDGER.nextOpen;
-  document.getElementById("st-strats").textContent =
-    "Account " + LEDGER.accountNumber + " · " + LEDGER.positions.length + " positions";
-  document.getElementById("st-asof").textContent = LEDGER.asOf;
+  const note = botNote();
+  if (note) bar.dataset.bot = "stale";
+  else delete bar.dataset.bot;
+  render(html`<span class="dot"></span><span class="word" id="st-word">${LEDGER.marketOpen ? "Market open" : "Market closed"}</span>
+    <span class="sep"></span><span id="st-session">${LEDGER.marketOpen ? "closes " + LEDGER.nextClose : "opens " + LEDGER.nextOpen}</span>
+    <span class="sep"></span><span id="st-strats">Account ${LEDGER.accountNumber} · ${OPEN_POSITIONS.length} positions</span>
+    <span class="sep"></span><span class="asof" id="st-asof"></span>
+    <span class="sep"></span><span class="bot-note" id="st-bot">${note}</span>`, bar);
+  markFeed();
+  document.getElementById("chart-funded").textContent =
+    "Funded " + money(ACCOUNT.invested) + " · " + LEDGER.funded;
+  renderAccountValues("dashboard");
+  render(html`<div class="winrate-top"><span class="k">Win rate</span>
+    <span class="v" id="v-winrate">${ACCOUNT.winRate.toFixed(1)}%</span></div>
+    <div class="winrate-bar" id="winrate-bar" role="img"
+      aria-label=${"Win rate " + ACCOUNT.winRate.toFixed(1) + " percent: " + ACCOUNT.wins + " wins and " +
+        ACCOUNT.losses + " losses across " + ACCOUNT.closed + " closed trades"}>
+      <span class="w" id="bar-w" style=${styleMap({flex: ACCOUNT.wins})}></span>
+      <span class="l" id="bar-l" style=${styleMap({flex: ACCOUNT.losses})}></span></div>
+    <div class="winrate-legend"><span id="lg-w">${ACCOUNT.wins} wins</span><span id="lg-l">${ACCOUNT.losses} losses</span></div>`,
+    document.getElementById("performance"));
 }
 
-
+function renderAccountValues(view) {
+  const portfolio = view === "portfolio";
+  const limit = (value, maximum, digits) => html`<b>${value.toFixed(digits)}%</b> of ${maximum.toFixed(digits)}%`;
+  const cap = ["Position cap", portfolio ? "pf-cap" : "v-cap", limit(ACCOUNT.largestPositionPct, ACCOUNT.positionCapPct, 1), "lim",
+    portfolio ? "pf-cap-meter" : "m-cap", clamp(ACCOUNT.largestPositionPct / ACCOUNT.positionCapPct, 0, 1)];
+  const stats = portfolio ? [
+    ["Unrealized", "pf-unrealized-pnl", signedMoney(ACCOUNT.unrealized_pnl), "v " + tone(ACCOUNT.unrealized_pnl)],
+    ["Positions", "pf-count", ACCOUNT.openPositions],
+    ["Exposure", "pf-exposure", ACCOUNT.exposurePct.toFixed(1) + "%"],
+    ["Largest", "pf-largest", ACCOUNT.largestPositionPct.toFixed(1) + "%"],
+    ["Buying power", "pf-risk", money(ACCOUNT.buyingPower)], cap,
+  ] : [
+    ["Total return", "v-tr", html`${signedMoney(ACCOUNT.totalReturn)}<span class="u">${signedPct(ACCOUNT.rateOfReturn)}</span>`, "v " + tone(ACCOUNT.totalReturn)],
+    ["Last session", "v-d24", html`${signedMoney(DAY_PNL)}<span class="u">${signedPct(DAY_PNL / STRATEGY_PERIODS.D.base * 100)}</span>`, "v " + tone(DAY_PNL)],
+    ["Open positions", "v-open", ACCOUNT.openPositions],
+    ["Exposure", "v-exposure", ACCOUNT.exposurePct.toFixed(1) + "%"],
+    ["Daily loss limit", "v-dll", limit(ACCOUNT.dayDrawdownPct, ACCOUNT.dailyLossLimitPct, 2), "lim", "m-dll",
+      Math.max(clamp(ACCOUNT.dayDrawdownPct / ACCOUNT.dailyLossLimitPct, 0, 1), .015)], cap,
+  ];
+  render(html`<div class="value-row"><span class="label">${portfolio ? "Market value" : "Portfolio"}</span>
+    <span class="figure" id=${portfolio ? "pf-value" : "v-portfolio"}>${money(portfolio ? ACCOUNT.deployed : ACCOUNT.portfolio)}</span></div>
+    <div class="value-row secondary"><span class="label">Cash</span>
+      <span class="figure" id=${portfolio ? "pf-cash" : "v-cash"}>${money(ACCOUNT.cash)}</span></div>
+    <div class="stat-grid">${stats.map(([label, id, value, cls, meter, fill]) => html`
+      <div class="stat"><span class="k">${label}</span><span class=${cls || "v"} id=${id}>${value}</span>
+        ${meter ? html`<div class=${"meter" + (meter === "m-dll" ? " loss" : "")}>
+          <i id=${meter} style=${styleMap({"--meter-fill": fill})}></i></div>` : nothing}</div>`)}</div>`,
+    document.querySelector("#view-" + view + " .rail .panel-body"));
+}
 
 function renderPeriodReturns() {
-  const host = document.getElementById("period-cells");
-  host.replaceChildren();
   document.querySelector(".bench-note").textContent = "vs " + BENCH_SYMBOL;
-
-  for (const [label, key] of [["Session", "D"], ["Week", "W"], ["Month", "M"], ["Inception", "ALL"]]) {
-    const p = STRATEGY_PERIODS[key];
-    const pnl = Object.values(p.rows).reduce((s, r) => s + r[1], 0);
-    host.append(periodCell(label, pnl, p.base ? (pnl / p.base) * 100 : null, BENCH[key]));
-  }
+  render([['Session', 'D'], ['Week', 'W'], ['Month', 'M'], ['Inception', 'ALL']].map(([label, key]) => {
+    const period = STRATEGY_PERIODS[key];
+    const pnl = Object.values(period.rows).reduce((sum, row) => sum + row[1], 0);
+    const pct = period.base ? pnl / period.base * 100 : null;
+    return html`<div class="period-cell"><span class="k">${label}</span>
+      <span class=${"v " + tone(pct)}>${unit === "pct" ? signedPct(pct) : signedMoney(pnl)}</span>
+      <span class="bench">${BENCH_SYMBOL} ${signedPct(BENCH[key])}</span></div>`;
+  }), document.getElementById("period-cells"));
 }
-
-function periodCell(label, pnl, pct, benchPct) {
-  const cell = document.createElement("div");
-  cell.className = "period-cell";
-
-  const k = document.createElement("span");
-  k.className = "k";
-  k.textContent = label;
-
-  const v = document.createElement("span");
-  v.className = "v " + tone(pct);
-  v.textContent = unit === "pct" ? signedPct(pct) : signedMoney(pnl);
-
-  const bench = document.createElement("span");
-  bench.className = "bench";
-  bench.textContent = BENCH_SYMBOL + " " + signedPct(benchPct);
-
-  cell.append(k, v, bench);
-  return cell;
-}
-
-
-
 
 const SWITCH_STATE = {
   online:  { label: "Online",  hint: "This strategy is selected and can open positions" },
   paused:  { label: "Paused",  hint: "This strategy manages existing positions and opens no new positions" },
   unselected: { label: "Unselected", hint: "This strategy is not selected; existing positions are still managed" },
   unknown: { label: "Unknown", hint: "The bot has not reported its selected strategies" },
+  stale: { label: "Last known", hint: "The bot has stopped reporting; this is its last report" },
 };
 
 const SESSION_STATE = {
@@ -549,7 +473,18 @@ function switchState(strategy_key) {
   const bot = LEDGER.bot || {};
   if (!bot.reported) return "unknown";
   if (!(bot.strategies || []).includes(strategy_key)) return "unselected";
+  if (!bot.running) return "stale";
   return (bot.paused || []).includes(strategy_key) ? "paused" : "online";
+}
+
+function botNote() {
+  const bot = LEDGER.bot || {};
+  if (!bot.reported) return "Bot has never reported";
+  if (bot.running) return "";
+  const since = bot.reportedAgoMinutes;
+  return Number.isFinite(since)
+    ? "Bot last reported " + (since < 1 ? "under a minute" : Math.round(since) + " min") + " ago"
+    : "Bot has stopped reporting";
 }
 
 function tradingMinutes() {
@@ -578,69 +513,47 @@ function windowLabel(strategy_key) {
 }
 
 function stateBadge(kind, key, table, extra) {
-  const pill = document.createElement("span");
-  pill.className = "run-state " + kind + " is-" + key;
-  pill.textContent = table[key].label;
-  pill.title = extra ? table[key].hint + " (" + extra + ")" : table[key].hint;
-  return pill;
+  return html`<span class=${"run-state " + kind + " is-" + key}
+    title=${table[key].hint + (extra ? " (" + extra + ")" : "")}>${table[key].label}</span>`;
 }
 
 function stateBadges(strategy_key) {
-  const wrap = document.createElement("span");
-  wrap.className = "states";
-  wrap.append(
-    stateBadge("switch", switchState(strategy_key), SWITCH_STATE),
-    stateBadge("session", sessionState(strategy_key), SESSION_STATE, windowLabel(strategy_key)),
-  );
-  return wrap;
+  return html`<span class="states">
+    ${stateBadge("switch", switchState(strategy_key), SWITCH_STATE)}
+    ${stateBadge("session", sessionState(strategy_key), SESSION_STATE, windowLabel(strategy_key))}
+  </span>`;
 }
 
 function renderStrategies(period) {
-  const body = document.getElementById("strat-body");
-  const p = STRATEGY_PERIODS[period];
-  body.replaceChildren();
-
-  for (const s of STRATEGIES) {
-    const [trades, pnl] = p.rows[s.key];
-    if (s.key === "unattributed" && trades === 0) continue;
-    const tr = document.createElement("tr");
-
-    const nameCell = document.createElement("td");
-    const strat = document.createElement("div");
-    strat.className = "strat";
-    strat.title = s.sub;
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.style.background = s.color;
-    const nm = document.createElement("span");
-    nm.className = "name";
-    nm.textContent = s.label;
-    strat.append(chip, nm);
-    if (s.key !== "unattributed") strat.append(stateBadges(s.key));
-    nameCell.append(strat);
-
-    const tradeCell = document.createElement("td");
-    tradeCell.className = "r num";
-    tradeCell.textContent = trades === 0 ? "—" : plainNum(trades);
-    if (trades === 0) tradeCell.classList.add("flat");
-
-    const pnlCell = document.createElement("td");
-    pnlCell.className = "r pnl-cell";
-    const big = document.createElement("span");
-    big.className = "num " + tone(pnl);
-    big.textContent = trades === 0 ? "—" : signedMoney(pnl);
-    const small = document.createElement("span");
-    small.className = "sub";
-    small.textContent = trades === 0 ? "" : signedPct(p.base ? (pnl / p.base) * 100 : null);
-    pnlCell.append(big, small);
-
-    tr.append(nameCell, tradeCell, pnlCell);
-    body.append(tr);
-  }
+  const selected = STRATEGY_PERIODS[period];
+  render(STRATEGIES.map(strategy => {
+    const [trades, pnl] = selected.rows[strategy.key];
+    if (strategy.key === "unattributed" && !trades) return nothing;
+    return html`<tr><td><div class="strat" title=${strategy.sub}>
+      ${strategyChip(strategy.hue)}<span class="name">${strategy.label}</span>
+      ${strategy.key === "unattributed" ? nothing : stateBadges(strategy.key)}
+    </div></td><td class=${"r num" + (trades ? "" : " flat")}>${trades ? plainNum(trades) : "—"}</td>
+    <td class="r pnl-cell"><span class=${"num " + tone(pnl)}>${trades ? signedMoney(pnl) : "—"}</span>
+      <span class="sub">${trades ? signedPct(selected.base ? pnl / selected.base * 100 : null) : ""}</span>
+    </td></tr>`;
+  }), document.getElementById("strat-body"));
 }
 
+const space = step => parseFloat(token(step)) || 12;
 
-const PAD = { t: 12, r: 58, b: 22, l: 16 };
+function axisMetrics(hostId) {
+  const size = parseFloat(getComputedStyle(document.getElementById(hostId)).fontSize) || 10;
+  return { size, advance: size * 0.62 };
+}
+
+const gutterFor = (labels, advance) =>
+  Math.ceil(Math.max(...labels.map(text => text.length)) * advance) + 16;
+
+const chartPad = widest => {
+  const unit = space("--space-md");
+  const { advance } = axisMetrics("chart-host");
+  return { t: unit, r: gutterFor(widest, advance), b: unit * 1.8, l: unit * 1.3 };
+};
 
 const chart = {
   series: null,
@@ -650,7 +563,7 @@ const chart = {
   custom: false,
 };
 
-let geo = null;
+let geo = null, chartPointer = null;
 
 function presetWindow(range) {
   if (range === "D") return { series: INTRADAY, i0: 0, i1: INTRADAY.length - 1 };
@@ -667,7 +580,7 @@ function setRange(range) {
   chart.preset = range;
   chart.custom = false;
   syncRangeButtons();
-  drawChart();
+  queueChart();
 }
 
 function syncRangeButtons() {
@@ -721,6 +634,24 @@ function paintChartHero(w) {
     "</tbody></table>";
 }
 
+function tickLabels(w) {
+  const ys = w.visible.map(v => v.y).concat([0]);
+  const reach = Math.max(Math.abs(Math.min(...ys)), Math.abs(Math.max(...ys))) * 1.14;
+  return ["−" + usd0.format(reach || 1)];
+}
+
+let chartFrame = 0, chartOutput;
+function queueChart() {
+  cancelAnimationFrame(chartFrame);
+  chartFrame = requestAnimationFrame(() => {
+    const host = document.getElementById("chart-host");
+    const output = JSON.stringify([chart, unit, resolvedTheme(), host.clientWidth, host.clientHeight]);
+    if (output === chartOutput) return;
+    chartOutput = output;
+    drawChart();
+  });
+}
+
 function drawChart() {
   const w = chartWindow();
   if (!w) return;
@@ -731,9 +662,9 @@ function drawChart() {
   const width = host.clientWidth;
   const height = host.clientHeight;
   if (width < 60 || height < 60) return;
-  readTheme();
 
   const { N, lo, hi, baseline, visible } = w;
+  const PAD = chartPad(tickLabels(w));
   const plotW = width - PAD.l - PAD.r;
   const plotH = height - PAD.t - PAD.b;
 
@@ -768,11 +699,11 @@ function drawChart() {
   for (let t = Math.ceil(yMin / step) * step; t <= yMax; t += step) ticks.push(t);
 
   const gridSvg = ticks.map(t =>
-    '<line x1="' + PAD.l + '" y1="' + py(t).toFixed(2) + '" x2="' + (width - PAD.r) + '" y2="' + py(t).toFixed(2) +
-    '" stroke="' + (Math.abs(t) < 1e-9 ? C.gridZero : C.grid) + '" stroke-width="1"' +
+    '<line class="' + (Math.abs(t) < 1e-9 ? "grid-zero" : "grid") + '" x1="' + PAD.l +
+    '" y1="' + py(t).toFixed(2) + '" x2="' + (width - PAD.r) + '" y2="' + py(t).toFixed(2) + '"' +
     (Math.abs(t) < 1e-9 ? ' stroke-dasharray="3 3"' : "") + "/>" +
-    '<text x="' + (width - PAD.r + 8) + '" y="' + (py(t) + 3.5).toFixed(2) + '" fill="' + C.axis + '" font-size="10" ' +
-    'font-family="Roboto Mono, monospace">' + (t >= 0 ? "" : "−") + usd0.format(Math.abs(t)) + "</text>"
+    '<text x="' + (width - PAD.r + 8) + '" y="' + (py(t) + 3.5).toFixed(2) + '">' +
+    (t >= 0 ? "" : "−") + usd0.format(Math.abs(t)) + "</text>"
   ).join("");
 
   const count = visible.length;
@@ -780,42 +711,38 @@ function drawChart() {
   const xSvg = visible.map((v, k) =>
     (k % every === 0 || k === count - 1)
       ? '<text x="' + clamp(px(v.i), PAD.l + 14, width - PAD.r - 14).toFixed(2) + '" y="' + (height - 6) +
-        '" fill="' + C.axis + '" font-size="10" text-anchor="middle" ' +
-        'font-family="Roboto Mono, monospace">' + v.p.label + "</text>"
+        '" text-anchor="middle">' + v.p.label + "</text>"
       : ""
   ).join("");
 
   const last = visible[visible.length - 1];
-  const lastTone = last.y >= 0 ? GAIN : LOSS;
+  const lastTone = last.y >= 0 ? "mark-gain" : "mark-loss";
 
   host.querySelectorAll("svg").forEach(n => n.remove());
   host.insertAdjacentHTML("afterbegin",
     '<svg viewBox="0 0 ' + width + " " + height + '" preserveAspectRatio="none" ' +
     'role="img" aria-label="Cumulative profit and loss across the visible window">' +
       "<defs>" +
-        '<linearGradient id="gPos" x1="0" x2="0" y1="' + PAD.t + '" y2="' + zeroY + '" gradientUnits="userSpaceOnUse">' +
-          '<stop offset="0" stop-color="' + GAIN + '" stop-opacity="0.36"/>' +
-          '<stop offset="1" stop-color="' + GAIN + '" stop-opacity="0.02"/></linearGradient>' +
-        '<linearGradient id="gNeg" x1="0" x2="0" y1="' + zeroY + '" y2="' + (height - PAD.b) + '" gradientUnits="userSpaceOnUse">' +
-          '<stop offset="0" stop-color="' + LOSS + '" stop-opacity="0.03"/>' +
-          '<stop offset="1" stop-color="' + LOSS + '" stop-opacity="0.34"/></linearGradient>' +
+        '<linearGradient id="gGain" x1="0" x2="0" y1="' + PAD.t + '" y2="' + zeroY + '" gradientUnits="userSpaceOnUse">' +
+          '<stop class="g0" offset="0"/><stop class="g1" offset="1"/></linearGradient>' +
+        '<linearGradient id="gLoss" x1="0" x2="0" y1="' + zeroY + '" y2="' + (height - PAD.b) + '" gradientUnits="userSpaceOnUse">' +
+          '<stop class="g0" offset="0"/><stop class="g1" offset="1"/></linearGradient>' +
         '<clipPath id="cPlot"><rect x="' + PAD.l + '" y="' + PAD.t + '" width="' + plotW + '" height="' + plotH + '"/></clipPath>' +
         '<clipPath id="cPos"><rect x="0" y="0" width="' + width + '" height="' + Math.max(0, zeroY) + '"/></clipPath>' +
         '<clipPath id="cNeg"><rect x="0" y="' + zeroY + '" width="' + width + '" height="' + Math.max(0, height - zeroY) + '"/></clipPath>' +
       "</defs>" +
       gridSvg +
       '<g clip-path="url(#cPlot)">' +
-        '<path d="' + area + '" fill="url(#gPos)" clip-path="url(#cPos)"/>' +
-        '<path d="' + area + '" fill="url(#gNeg)" clip-path="url(#cNeg)"/>' +
-        '<path d="' + line + '" fill="none" stroke="' + GAIN + '" stroke-width="2" stroke-linejoin="round" ' +
+        '<path class="area-gain" d="' + area + '" clip-path="url(#cPos)"/>' +
+        '<path class="area-loss" d="' + area + '" clip-path="url(#cNeg)"/>' +
+        '<path class="series mark-gain" d="' + line + '" ' +
           'vector-effect="non-scaling-stroke" clip-path="url(#cPos)"/>' +
-        '<path d="' + line + '" fill="none" stroke="' + LOSS + '" stroke-width="2" stroke-linejoin="round" ' +
+        '<path class="series mark-loss" d="' + line + '" ' +
           'vector-effect="non-scaling-stroke" clip-path="url(#cNeg)"/>' +
-        '<line id="cross" x1="0" y1="' + PAD.t + '" x2="0" y2="' + (PAD.t + plotH) + '" stroke="' + C.crosshair + '" ' +
-          'stroke-width="1" vector-effect="non-scaling-stroke" opacity="0"/>' +
-        '<circle id="crossDot" r="4.5" fill="' + lastTone + '" stroke="' + C.ring + '" stroke-width="2" opacity="0"/>' +
-        '<circle cx="' + px(last.i).toFixed(2) + '" cy="' + py(last.y).toFixed(2) + '" r="4.5" ' +
-          'fill="' + lastTone + '" stroke="' + C.ring + '" stroke-width="2"/>' +
+        '<line class="crosshair" id="cross" x1="0" y1="' + PAD.t + '" x2="0" y2="' + (PAD.t + plotH) + '" ' +
+          'vector-effect="non-scaling-stroke" opacity="0"/>' +
+        '<circle class="dot ' + lastTone + '" id="crossDot" r="4.5" opacity="0"/>' +
+        '<circle class="dot ' + lastTone + '" cx="' + px(last.i).toFixed(2) + '" cy="' + py(last.y).toFixed(2) + '" r="4.5"/>' +
       "</g>" +
       xSvg +
     "</svg>"
@@ -827,6 +754,7 @@ function drawChart() {
   Object.assign(document.getElementById("axis-hit").style, {
     left: (width - PAD.r) + "px", top: PAD.t + "px", width: PAD.r + "px", height: plotH + "px",
   });
+  if (chartPointer !== null) chartHover({ clientX: chartPointer });
 }
 
 
@@ -966,6 +894,7 @@ function clampChartWindow() {
 }
 
 function chartHover(event) {
+  chartPointer = event.clientX;
   const tip = document.getElementById("chart-tip");
   const svg = document.getElementById("chart-host").querySelector("svg");
   if (!svg) return;
@@ -978,19 +907,19 @@ function chartHover(event) {
   cross.setAttribute("x1", geo.px(i)); cross.setAttribute("x2", geo.px(i));
   cross.setAttribute("opacity", "1");
   dot.setAttribute("cx", geo.px(i)); dot.setAttribute("cy", geo.py(y));
-  dot.setAttribute("fill", y >= 0 ? GAIN : LOSS);
+  dot.setAttribute("class", "dot " + (y >= 0 ? "mark-gain" : "mark-loss"));
   dot.setAttribute("opacity", "1");
 
   const equityAtStart = chart.series.equityBase + geo.baseline;
-  tip.innerHTML = "<span class='tt-k'>" + point.long + "</span>" +
-    "<span class='tt-v " + tone(y) + "'>" + signedMoney(y) + "</span>" +
-    "<span class='tt-row'><span>from view start</span><span>" + signedPct((y / equityAtStart) * 100) + "</span></span>";
+  render(html`<span class="tt-k">${point.long}</span><span class=${"tt-v " + tone(y)}>${signedMoney(y)}</span>
+    <span class="tt-row"><span>from view start</span><span>${signedPct(y / equityAtStart * 100)}</span></span>`, tip);
   tip.classList.add("on");
   tip.style.left = clamp(geo.px(i), 80, geo.width - 80) + "px";
   tip.style.top = Math.max(52, geo.py(y)) + "px";
 }
 
 function chartLeave() {
+  chartPointer = null;
   document.getElementById("chart-tip").classList.remove("on");
   const svg = document.getElementById("chart-host").querySelector("svg");
   if (!svg) return;
@@ -1008,7 +937,7 @@ function initChartInteraction() {
     spanMax: () => chart.series.length - 1,
     scaleMin: 1e-3,
     clampWindow: clampChartWindow,
-    redraw: () => { markCustom(); drawChart(); },
+    redraw: () => { markCustom(); queueChart(); },
     onReset: () => setRange(chart.preset),
     onHover: chartHover,
     onLeave: chartLeave,
@@ -1024,7 +953,6 @@ function renderCalendar() {
   const rows = weekRows(md);
   const body = document.getElementById("cal-body");
   const tip = document.getElementById("cal-tip");
-  body.replaceChildren();
 
   const peak = Math.max(1, ...md.days.filter(d => d.pnl !== null).map(d => Math.abs(d.pnl)));
 
@@ -1037,97 +965,31 @@ function renderCalendar() {
   document.getElementById("sum-trades").textContent = md.trades ? plainNum(md.trades) : "—";
   document.getElementById("sum-wins").textContent = md.trades ? plainNum(md.wins) : "—";
 
-  const sp = document.getElementById("sum-pnl");
-  sp.textContent = md.trades ? signedMoney(md.pnl) : "—";
-  sp.className = "v " + tone(md.trades ? md.pnl : 0);
-
-  const sc = document.getElementById("sum-pct");
-  sc.textContent = md.trades ? signedPct(md.pct) : "—";
-  sc.className = "v " + tone(md.trades ? md.pnl : 0);
-
-  for (const row of rows) {
-    const tr = document.createElement("tr");
-
-    for (const cell of row.cells) {
-      const td = document.createElement("td");
-      td.append(dayCell(cell, peak, tip));
-      tr.append(td);
-    }
-
-    const totalTd = document.createElement("td");
-    const total = document.createElement("div");
-    total.className = "cell total " + (row.any ? (row.pnl >= 0 ? "gain" : "loss") : "");
-    const dLabel = document.createElement("span");
-    dLabel.className = "d";
-    dLabel.textContent = "Week";
-    const p = document.createElement("span");
-    p.className = "p " + (row.any ? tone(row.pnl) : "flat");
-    p.textContent = row.any ? signedMoney(row.pnl) : "—";
-    const q = document.createElement("span");
-    q.className = "q";
-    q.textContent = row.any ? signedPct(row.pct) : "";
-    total.append(dLabel, p, q);
-    totalTd.append(total);
-    tr.append(totalTd);
-
-    body.append(tr);
+  for (const [id, value] of [["sum-pnl", signedMoney(md.pnl)], ["sum-pct", signedPct(md.pct)]]) {
+    const element = document.getElementById(id);
+    element.textContent = md.trades ? value : "—";
+    element.className = "v " + tone(md.trades ? md.pnl : 0);
   }
+
+  render(rows.map(row => html`<tr>
+    ${row.cells.map(cell => html`<td>${dayCell(cell, peak, tip)}</td>`)}
+    <td><div class=${"cell total " + (row.any ? row.pnl >= 0 ? "gain" : "loss" : "")}>
+      <span class="d">Week</span><span class=${"p " + (row.any ? tone(row.pnl) : "flat")}>
+        ${row.any ? signedMoney(row.pnl) : "—"}</span><span class="q">${row.any ? signedPct(row.pct) : ""}</span>
+    </div></td></tr>`), body);
 }
 
+
 function dayCell(cell, peak, tip) {
-  const el = document.createElement("div");
-
-  if (!cell) { el.className = "cell out"; return el; }
-
-  const d = document.createElement("span");
-  d.className = "d";
-  d.textContent = cell.day;
-  el.append(d);
-
-  if (cell.pnl === null) {
-    el.className = "cell idle";
-    const p = document.createElement("span");
-    p.className = "p";
-    p.textContent = "—";
-    el.append(p);
-    return el;
-  }
-
-  const positive = cell.pnl >= 0;
-  el.className = "cell has " + (positive ? "gain" : "loss");
-  if (calY === todaySel.y && calM === todaySel.m && cell.day === todaySel.day) el.classList.add("sel");
-  el.tabIndex = 0;
-  el.setAttribute("role", "button");
-
-  el.addEventListener("click", () => selectDay(calY, calM, cell.day));
-  el.addEventListener("keydown", ev => {
-    if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); selectDay(calY, calM, cell.day); }
-  });
-
-  const depth = C.tintMin + (Math.abs(cell.pnl) / peak) * (C.tintMax - C.tintMin);
-  el.style.background = "color-mix(in oklab, " +
-    (positive ? "var(--gain-mark)" : "var(--loss-mark)") + " " +
-    (depth * 100).toFixed(1) + "%, var(--surface-2))";
-
-  const p = document.createElement("span");
-  p.className = "p " + tone(cell.pnl);
-  p.textContent = signedMoney(cell.pnl);
-
-  const q = document.createElement("span");
-  q.className = "q";
-  q.textContent = signedPct(cell.pct);
-
-  el.append(p, q);
-
+  if (!cell) return html`<div class="cell out"></div>`;
+  if (cell.pnl === null) return html`<div class="cell idle"><span class="d">${cell.day}</span><span class="p">—</span></div>`;
   const show = target => {
     const box = target.getBoundingClientRect();
     const ref = tip.offsetParent.getBoundingClientRect();
-    tip.innerHTML =
-      "<span class='tt-k'>" + DAY3[cell.weekday] + " " + cell.day + " " + MON3[calM] + " " + calY + "</span>" +
-      "<span class='tt-v " + tone(cell.pnl) + "'>" + signedMoney(cell.pnl) + "</span>" +
-      "<span class='tt-row'><span>Return</span><span>" + signedPct(cell.pct) + "</span></span>" +
-      "<span class='tt-row'><span>Trades</span><span>" + cell.trades + "</span></span>" +
-      "<span class='tt-row'><span>Wins</span><span>" + cell.wins + " of " + cell.trades + "</span></span>";
+    render(html`<span class="tt-k">${DAY3[cell.weekday]} ${cell.day} ${MON3[calM]} ${calY}</span>
+      <span class=${"tt-v " + tone(cell.pnl)}>${signedMoney(cell.pnl)}</span>
+      ${[["Return", signedPct(cell.pct)], ["Trades", cell.trades], ["Wins", cell.wins + " of " + cell.trades]].map(([label, value]) =>
+        html`<span class="tt-row"><span>${label}</span><span>${value}</span></span>`)}`, tip);
     tip.classList.add("on");
     tip.style.left = clamp(box.left - ref.left + box.width / 2, 76, ref.width - 76) + "px";
     tip.style.top = Math.max(88, box.top - ref.top - 6) + "px";
@@ -1139,108 +1001,46 @@ function dayCell(cell, peak, tip) {
     tip.style.top = "0px";
   };
 
-  el.addEventListener("pointerenter", ev => show(ev.currentTarget));
-  el.addEventListener("focus", ev => show(ev.currentTarget));
-  el.addEventListener("pointerleave", hide);
-  el.addEventListener("blur", hide);
-
-  el.setAttribute("aria-label",
-    DAY3[cell.weekday] + " " + cell.day + " " + MON3[calM] + ", " + signedMoney(cell.pnl) +
-    ", " + signedPct(cell.pct) + ", " + cell.wins + " of " + cell.trades + " trades won");
-
-  return el;
+  return html`<div class=${"cell has " + (cell.pnl >= 0 ? "gain" : "loss") +
+    (calY === todaySel.y && calM === todaySel.m && cell.day === todaySel.day ? " sel" : "")}
+    tabindex="0" role="button" style=${styleMap({"--depth": (Math.abs(cell.pnl) / peak).toFixed(4)})}
+    @click=${() => selectDay(calY, calM, cell.day)}
+    @keydown=${event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectDay(calY, calM, cell.day); } }}
+    @pointerenter=${event => show(event.currentTarget)} @focus=${event => show(event.currentTarget)}
+    @pointerleave=${hide} @blur=${hide}
+    aria-label=${DAY3[cell.weekday] + " " + cell.day + " " + MON3[calM] + ", " + signedMoney(cell.pnl) +
+      ", " + signedPct(cell.pct) + ", " + cell.wins + " of " + cell.trades + " trades won"}>
+    <span class="d">${cell.day}</span><span class=${"p " + tone(cell.pnl)}>${signedMoney(cell.pnl)}</span>
+    <span class="q">${signedPct(cell.pct)}</span></div>`;
 }
 
 
 function renderPortfolio() {
-  document.getElementById("pf-value").textContent = money(ACCOUNT.deployed);
-  document.getElementById("pf-cash").textContent = money(ACCOUNT.cash);
+  renderAccountValues("portfolio");
 
-  const un = document.getElementById("pf-unrealized-pnl");
-  un.textContent = signedMoney(ACCOUNT.unrealized_pnl);
-  un.className = "v " + tone(ACCOUNT.unrealized_pnl);
+  render(STRATEGIES.map(strategy => {
+    const held = OPEN_POSITIONS.filter(position => position.strategy_key === strategy.key);
+    if (!held.length) return nothing;
+    const value = held.reduce((sum, position) => sum + position.value, 0);
+    return html`<div class="alloc-row"><div class="nm">
+      ${strategyChip(strategy.hue)}<span>${strategy.label}</span>
+      <span class="eyebrow">${held.length}${held.length === 1 ? " position" : " positions"}</span></div>
+      <div class="amt">${money(value)}<span class="pc">${(value / ACCOUNT.deployed * 100).toFixed(0)}%</span></div>
+      ${meterBar(value / ACCOUNT.deployed, strategy.hue ? "strategy" : "plain", strategy.hue)}</div>`;
+  }), document.getElementById("pf-alloc"));
 
-  document.getElementById("pf-count").textContent = OPEN_POSITIONS.length;
-  document.getElementById("pf-exposure").textContent = ACCOUNT.exposurePct.toFixed(1) + "%";
-  document.getElementById("pf-largest").textContent = ACCOUNT.largestPositionPct.toFixed(1) + "%";
-
-  document.getElementById("pf-risk").textContent = money(ACCOUNT.buyingPower);
-
-  document.getElementById("pf-cap").innerHTML =
-    "<b>" + ACCOUNT.largestPositionPct.toFixed(1) + "%</b> of " + ACCOUNT.positionCapPct.toFixed(1) + "%";
-  const cm = document.getElementById("pf-cap-meter");
-  cm.style.width = clamp(ACCOUNT.largestPositionPct / ACCOUNT.positionCapPct, 0, 1) * 100 + "%";
-  cm.style.background = "var(--ink-3)";
-
-  const alloc = document.getElementById("pf-alloc");
-  alloc.replaceChildren();
-  for (const st of STRATEGIES) {
-    const held = OPEN_POSITIONS.filter(x => x.strategy_key === st.key);
-    if (!held.length) continue;
-    const value = held.reduce((a, x) => a + x.value, 0);
-
-    const row = document.createElement("div");
-    row.className = "alloc-row";
-
-    const nm = document.createElement("div");
-    nm.className = "nm";
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.style.background = st.color;
-    const label = document.createElement("span");
-    label.textContent = st.label;
-    const n = document.createElement("span");
-    n.className = "eyebrow";
-    n.textContent = held.length + (held.length === 1 ? " position" : " positions");
-    nm.append(chip, label, n);
-
-    const amt = document.createElement("div");
-    amt.className = "amt";
-    amt.innerHTML = money(value) + "<span class='pc'>" + ((value / ACCOUNT.deployed) * 100).toFixed(0) + "%</span>";
-
-    const track = document.createElement("div");
-    track.className = "track";
-    const fill = document.createElement("i");
-    fill.style.width = (value / ACCOUNT.deployed) * 100 + "%";
-    fill.style.background = st.color;
-    track.append(fill);
-
-    row.append(nm, amt, track);
-    alloc.append(row);
-  }
-
-  const stops = document.getElementById("pf-stops");
-  stops.replaceChildren();
-  for (const pos of OPEN_POSITIONS) {
-    const row = document.createElement("div");
-    row.className = "stop-row" + (pos.weight >= ACCOUNT.positionCapPct - 0.2 ? " near" : "");
-
-    const nm = document.createElement("div");
-    nm.className = "nm";
-    nm.textContent = pos.symbol;
-
-    const gap = document.createElement("div");
-    gap.className = "gap";
-    gap.textContent = pos.weight.toFixed(1) + "% · " + money(pos.value);
-
-    const track = document.createElement("div");
-    track.className = "track";
-    const fill = document.createElement("i");
-    fill.style.width = clamp(pos.weight / ACCOUNT.positionCapPct, 0.03, 1) * 100 + "%";
-    track.append(fill);
-
-    row.append(nm, gap, track);
-    stops.append(row);
-  }
+  render(repeat(OPEN_POSITIONS, position => position.symbol, position => html`
+    <div class=${"weight-row" + (position.weight >= ACCOUNT.positionCapPct - .2 ? " near" : "")}>
+      <div class="nm">${position.symbol}</div><div class="gap">${position.weight.toFixed(1)}% · ${money(position.value)}</div>
+      ${meterBar(clamp(position.weight / ACCOUNT.positionCapPct, .03, 1))}</div>`), document.getElementById("pf-weights"));
 
   document.getElementById("pf-open-note").textContent =
     OPEN_POSITIONS.length + " held · " + money(ACCOUNT.deployed);
 
-  const openCharts = new Map(OPEN_POSITIONS.map(pos => [pos.symbol, positionTrade(pos)]));
   buildTable(document.getElementById("pf-open-table"),
     ["Symbol", "Strategy", "Opened", "Quantity", "Entry", "Last", "Value", "Weight", "Unrealized"],
     OPEN_POSITIONS.map(pos => [
-      symbolCell(pos.symbol, pos.side, openCharts.get(pos.symbol)),
+      symbolCell(pos.symbol, pos.side, positionTrade(pos)),
       stratCell(pos.strategy_key),
       { t: pos.entered_at ? dayOf(pos.entered_at) : "—", dim: true },
       { t: String(pos.quantity), r: true, dim: true },
@@ -1253,46 +1053,19 @@ function renderPortfolio() {
 
   const prev = [...SESSIONS].reverse().find(session => session.date !== LEDGER.today);
   const trades = prev ? tradesByDate.get(prev.date) || [] : [];
-  const realised = trades.reduce((a, t) => a + t.pnl, 0);
-  const wins = trades.filter(t => t.pnl > 0).length;
 
   document.getElementById("pf-prev-date").textContent = prev ? prev.long : "—";
-  document.getElementById("pf-prev-sum").innerHTML = prev
-    ? "Realised <b class='" + tone(realised) + "'>" + signedMoney(realised) + "</b>" +
-      "<span><b>" + wins + "</b> of <b>" + trades.length + "</b> won</span>" +
-      "<span>Return <b class='" + tone(prev.pct) + "'>" + signedPct(prev.pct) + "</b></span>"
-    : "<span>No earlier session yet</span>";
+  render(prev ? sessionSummary(prev) : html`<span>No earlier session yet</span>`, document.getElementById("pf-prev-sum"));
 
   buildTable(document.getElementById("pf-prev-table"),
     ["Time", "Symbol", "Strategy", "In", "Out", "P&L"],
-    trades.map(t => [
-      { t: clockLabel(t.minute), dim: true },
-      symbolCell(t.symbol, t.side, t),
-      stratCell(t.strategy_key),
-      { t: money(t.entry), r: true },
-      { t: money(t.exit), r: true },
-      { t: signedMoney(t.pnl), r: true, cls: tone(t.pnl) },
-    ]), 3);
+    trades.map(t => tradeCells(t, true)), 3);
 }
 
 
 function tile(k, v, cls, sub) {
-  const el = document.createElement("div");
-  el.className = "tile";
-  const kk = document.createElement("span");
-  kk.className = "k";
-  kk.textContent = k;
-  const vv = document.createElement("span");
-  vv.className = "v " + (cls || "");
-  vv.textContent = v;
-  el.append(kk, vv);
-  if (sub) {
-    const ss = document.createElement("span");
-    ss.className = "sub";
-    ss.textContent = sub;
-    el.append(ss);
-  }
-  return el;
+  return html`<div class="tile"><span class="k">${k}</span><span class=${"v " + (cls || "")}>${v}</span>
+    ${sub ? html`<span class="sub">${sub}</span>` : nothing}</div>`;
 }
 
 function renderHistory() {
@@ -1301,7 +1074,7 @@ function renderHistory() {
 
   const L = TOTALS;
   const tiles = document.getElementById("hs-tiles");
-  tiles.replaceChildren(
+  render([
     tile("Realised P&L", signedMoney(L.net_pnl), tone(L.net_pnl), "closed round trips"),
     tile("Trades", plainNum(L.n), "", SESSIONS.length + " sessions"),
     tile("Win rate", L.winRate.toFixed(1) + "%", "", L.wins + "W / " + L.losses + "L"),
@@ -1312,32 +1085,15 @@ function renderHistory() {
     tile("Payoff ratio", (L.avgWin / L.avgLoss).toFixed(2), "", "avg win ÷ avg loss"),
     tile("Best trade", signedMoney(L.best), "pos"),
     tile("Worst trade", signedMoney(L.worst), "neg"),
-  );
+  ], tiles);
 
   const peak = Math.max(...SESSIONS.map(m => Math.abs(m.pnl)));
-  const strip = document.getElementById("hs-strip");
-  strip.replaceChildren();
-  for (const m of SESSIONS) {
-    const bar = document.createElement("div");
-    bar.className = "ybar";
-    const track = document.createElement("div");
-    track.className = "track";
-    const up = document.createElement("div");
-    up.className = "up";
-    const down = document.createElement("div");
-    down.className = "down";
-    const fill = document.createElement("div");
-    fill.className = "fill";
-    fill.style.height = Math.max(2, (Math.abs(m.pnl) / peak) * 100) + "%";
-    fill.title = m.long + " · " + signedMoney(m.pnl);
-    (m.pnl >= 0 ? up : down).append(fill);
-    track.append(up, down);
-    const lab = document.createElement("div");
-    lab.className = "lab";
-    lab.textContent = m.label;
-    bar.append(track, lab);
-    strip.append(bar);
-  }
+  render(SESSIONS.map(session => {
+    const fill = html`<div class="fill" title=${session.long + " · " + signedMoney(session.pnl)}
+      style=${styleMap({height: Math.max(2, Math.abs(session.pnl) / peak * 100) + "%"})}></div>`;
+    return html`<div class="ybar"><div class="track"><div class="up">${session.pnl >= 0 ? fill : nothing}</div>
+      <div class="down">${session.pnl < 0 ? fill : nothing}</div></div><div class="lab">${session.label}</div></div>`;
+  }), document.getElementById("hs-strip"));
 
   buildTable(document.getElementById("hs-sessions"),
     ["Session", "Trades", "Win rate", "P&L", "Return"],
@@ -1373,20 +1129,12 @@ function renderHistory() {
 }
 
 function openedCell(trade) {
-  const wrap = document.createElement("span");
-  wrap.className = "in-time";
-  const clock = document.createElement("span");
-  clock.textContent = clockOf(trade.entered_at);
-  wrap.append(clock);
-  if (dateOf(trade.entered_at) !== trade.date) {
-    const [, m, day] = dparts(dateOf(trade.entered_at));
-    const tag = document.createElement("span");
-    tag.className = "in-day";
-    tag.textContent = day + " " + MON3[m - 1];
-    wrap.append(tag);
-    wrap.title = "Opened " + day + " " + MON3[m - 1] + ", held to the exit shown";
-  }
-  return { node: wrap, dim: true };
+  const [, month, day] = dparts(dateOf(trade.entered_at));
+  const overnight = dateOf(trade.entered_at) !== trade.date;
+  return { dim: true, node: html`<span class="in-time"
+    title=${overnight ? "Opened " + day + " " + MON3[month - 1] + ", held to the exit shown" : nothing}>
+    <span>${clockOf(trade.entered_at)}</span>${overnight ? html`<span class="in-day">${day} ${MON3[month - 1]}</span>` : nothing}
+  </span>` };
 }
 
 function renderLog() {
@@ -1411,10 +1159,9 @@ function renderLog() {
       signedMoney(st.net_pnl) + " · " + st.winRate.toFixed(1) + "% won";
 
   const table = document.getElementById("hs-log");
-  table.replaceChildren();
 
   if (!rows.length) {
-    table.innerHTML = "<tbody><tr><td class='empty'>No trades match these filters.</td></tr></tbody>";
+    render(html`<tbody><tr><td class="empty">No trades match these filters.</td></tr></tbody>`, table);
     return;
   }
 
@@ -1428,12 +1175,7 @@ function renderLog() {
     rows.map(t => [
       { t: DAY3[t.weekday] + " " + t.day + " " + MON3[t.m] + " " + String(t.y).slice(2), cls: "log-date" },
       openedCell(t),
-      { t: clockLabel(t.minute), dim: true },
-      symbolCell(t.symbol, t.side, t),
-      stratCell(t.strategy_key),
-      { t: money(t.entry), r: true },
-      { t: money(t.exit), r: true },
-      { t: signedMoney(t.pnl), r: true, cls: tone(t.pnl) },
+      ...tradeCells(t, true),
     ]), 5, (_row, index) => [
       shade[index] ? "band" : "",
       index && weeks[index] !== weeks[index - 1] ? "week-edge" : "",
@@ -1455,7 +1197,7 @@ function selectTradeState(timeframe) {
   Object.assign(TC_VIEW, { i0: 0, i1: 0, yManual: null, custom: false });
   document.getElementById("tc-host").querySelectorAll("svg, .tc-mark").forEach(n => n.remove());
   document.getElementById("tc-tip").classList.remove("on");
-  document.getElementById("tc-table").textContent = "";
+  render(nothing, document.getElementById("tc-table"));
   paintRail();
 }
 
@@ -1580,23 +1322,17 @@ function stepTrade(by) {
 }
 
 function paintRail() {
-  const host = document.getElementById("tc-smas");
-  host.replaceChildren();
-  for (const [index, { length, values }] of (TC_STATE.averages || []).entries()) {
-    const key = "sma" + length;
+  render((TC_STATE.averages || []).map(({length, values}, index) => {
     const enough = values.some(value => value !== null);
-    host.append(railToggle(key, "SMA " + length, averageColor(index), enough,
-      enough ? "" : "Not enough bars at this size"));
-  }
-
-  const levels = document.getElementById("tc-overlays");
-  levels.replaceChildren();
+    return railToggle("sma" + length, "SMA " + length, index, enough,
+      enough ? "" : "Not enough bars at this size");
+  }), document.getElementById("tc-smas"));
   const has = TC_LEVELS || {};
-  levels.append(
+  render([
     railToggle("range", "Opening range", null, Boolean(has.range), has.range ? "" : "Breakout trades only"),
     railToggle("stop", "Stop", null, has.stop !== undefined, has.stop !== undefined ? "" : "Not reconstructable"),
     railToggle("targets", "Targets", null, Boolean(has.targets), has.targets ? "" : "Breakout trades only"),
-  );
+  ], document.getElementById("tc-overlays"));
   document.getElementById("tc-rail-note").textContent =
     has.strategy_key ? "Stop and targets are reconstructed from the rules." : "";
 }
@@ -1605,23 +1341,13 @@ function averageColor(index) {
   return SESSION.sma_colors[index % SESSION.sma_colors.length];
 }
 
-function railToggle(key, label, tokenName, enabled, why) {
-  const row = document.createElement("label");
-  row.className = "tc-toggle" + (enabled ? "" : " off");
-  const box = document.createElement("input");
-  box.type = "checkbox";
-  box.checked = enabled && TC_SHOW[key];
-  box.disabled = !enabled;
-  box.addEventListener("change", () => { TC_SHOW[key] = box.checked; drawTradeChart(); });
-  const swatch = document.createElement("span");
-  swatch.className = "tc-swatch";
-  if (tokenName) swatch.style.background = token(tokenName);
-  else swatch.classList.add("plain");
-  const text = document.createElement("span");
-  text.textContent = label;
-  row.append(box, swatch, text);
-  if (why) row.title = why;
-  return row;
+function railToggle(key, label, averageIndex, enabled, why) {
+  return html`<label class=${"tc-toggle" + (enabled ? "" : " off")} title=${why || nothing}>
+    <input type="checkbox" .checked=${enabled && TC_SHOW[key]} ?disabled=${!enabled}
+      @change=${event => { TC_SHOW[key] = event.target.checked; drawTradeChart(); }}>
+    <span class=${"tc-swatch" + (averageIndex === null ? " plain" : "")}
+      style=${styleMap({"--sma-h": averageIndex === null ? undefined : "var(" + averageColor(averageIndex) + ")"})}></span>
+    <span>${label}</span></label>`;
 }
 
 function paintTradeFacts() {
@@ -1652,26 +1378,9 @@ function paintTradeFacts() {
     [t.open ? "Unrealized" : "P&L", signedMoney(t.pnl),
       signedPct(((t.exit - t.entry) / t.entry) * 100 * (t.side === "short" ? -1 : 1))],
   ];
-  const host = document.getElementById("tc-facts");
-  host.replaceChildren();
-  for (const [label, value, sub] of facts) {
-    const cell = document.createElement("div");
-    cell.className = "fact";
-    const k = document.createElement("span");
-    k.className = "k";
-    k.textContent = label;
-    const v = document.createElement("span");
-    v.className = "v num" + (label === "P&L" ? " " + tone(t.pnl) : "");
-    v.textContent = value;
-    cell.append(k, v);
-    if (sub) {
-      const s = document.createElement("span");
-      s.className = "s";
-      s.textContent = sub;
-      cell.append(s);
-    }
-    host.append(cell);
-  }
+  render(facts.map(([label, value, sub]) => html`<div class="fact"><span class="k">${label}</span>
+    <span class=${"v num" + (label === "P&L" ? " " + tone(t.pnl) : "")}>${value}</span>
+    ${sub ? html`<span class="s">${sub}</span>` : nothing}</div>`), document.getElementById("tc-facts"));
 }
 
 function dayLabel(iso) {
@@ -1719,19 +1428,22 @@ async function loadTradeBars() {
   drawTradeChart();
 }
 
-const TC_PADS = {
-  wide:  { l: 10, r: 62, t: 16, b: 40 },
-  phone: { l: 6,  r: 50, t: 12, b: 38 },
+const tradePad = (widest, advance) => {
+  const unit = space("--space-md");
+  return onPhone()
+    ? { l: unit * 0.5, r: gutterFor(widest, advance), t: unit, b: unit * 3.2 }
+    : { l: unit * 0.9, r: gutterFor(widest, advance), t: unit * 1.3, b: unit * 3.3 };
 };
 
 function drawTradeChart() {
   const host = document.getElementById("tc-host");
   const bars = TC_STATE.bars;
   if (!bars || !bars.length) return;
-  const TC_PAD = onPhone() ? TC_PADS.phone : TC_PADS.wide;
+  const { advance } = axisMetrics("tc-host");
+  const reach = Math.max(...bars.map(b => b.h));
+  const TC_PAD = tradePad([money(reach)], advance);
   const width = host.clientWidth, height = host.clientHeight;
   if (width < 80 || height < 80) return;
-  readTheme();
 
   const t = TRADE;
   const plotW = width - TC_PAD.l - TC_PAD.r, plotH = height - TC_PAD.t - TC_PAD.b;
@@ -1801,12 +1513,12 @@ function drawTradeChart() {
   const gridStep = niceStep((yMax - yMin) / 4.2);
   for (let v = Math.ceil(yMin / gridStep) * gridStep; v <= yMax; v += gridStep) ticks.push(v);
   const grid = ticks.map(v =>
-    '<line x1="' + TC_PAD.l + '" y1="' + py(v).toFixed(2) + '" x2="' + (width - TC_PAD.r) +
-    '" y2="' + py(v).toFixed(2) + '" stroke="' + C.grid + '" stroke-width="1"/>' +
-    '<text x="' + (width - TC_PAD.r + 8) + '" y="' + (py(v) + 3.5).toFixed(2) + '" fill="' + C.axis +
-    '" font-size="10" font-family="Roboto Mono, monospace">' + money(v) + "</text>").join("");
+    '<line class="grid" x1="' + TC_PAD.l + '" y1="' + py(v).toFixed(2) + '" x2="' + (width - TC_PAD.r) +
+    '" y2="' + py(v).toFixed(2) + '"/>' +
+    '<text x="' + (width - TC_PAD.r + 8) + '" y="' + (py(v) + 3.5).toFixed(2) + '">' +
+    money(v) + "</text>").join("");
 
-  const LABEL_WIDTH = 78;
+  const LABEL_WIDTH = advance * 13;
   const roomFor = Math.max(2, Math.floor(plotW / LABEL_WIDTH));
 
   const firstOf = key => {
@@ -1858,7 +1570,7 @@ function drawTradeChart() {
   });
   candidates.sort((a, b) => a.i - b.i);
 
-  const CHAR = 6.1, GAP = 10;
+  const CHAR = advance, GAP = 10;
   const kept = [];
   for (const candidate of candidates) {
     const half = Math.max(...candidate.lines.map(line => line.length)) * CHAR / 2;
@@ -1875,23 +1587,21 @@ function drawTradeChart() {
   const rules = shown.map((_bar, k) => {
     const i = k + lo;
     return boundary.has(i) && i > lo
-      ? '<line x1="' + px(i - 0.5).toFixed(2) + '" y1="' + TC_PAD.t + '" x2="' + px(i - 0.5).toFixed(2) +
-        '" y2="' + (TC_PAD.t + plotH) + '" stroke="' + C.grid + '" stroke-width="1"/>'
+      ? '<line class="grid" x1="' + px(i - 0.5).toFixed(2) + '" y1="' + TC_PAD.t + '" x2="' +
+        px(i - 0.5).toFixed(2) + '" y2="' + (TC_PAD.t + plotH) + '"/>'
       : "";
   }).join("");
 
   const axis = rules + kept.map(candidate =>
     candidate.lines.map((line, row) =>
-      '<text x="' + candidate.x.toFixed(2) + '" y="' + (height - 15 + row * 11) + '" fill="' + C.axis +
-      '" font-size="10" text-anchor="middle" font-family="Roboto Mono, monospace"' +
-      (candidate.named ? ' font-weight="600"' : "") + ">" + line + "</text>").join("")
+      '<text class="' + (candidate.named ? "named" : "") + '" x="' + candidate.x.toFixed(2) +
+      '" y="' + (height - 15 + row * 11) + '" text-anchor="middle">' + line + "</text>").join("")
   ).join("");
 
   const smaEnds = [];
   const smaLines = TC_STATE.averages.map(({ length }, index) => {
     const values = averages[length];
     if (!values) return "";
-    const colour = token(averageColor(index));
     let path = "", lastY = null;
     shown.forEach((_, k) => {
       const i = k + lo;
@@ -1901,9 +1611,8 @@ function drawTradeChart() {
       lastY = py(v);
     });
     if (!path) return "";
-    if (lastY !== null) smaEnds.push({ y: lastY, colour, length });
-    return '<path d="' + path.trim() + '" fill="none" stroke="' + colour +
-      '" stroke-width="1.5" stroke-linejoin="round" opacity="0.95"/>';
+    if (lastY !== null) smaEnds.push({ y: lastY, index, length });
+    return '<path class="sma" data-sma="' + index + '" d="' + path.trim() + '"/>';
   }).join("");
 
   smaEnds.sort((a, b) => a.y - b.y);
@@ -1911,38 +1620,34 @@ function drawTradeChart() {
     if (i && end.y - smaEnds[i - 1].y < 12) end.y = smaEnds[i - 1].y + 12;
   });
   const smaLabels = smaEnds.map(end =>
-    '<text x="' + (width - TC_PAD.r - 4) + '" y="' + (end.y - 3).toFixed(2) + '" fill="' + end.colour +
-    '" font-size="10" text-anchor="end" font-weight="600" paint-order="stroke" stroke="' + C.ring +
-    '" stroke-width="3" stroke-linejoin="round" font-family="Roboto Mono, monospace">' +
-    end.length + "</text>").join("");
+    '<text class="sma-label halo" data-sma="' + end.index + '" x="' + (width - TC_PAD.r - 4) +
+    '" y="' + (end.y - 3).toFixed(2) + '" text-anchor="end">' + end.length + "</text>").join("");
 
-  const band = (top, bottom, colour) =>
-    '<rect x="' + TC_PAD.l + '" y="' + Math.min(top, bottom).toFixed(2) + '" width="' + plotW +
-    '" height="' + Math.abs(bottom - top).toFixed(2) + '" fill="' + colour + '" opacity="0.07"/>';
+  const band = (top, bottom) =>
+    '<rect class="band" x="' + TC_PAD.l + '" y="' + Math.min(top, bottom).toFixed(2) + '" width="' + plotW +
+    '" height="' + Math.abs(bottom - top).toFixed(2) + '"/>';
   let overlays = "", overlayText = "";
-  const named = (y, colour, text, dash) => {
+  const named = (y, mark, text, dash) => {
     overlays +=
-      '<line x1="' + TC_PAD.l + '" y1="' + y.toFixed(2) + '" x2="' + (width - TC_PAD.r) + '" y2="' + y.toFixed(2) +
-      '" stroke="' + colour + '" stroke-width="1" stroke-dasharray="' + dash + '" opacity="0.72"/>';
+      '<line class="level ' + mark + '" x1="' + TC_PAD.l + '" y1="' + y.toFixed(2) + '" x2="' +
+      (width - TC_PAD.r) + '" y2="' + y.toFixed(2) + '" stroke-dasharray="' + dash + '"/>';
     overlayText +=
-      '<text x="' + (TC_PAD.l + 5) + '" y="' + (y - 4).toFixed(2) + '" fill="' + colour +
-      '" font-size="9.5" font-family="Roboto Mono, monospace" letter-spacing="0.04em" ' +
-      'paint-order="stroke" stroke="' + C.ring + '" stroke-width="3" stroke-linejoin="round">' +
-      text + "</text>";
+      '<text class="level-label halo ' + mark + '" x="' + (TC_PAD.l + 5) + '" y="' + (y - 4).toFixed(2) +
+      '">' + text + "</text>";
   };
 
   if (TC_SHOW.range && levels.range) {
-    overlays += band(py(levels.range.high), py(levels.range.low), C.axis);
-    named(py(levels.range.high), C.axis, "RANGE HIGH " + money(levels.range.high), "4 3");
-    named(py(levels.range.mid), C.axis, "RANGE MID " + money(levels.range.mid), "2 4");
-    named(py(levels.range.low), C.axis, "RANGE LOW " + money(levels.range.low), "4 3");
+    overlays += band(py(levels.range.high), py(levels.range.low));
+    named(py(levels.range.high), "axis", "Range high " + money(levels.range.high), "4 3");
+    named(py(levels.range.mid), "axis", "Range mid " + money(levels.range.mid), "2 4");
+    named(py(levels.range.low), "axis", "Range low " + money(levels.range.low), "4 3");
   }
   if (TC_SHOW.stop && levels.stop !== undefined) {
-    named(py(levels.stop), LOSS, "STOP " + money(levels.stop), "5 4");
+    named(py(levels.stop), "mark-loss", "Stop " + money(levels.stop), "5 4");
   }
   if (TC_SHOW.targets && levels.targets) {
     levels.targets.forEach((value, i) => {
-      named(py(value), GAIN, "TARGET " + (i + 1) + " " + money(value), "1 4");
+      named(py(value), "mark-gain", "Target " + (i + 1) + " " + money(value), "1 4");
     });
   }
 
@@ -1950,45 +1655,42 @@ function drawTradeChart() {
   const barMarks = shown.map((b, k) => {
     const i = k + lo;
     const up = b.c >= b.o;
-    const colour = up ? GAIN : LOSS;
+    const mark = up ? "gain" : "loss";
     const x = px(i);
     const top = py(Math.max(b.o, b.c)), bottom = py(Math.min(b.o, b.c));
     const h = Math.max(1, bottom - top);
-    return '<line x1="' + x.toFixed(2) + '" y1="' + py(b.h).toFixed(2) + '" x2="' + x.toFixed(2) +
-      '" y2="' + py(b.l).toFixed(2) + '" stroke="' + colour + '" stroke-width="1"/>' +
-      '<rect x="' + (x - bodyW / 2).toFixed(2) + '" y="' + top.toFixed(2) + '" width="' + bodyW.toFixed(2) +
-      '" height="' + h.toFixed(2) + '" fill="' + colour + '" opacity="' + (up ? 0.9 : 1) + '"/>';
+    return '<line class="wick mark-' + mark + '" x1="' + x.toFixed(2) + '" y1="' + py(b.h).toFixed(2) +
+      '" x2="' + x.toFixed(2) + '" y2="' + py(b.l).toFixed(2) + '"/>' +
+      '<rect class="body fill-' + mark + '" x="' + (x - bodyW / 2).toFixed(2) + '" y="' + top.toFixed(2) +
+      '" width="' + bodyW.toFixed(2) + '" height="' + h.toFixed(2) + '"/>';
   }).join("");
 
-  const tone2 = t.pnl >= 0 ? GAIN : LOSS;
+  const outcome = t.pnl >= 0 ? "gain" : "loss";
   const x1 = px(inIndex), y1 = py(t.entry), x2 = px(outIndex), y2 = py(t.exit);
   const trend =
-    '<line x1="' + x1.toFixed(2) + '" y1="' + y1.toFixed(2) + '" x2="' + x2.toFixed(2) + '" y2="' + y2.toFixed(2) +
-    '" stroke="' + tone2 + '" stroke-width="2" stroke-linecap="round" stroke-dasharray="6 4" opacity="0.95"/>';
+    '<line class="trend mark-' + outcome + '" x1="' + x1.toFixed(2) + '" y1="' + y1.toFixed(2) +
+    '" x2="' + x2.toFixed(2) + '" y2="' + y2.toFixed(2) + '"/>';
 
-  const level = (y, colour) =>
-    '<line x1="' + TC_PAD.l + '" y1="' + y.toFixed(2) + '" x2="' + (width - TC_PAD.r) + '" y2="' + y.toFixed(2) +
-    '" stroke="' + colour + '" stroke-width="1" stroke-dasharray="2 5" opacity="0.5"/>';
+  const hint = y =>
+    '<line class="hint" x1="' + TC_PAD.l + '" y1="' + y.toFixed(2) + '" x2="' + (width - TC_PAD.r) +
+    '" y2="' + y.toFixed(2) + '"/>';
 
   const entryMark =
-    '<circle cx="' + x1.toFixed(2) + '" cy="' + y1.toFixed(2) + '" r="5.5" fill="' + C.ring +
-    '" stroke="' + C.axis + '" stroke-width="2.5"/>';
+    '<circle class="entry-mark" cx="' + x1.toFixed(2) + '" cy="' + y1.toFixed(2) + '" r="5.5"/>';
   const exitMark =
-    '<circle cx="' + x2.toFixed(2) + '" cy="' + y2.toFixed(2) + '" r="6" fill="' + tone2 +
-    '" stroke="' + C.ring + '" stroke-width="2"/>';
+    '<circle class="exit-mark fill-' + outcome + '" cx="' + x2.toFixed(2) + '" cy="' + y2.toFixed(2) + '" r="6"/>';
 
   const fillMarks = (t.fills || []).map(f => {
     const i = nearest(stampOf(f.d, f.m));
     const x = px(i), y = py(f.p);
-    return '<rect x="' + (x - 3.5).toFixed(2) + '" y="' + (y - 3.5).toFixed(2) +
-      '" width="7" height="7" rx="1.5" transform="rotate(45 ' + x.toFixed(2) + " " + y.toFixed(2) +
-      ')" fill="' + (f.s === "in" ? C.ring : tone2) + '" stroke="' + (f.s === "in" ? C.axis : tone2) +
-      '" stroke-width="1.5" opacity="0.9"/>';
+    return '<rect class="' + (f.s === "in" ? "fill-in" : "fill-out fill-" + outcome) +
+      '" x="' + (x - 3.5).toFixed(2) + '" y="' + (y - 3.5).toFixed(2) +
+      '" width="7" height="7" rx="1.5" transform="rotate(45 ' + x.toFixed(2) + " " + y.toFixed(2) + ')"/>';
   }).join("");
 
   const plotted =
     overlays + barMarks + smaLines +
-    level(y1, C.axis) + level(y2, C.axis) + trend + fillMarks + entryMark + exitMark;
+    hint(y1) + hint(y2) + trend + fillMarks + entryMark + exitMark;
 
   host.querySelectorAll("svg").forEach(n => n.remove());
   host.insertAdjacentHTML("afterbegin",
@@ -2001,6 +1703,10 @@ function drawTradeChart() {
     '<g clip-path="url(#tcClip)">' + plotted + "</g>" +
     smaLabels + overlayText +
     "</svg>");
+
+  for (const element of host.querySelectorAll("[data-sma]")) {
+    element.style.setProperty("--sma-h", "var(" + averageColor(Number(element.dataset.sma)) + ")");
+  }
 
   const hit = document.getElementById("tc-hit");
   hit.style.left = TC_PAD.l + "px";
@@ -2019,13 +1725,13 @@ function drawTradeChart() {
 }
 
 function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
-  const result = TRADE.pnl >= 0 ? GAIN : LOSS;
+  const outcome = TRADE.pnl >= 0 ? "gain" : "loss";
   const host = document.getElementById("tc-host");
   host.querySelectorAll(".tc-mark").forEach(n => n.remove());
   const strategy = STRAT_BY_KEY[TRADE.strategy_key];
   const place = (x, y, title, price, cls) => {
     const el = document.createElement("div");
-    el.className = "tc-mark " + cls;
+    el.className = "tc-mark " + cls + (cls === "exit" ? " mark-" + outcome : "");
     const head = document.createElement("span");
     head.className = "tc-k";
     head.textContent = title;
@@ -2038,7 +1744,6 @@ function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
     el.append(head, val, who);
     el.style.left = Math.round(x) + "px";
     el.style.top = Math.round(y) + "px";
-    el.style.borderLeftColor = cls === "exit" ? result : "var(--ink-3)";
     if (x > width * 0.6) el.classList.add("flip");
     host.append(el);
   };
@@ -2076,12 +1781,9 @@ function tradeHover(event) {
   const index = clamp(Math.round(geo.indexAt(event.clientX)), geo.lo, geo.hi);
   const b = bars[index];
   if (!b) return;
-  const row = (label, value) =>
-    '<span class="tt-row"><span>' + label + "</span><span>" + money(value) + "</span></span>";
-  tip.innerHTML =
-    '<span class="tt-k">' + dayOf(b.t) + " " + clockOf(b.t) + "</span>" +
-    '<span class="tt-v">' + money(b.c) + "</span>" +
-    row("Open", b.o) + row("High", b.h) + row("Low", b.l);
+  render(html`<span class="tt-k">${dayOf(b.t)} ${clockOf(b.t)}</span><span class="tt-v">${money(b.c)}</span>
+    ${[["Open", b.o], ["High", b.h], ["Low", b.l]].map(([label, value]) =>
+      html`<span class="tt-row"><span>${label}</span><span>${money(value)}</span></span>`)}`, tip);
   tip.style.left = clamp(geo.px(index), 70, geo.width - 70) + "px";
   tip.style.top = clamp(geo.py(b.h) - 12, 8, geo.height - 40) + "px";
   tip.classList.add("on");
@@ -2161,7 +1863,7 @@ function switchView(name) {
     viewReady[name] = true;
   }
 
-  if (name === "dashboard") requestAnimationFrame(drawChart);
+  if (name === "dashboard") queueChart();
   if (name === "chart") requestAnimationFrame(drawTradeChart);
   window.scrollTo(0, 0);
 }
@@ -2171,20 +1873,8 @@ function switchView(name) {
 let RULES = null;
 
 function ruleRow(row) {
-  const tr = document.createElement("tr");
-  const head = document.createElement("th");
-  head.scope = "row";
-  head.textContent = row.field;
-  const cell = document.createElement("td");
-  cell.textContent = row.value;
-  if (row.source) {
-    const src = document.createElement("span");
-    src.className = "rule-source";
-    src.textContent = row.source;
-    cell.append(src);
-  }
-  tr.append(head, cell);
-  return tr;
+  return html`<tr><th scope="row">${row.field}</th><td>${row.value}
+    ${row.source ? html`<span class="rule-source">${row.source}</span>` : nothing}</td></tr>`;
 }
 
 function renderRuleStates() {
@@ -2199,69 +1889,29 @@ function renderRuleStates() {
         : "";
     warning.hidden = !warning.textContent;
   }
-  for (const card of document.querySelectorAll("#rules-cards .rule-card")) {
-    const strategy_key = card.dataset.strategyKey;
-    const host = card.querySelector(".states");
-    if (!host) continue;
-    host.replaceWith(stateBadges(strategy_key));
-    card.classList.toggle("is-idle", switchState(strategy_key) !== "online");
-  }
+  paintRules();
 }
+
 
 function paintRules() {
   if (!RULES) return;
-
-  const portfolio = document.getElementById("rules-portfolio");
-  portfolio.replaceChildren();
-  const caption = document.createElement("caption");
-  caption.textContent = "Applies to every strategy at once";
-  const pbody = document.createElement("tbody");
-  for (const row of RULES.portfolio) pbody.append(ruleRow(row));
-  portfolio.append(caption, pbody);
-
+  render(html`<caption>Applies to every strategy at once</caption><tbody>${RULES.portfolio.map(ruleRow)}</tbody>`,
+    document.getElementById("rules-portfolio"));
   document.getElementById("rules-config").textContent = RULES.configured
     ? "Risk limits as reported by the bot"
     : "Bot not reporting — risk limits shown are from the mode environment";
-
-  const host = document.getElementById("rules-cards");
-  host.replaceChildren();
-  for (const strategy of RULES.strategies) {
-    const card = document.createElement("section");
-    card.className = "panel rule-card";
-    card.dataset.strategyKey = strategy.key;
-
-    const head = document.createElement("div");
-    head.className = "panel-head";
-    const title = document.createElement("h2");
-    const chip = document.createElement("span");
-    chip.className = "chip";
-    chip.style.background = STRATEGY_COLOURS[strategy.key] || "var(--ink-3)";
-    const name = document.createElement("span");
-    name.textContent = strategy.name;
-    title.append(chip, name);
-    head.append(title, stateBadges(strategy.key));
-
-    const sub = document.createElement("div");
-    sub.className = "rule-sub";
-    sub.textContent = strategy.name + " · " + strategy.kind;
-
-    const body = document.createElement("div");
-    body.className = "panel-body";
-    const table = document.createElement("table");
-    table.className = "data rules-table";
-    const tbody = document.createElement("tbody");
-    for (const row of strategy.rows) tbody.append(ruleRow(row));
-    table.append(tbody);
-    body.append(table);
-
-    card.append(head, sub, body);
-    host.append(card);
-  }
-  renderRuleStates();
+  render(repeat(RULES.strategies, strategy => strategy.key, strategy => html`
+    <section class=${"panel rule-card" + (switchState(strategy.key) === "online" ? "" : " is-idle")}
+      data-strategy-key=${strategy.key}><div class="panel-head"><h2>
+      ${strategyChip(strategy.key === "unattributed" ? null : strategyHue(strategy.key))}
+      <span>${strategy.name}</span></h2>${stateBadges(strategy.key)}</div>
+      <div class="rule-sub">${strategy.name} · ${strategy.kind}</div>
+      <div class="panel-body"><table class="data rules-table"><tbody>${strategy.rows.map(ruleRow)}</tbody></table></div>
+    </section>`), document.getElementById("rules-cards"));
 }
 
 async function renderRules() {
-  if (RULES) { paintRules(); return; }
+  if (RULES) { renderRuleStates(); return; }
   try {
     const response = await fetch("/api/strategies", { credentials: "same-origin" });
     if (!response.ok) throw new Error("HTTP " + response.status);
@@ -2271,14 +1921,13 @@ async function renderRules() {
       "The rule sheet could not be loaded. Reload the page to try again.";
     return;
   }
-  paintRules();
+  renderRuleStates();
 }
 
 
 let calY = 0, calM = 0, booted = false;
 
 function renderAll() {
-  readTheme();
   renderAccount();
   renderPeriodReturns();
   renderStrategies(stratRange);
@@ -2291,11 +1940,12 @@ function renderAll() {
 
 
 function mergePositions(pulsed) {
-  const rows = new Map(OPEN_POSITIONS.map(pos => [pos.symbol, pos]));
-  if (pulsed.length !== rows.size || pulsed.some(p => !rows.has(p.symbol))) return false;
-  for (const position of pulsed) Object.assign(rows.get(position.symbol), position);
-  OPEN_POSITIONS.sort((a, b) => b.value - a.value);
-  return true;
+  const rows = new Map((OPEN_POSITIONS || []).map(pos => [pos.symbol, pos]));
+  const aligned = rows.size === pulsed.length && pulsed.every(pos => rows.has(pos.symbol));
+  OPEN_POSITIONS = pulsed.map(pos => Object.assign(rows.get(pos.symbol) || {
+    strategy_key: "unattributed", entered_at: null, fills: [],
+  }, pos)).sort((a, b) => b.value - a.value);
+  return aligned;
 }
 
 function retipSeries(series, equity) {
@@ -2303,7 +1953,12 @@ function retipSeries(series, equity) {
   series[series.length - 1].value = Math.round((equity - series.equityBase) * 100) / 100;
 }
 
-function applyPulse(pulsed) {
+function applyPulse(pulsed, readAt) {
+  if (readAt < accountReadAt) return true;
+  accountReadAt = readAt;
+  accountObservation = Object.fromEntries(
+    ["orders", "asOf", "equity", "cash", "buyingPower", "marketValue", "unrealized_pnl", "positions"].map(key => [key, pulsed[key]])
+  );
   ACCOUNT.portfolio = pulsed.equity;
   ACCOUNT.cash = pulsed.cash;
   ACCOUNT.deployed = pulsed.marketValue;
@@ -2315,6 +1970,7 @@ function applyPulse(pulsed) {
 
   if (ACCOUNT.dayOpening) ACCOUNT.dayLowEquity = ratchetLow(SESSION_LOW.date, pulsed.equity);
   ACCOUNT.dayDrawdownPct = drawdownPct();
+  if (!SESSIONS.length) STRATEGY_PERIODS.D.base = LAST_SESSION.before = pulsed.equity;
 
   const aligned = mergePositions(pulsed.positions);
   ACCOUNT.openPositions = OPEN_POSITIONS.length;
@@ -2324,27 +1980,39 @@ function applyPulse(pulsed) {
   retipSeries(DAILY, pulsed.equity);
   retipSeries(INTRADAY, pulsed.equity);
 
-  LEDGER.asOf = pulsed.asOf;
+  Object.assign(LEDGER, accountObservation);
   return aligned;
-}
-
-function hovering(id) {
-  const node = document.getElementById(id);
-  return node !== null && node.matches(":hover");
 }
 
 function paintPulse() {
   renderAccount();
   if (currentView === "dashboard") {
-    drawChart();
-    if (todayTab === "open" && !hovering("today-table")) renderToday();
+    queueChart();
+    if (todayTab === "open") renderToday();
   }
-  if (currentView === "portfolio" && viewReady.portfolio && !hovering("pf-open-table")) {
+  if (currentView === "portfolio" && viewReady.portfolio) {
     renderPortfolio();
   }
 }
 
-let resyncing = false;
+let pendingRefresh, refreshTimer, resumeAt = 0, failedAt = 0;
+
+async function readAccount(path) {
+  try {
+    if (Date.now() < resumeAt) throw new Error("feed paused");
+    const response = await fetch(path, { headers: { Accept: "application/json" } });
+    if (response.status === 401) location.replace("/login");
+    if (!response.ok) {
+      const pause = Number(response.headers.get("Retry-After"));
+      if (pause > 0) resumeAt = Math.max(resumeAt, Date.now() + pause * 1000);
+      throw new Error("read failed (" + response.status + ")");
+    }
+    return await response.json();
+  } catch (error) {
+    failedAt = Date.now();
+    throw error;
+  }
+}
 
 let pulsing = false;
 
@@ -2352,43 +2020,45 @@ async function pulse() {
   if (!booted || pulsing) return;
   pulsing = true;
   try {
-    const response = await fetch("/api/pulse", { headers: { Accept: "application/json" } });
-    if (response.status === 401) { location.replace("/login"); return; }
-    if (!response.ok) throw new Error("pulse failed (" + response.status + ")");
-
-    const aligned = applyPulse((await response.json()).data);
+    const payload = await readAccount("/api/pulse");
+    const aligned = applyPulse(payload.data, Date.parse(payload.read_at));
     paintPulse();
-    markFeed("ok");
-
-    if (!aligned && !resyncing) {
-      resyncing = true;
-      refresh().finally(() => { resyncing = false; });
-    }
+    markFeed();
+    if (!aligned) void refresh();
   } catch (error) {
-    markFeed("error", "feed unavailable — retrying");
+    markFeed("error");
   } finally {
     pulsing = false;
   }
 }
 
-function markFeed(state, detail) {
-  const bar = document.getElementById("status");
-  bar.dataset.feed = state;
-  if (detail) document.getElementById("st-asof").textContent = detail;
+function markFeed(state) {
+  if (!LEDGER) render(html`<span id="st-asof"></span>`, document.getElementById("status"));
+  const stale = accountReadAt < failedAt || Date.now() - accountReadAt > SESSION.pulse_seconds * 1000;
+  document.getElementById("status").dataset.feed = state || (stale ? "error" : "ok");
+  document.getElementById("st-asof").textContent =
+    (state === "error" || stale ? "feed unavailable · " : "") + (LEDGER?.asOf || "awaiting account");
 }
 
-async function refresh() {
-  try {
-    const response = await fetch("/api/ledger", { headers: { Accept: "application/json" } });
-    if (response.status === 401) { location.replace("/login"); return; }
-    if (!response.ok) throw new Error("read failed (" + response.status + ")");
+function refresh() {
+  if (pendingRefresh) return pendingRefresh;
+  clearTimeout(refreshTimer);
+  pendingRefresh = refreshLedger().finally(() => {
+    pendingRefresh = null;
+    if (!document.hidden) refreshTimer = setTimeout(refresh,
+      Math.max(SESSION.refresh_seconds * 1000, resumeAt - Date.now()));
+  });
+  return pendingRefresh;
+}
 
-    const payload = await response.json();
+async function refreshLedger() {
+  try {
+    const payload = await readAccount("/api/ledger");
     const first = !booted;
     const keepSelection = todaySel;
-    const keepView = chart.custom ? { i0: chart.i0, i1: chart.i1, series: chart.series } : null;
+    const intraday = chart.series === INTRADAY;
 
-    derive(payload.data);
+    const historyChanged = derive(payload.data, Date.parse(payload.read_at));
 
     if (first || !keepSelection || !tradesByDate.has(
       keepSelection.y + "-" + String(keepSelection.m + 1).padStart(2, "0") + "-" + String(keepSelection.day).padStart(2, "0")
@@ -2398,21 +2068,20 @@ async function refresh() {
       calM = LATEST.m;
     }
 
-    renderAll();
+    if (historyChanged) renderAll();
+    else paintPulse();
 
-    if (keepView) {
-      chart.series = keepView.series === INTRADAY || chart.preset === "D" ? INTRADAY : DAILY;
-      chart.i0 = keepView.i0;
-      chart.i1 = keepView.i1;
-      drawChart();
+    if (chart.custom) {
+      chart.series = intraday ? INTRADAY : DAILY;
+      queueChart();
     } else {
       setRange(chart.preset);
     }
 
     booted = true;
-    markFeed("ok");
+    markFeed();
   } catch (error) {
-    markFeed("error", "feed unavailable — retrying");
+    markFeed("error");
   }
 }
 
@@ -2495,9 +2164,8 @@ function syncThemeButtons() {
 }
 
 function repaintForTheme() {
-  readTheme();
-  renderCalendar();
-  if (currentView === "dashboard") drawChart();
+  if (currentView === "dashboard") queueChart();
+  if (currentView === "chart") drawTradeChart();
 }
 
 document.getElementById("theme-toggle").addEventListener("click", ev => {
@@ -2518,15 +2186,7 @@ document.getElementById("logout").addEventListener("click", async () => {
   location.replace("/login");
 });
 
-let resizeTimer = 0, lastBox = "";
-new ResizeObserver(entries => {
-  const r = entries[0].contentRect;
-  const key = Math.round(r.width) + "x" + Math.round(r.height);
-  if (r.width === 0 || key === lastBox) return;
-  lastBox = key;
-  clearTimeout(resizeTimer);
-  resizeTimer = setTimeout(drawChart, 80);
-}).observe(document.getElementById("chart-host"));
+new ResizeObserver(queueChart).observe(document.getElementById("chart-host"));
 
 let tradeResizeTimer = 0;
 new ResizeObserver(() => {
@@ -2534,25 +2194,28 @@ new ResizeObserver(() => {
   tradeResizeTimer = setTimeout(() => { if (currentView === "chart") drawTradeChart(); }, 80);
 }).observe(document.getElementById("tc-host"));
 
-PHONE.addEventListener("change", () => {
-  if (!onPhone() && currentView === "dashboard") requestAnimationFrame(drawChart);
+let wasPhone = onPhone();
+window.addEventListener("resize", () => {
+  const isPhone = onPhone();
+  if (isPhone === wasPhone) return;
+  wasPhone = isPhone;
+  if (!isPhone && currentView === "dashboard") queueChart();
 });
 
 document.body.dataset.view = "dashboard";
 syncThemeButtons();
 initChartInteraction();
 wireTradeChart();
-refresh();
 (async () => {
   const read = await fetch("/api/session", { cache: "no-store" });
   if (!read.ok) return;
   SESSION = await read.json();
-  setInterval(() => { if (!document.hidden) refresh(); }, SESSION.refresh_seconds * 1000);
+  await refresh();
   setInterval(() => { if (!document.hidden) pulse(); }, SESSION.pulse_seconds * 1000);
 })();
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) return;
+  if (document.hidden) { clearTimeout(refreshTimer); return; }
   pulse();
   refresh();
 });

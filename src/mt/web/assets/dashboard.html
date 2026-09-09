@@ -4,13 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Money Tree</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,700&family=Roboto+Mono:wght@400;500;600&display=swap">
+<link rel="preload" href="/assets/archivo.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/assets/spline-sans-mono.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/dashboard.css">
 <script src="/assets/theme.js"></script>
-<script defer src="/assets/dashboard.js"></script>
+<script type="module" src="/assets/dashboard.js"></script>
 </head>
 <body>
 <div class="app">
@@ -34,16 +33,6 @@
       <span class="mode">ALPACA {{ BROKER_MODE }}</span>
     </div>
 
-    <div class="status" id="status" role="status">
-      <span class="dot"></span>
-      <span class="word" id="st-word">—</span>
-      <span class="sep"></span>
-      <span id="st-session">—</span>
-      <span class="sep"></span>
-      <span id="st-strats">—</span>
-      <span class="sep"></span>
-      <span id="st-asof">—</span>
-    </div>
 
     <nav class="tabs" aria-label="Views">
       <button type="button" data-view="dashboard" aria-current="page">Dashboard</button>
@@ -52,6 +41,8 @@
       <button type="button" data-view="strategies">Strategies</button>
       <button type="button" id="logout" class="ghost" title="Sign out">Sign out</button>
     </nav>
+
+    <div class="status" id="status" role="status"></div>
   </header>
 
   <div class="view" id="view-dashboard">
@@ -61,64 +52,13 @@
 
       <section class="panel">
         <div class="panel-head"><h2>Account value</h2><span class="eyebrow">USD</span></div>
-        <div class="panel-body">
-          <div class="value-row">
-            <span class="label">Portfolio</span>
-            <span class="figure" id="v-portfolio">—</span>
-          </div>
-          <div class="value-row secondary">
-            <span class="label">Cash</span>
-            <span class="figure" id="v-cash">—</span>
-          </div>
-
-          <div class="stat-grid">
-            <div class="stat">
-              <span class="k">Total return</span>
-              <span class="v" id="v-tr">—</span>
-            </div>
-            <div class="stat">
-              <span class="k">Last session</span>
-              <span class="v" id="v-d24">—</span>
-            </div>
-
-            <div class="stat">
-              <span class="k">Open positions</span>
-              <span class="v" id="v-open">—</span>
-            </div>
-            <div class="stat">
-              <span class="k">Exposure</span>
-              <span class="v" id="v-exposure">—</span>
-            </div>
-
-            <div class="stat">
-              <span class="k">Daily loss limit</span>
-              <span class="lim" id="v-dll">—</span>
-              <div class="meter"><i id="m-dll"></i></div>
-            </div>
-            <div class="stat">
-              <span class="k">Position cap</span>
-              <span class="lim" id="v-cap">—</span>
-              <div class="meter"><i id="m-cap"></i></div>
-            </div>
-          </div>
-        </div>
+        <div class="panel-body"></div>
       </section>
 
       <section class="panel">
         <div class="panel-head"><h2>Performance</h2><span class="eyebrow">All time</span></div>
         <div class="panel-body">
-          <div class="winrate-top">
-            <span class="k">Win rate</span>
-            <span class="v" id="v-winrate">—</span>
-          </div>
-          <div class="winrate-bar" id="winrate-bar" role="img">
-            <span class="w" id="bar-w"></span>
-            <span class="l" id="bar-l"></span>
-          </div>
-          <div class="winrate-legend">
-            <span id="lg-w">—</span>
-            <span id="lg-l">—</span>
-          </div>
+          <div id="performance"></div>
 
           <div class="period-returns">
             <div class="period-head">
@@ -207,7 +147,7 @@
         </div>
         <div class="today-sum" id="today-sum"></div>
         <div class="today-wrap">
-          <table class="trades" id="today-table"></table>
+          <table class="trades" id="today-table" data-cards></table>
         </div>
       </section>
 
@@ -262,32 +202,8 @@
       <div class="rail">
         <section class="panel">
           <div class="panel-head"><h2>Positions</h2><span class="eyebrow">USD</span></div>
-          <div class="panel-body">
-            <div class="value-row">
-              <span class="label">Market value</span>
-              <span class="figure" id="pf-value">—</span>
-            </div>
-            <div class="value-row secondary">
-              <span class="label">Cash</span>
-              <span class="figure" id="pf-cash">—</span>
-            </div>
-            <div class="stat-grid">
-              <div class="stat"><span class="k">Unrealized</span><span class="v" id="pf-unrealized-pnl">—</span></div>
-              <div class="stat"><span class="k">Positions</span><span class="v" id="pf-count">—</span></div>
-              <div class="stat"><span class="k">Exposure</span><span class="v" id="pf-exposure">—</span></div>
-              <div class="stat"><span class="k">Largest</span><span class="v" id="pf-largest">—</span></div>
-              <div class="stat">
-                <span class="k">Buying power</span>
-                <span class="v" id="pf-risk">—</span>
-              </div>
-              <div class="stat">
-                <span class="k">Position cap</span>
-                <span class="lim" id="pf-cap">—</span>
-                <div class="meter"><i id="pf-cap-meter"></i></div>
-              </div>
-            </div>
-          </div>
-        </section>
+          <div class="panel-body"></div>
+      </section>
 
         <section class="panel">
           <div class="panel-head"><h2>Allocation</h2><span class="eyebrow">By strategy</span></div>
@@ -296,7 +212,7 @@
 
         <section class="panel strategies">
           <div class="panel-head"><h2>Position weight</h2><span class="eyebrow">vs position cap</span></div>
-          <div class="panel-body"><div class="stoplist" id="pf-stops"></div></div>
+          <div class="panel-body"><div class="weights" id="pf-weights"></div></div>
         </section>
       </div>
 
@@ -306,7 +222,7 @@
             <h2>Open positions</h2>
             <span class="eyebrow" id="pf-open-note">—</span>
           </div>
-          <div class="today-wrap"><table class="trades" id="pf-open-table"></table></div>
+          <div class="today-wrap"><table class="trades" id="pf-open-table" data-cards></table></div>
         </section>
 
         <section class="panel">
@@ -314,7 +230,7 @@
             <div class="today-title"><h2>Previous session</h2><span class="eyebrow" id="pf-prev-date">—</span></div>
           </div>
           <div class="today-sum" id="pf-prev-sum"></div>
-          <div class="today-wrap"><table class="trades" id="pf-prev-table"></table></div>
+          <div class="today-wrap"><table class="trades" id="pf-prev-table" data-cards></table></div>
         </section>
       </div>
 
@@ -334,13 +250,13 @@
           <div class="panel-head"><h2>Session P&amp;L</h2><span class="eyebrow">USD</span></div>
           <div class="panel-body">
             <div class="ystrip" id="hs-strip"></div>
-            <div class="table-scroll"><table class="data" id="hs-sessions"></table></div>
+            <div class="table-scroll"><table class="data" id="hs-sessions" data-cards></table></div>
           </div>
         </section>
 
         <section class="panel">
           <div class="panel-head"><h2>By strategy</h2><span class="eyebrow">Since inception</span></div>
-          <div class="panel-body"><div class="table-scroll"><table class="data" id="hs-strats"></table></div></div>
+          <div class="panel-body"><div class="table-scroll"><table class="data" id="hs-strats" data-cards></table></div></div>
         </section>
       </div>
 
@@ -367,7 +283,7 @@
           </label>
           <button type="button" class="mini" id="f-clear">Clear</button>
         </div>
-        <div class="log-wrap"><table class="trades log" id="hs-log"></table></div>
+        <div class="log-wrap"><table class="trades log" id="hs-log" data-cards></table></div>
       </section>
 
     </div>
