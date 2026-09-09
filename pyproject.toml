@@ -32,7 +32,6 @@ build-backend = "hatchling.build"
 dev = [
     "pandas-stubs>=2.3",
     "pyright>=1.1",
-    "pytest>=8",
     "ruff>=0.16",
 ]
 
@@ -52,7 +51,7 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
-known-first-party = ["mt", "tests"]
+known-first-party = ["mt"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/mt", "LICENSE", "README.md", "pyproject.toml"]
