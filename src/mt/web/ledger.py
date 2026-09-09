@@ -309,8 +309,9 @@ async def build_ledger(
     equity_daily = _equity_series(daily_read.result())
     intraday_points, intraday_date = _intraday_series(intraday_read.result())
 
-    invested = equity_daily[0]["equity"] if equity_daily else account.equity
-    funded = equity_daily[0]["date"] if equity_daily else ""
+    funding = next((row for row in equity_daily if row["equity"]), None)
+    invested = funding["equity"] if funding is not None else account.equity
+    funded = funding["date"] if funding is not None else ""
     equity = round(account.equity, 2)
     closes = {row["date"]: row["equity"] for row in equity_daily}
 
@@ -360,12 +361,14 @@ def calendar_periods(
     today: date, equity: list[EquityDay], benchmark: list[BenchmarkClose]
 ) -> dict[str, Period]:
     boundaries = {"W": today - timedelta(days=today.weekday()), "M": today.replace(day=1)}
+    equity_dates = [row["date"] for row in equity]
+    benchmark_dates = [row["date"] for row in benchmark]
     periods: dict[str, Period] = {}
     for key, boundary in boundaries.items():
         start = boundary.isoformat()
-        index = max(0, bisect_left([row["date"] for row in equity], start) - 1)
+        index = max(0, bisect_left(equity_dates, start) - 1)
         base = equity[index]["equity"] if equity else None
-        bench_index = max(0, bisect_left([row["date"] for row in benchmark], start) - 1)
+        bench_index = max(0, bisect_left(benchmark_dates, start) - 1)
         bench_base = benchmark[bench_index]["close"] if benchmark else None
         periods[key] = Period(
             start=start,
