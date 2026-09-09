@@ -25,22 +25,29 @@ mt env list --service {web|bot}
 ## sources
 
 ```py:types
-live = account, positions, orders, fills, quotes, listing
-    vendor[engine] answers when replaying
+vendor[broker]: account, positions, orders, fills, quotes, clock
+    vendor[engine] supplies simulated account data when backtesting
 
-past = vendor[broker] bars ∪ vendor[calendar] earnings
-    up to the engine clock
+series = observations ordered by time
+    realtime = current observations at the engine clock
+    historical = earlier observations through the engine clock
+    lookback = days or sessions of earlier data requested
+    bars = vendor[broker] price and volume series
+    account series = fills, closed orders, equity
 
-listing = {
-    symbols
-    shorts ⊆ symbols
-}
+earnings = vendor[calendar] scheduled releases, including upcoming dates
+    event date differs from announcement date
+    historical announcement snapshots are not supplied
+
+Asset = vendor[broker].Asset(asset_class, symbol, shortable, tradable, fractionable, …)
+assets = {asset.symbol: asset}
+    active US equities, tradable and fractionable
 ```
 
 ## screening
 
 ```py:private
-symbols = vendor[calendar] stocks ∩ listing.symbols
+symbols = vendor[calendar] stocks ∩ assets.keys()
     price over screen.price_usd_min
     turnover over screen.turnover_usd_min
     order by turnover desc
@@ -56,11 +63,13 @@ strategy = {
     code uq frozen
     is_paused
     positions_max
-    risk_fraction_max
+    equity_risk_fraction_max
 }
 
 SMA ATR RSI ADX: period = indicators.period unless given
-R = |entry - stop|
+stop_distance = |entry - stop|
+stop_fraction = stop_distance / entry
+equity_risk_fraction_max = maximum fraction of equity risked per trade
 ```
 
 ## breakout
@@ -76,14 +85,14 @@ marks = range(0), range(mid_fraction), range(1)
 
 ```py:surface
 run(session)
-    range = first opening_minutes candle
+    range = first opening_minutes bar
     range.size < range_fraction_min * price → skip
-    R / price ∉ [stop_fraction_min, stop_fraction_max] → skip
-    volume to signal close < volume_multiple * its past_sessions mean → skip
+    stop_distance / price ∉ [stop_fraction_min, stop_fraction_max] → skip
+    volume to signal close < volume_multiple * its lookback_sessions mean → skip
 
     window = range close → open + scan_minutes
     signal = first close outside the range
-    signal ∉ last signal_candles_max candles in window → skip
+    signal ∉ last signal_bars_max bars in window → skip
     when entry_extension_max is set:
         long: entry > range.high + entry_extension_max * range.size → skip
         short: entry < range.low - entry_extension_max * range.size → skip
@@ -99,15 +108,15 @@ run(session)
 ### management
 
 ```py:surface
-manage(holding, candle)
-    targets = target_multiples * R
-    trail = trail_atr_multiple * ATR after trail_candles_min candles
+manage(position, bar)
+    targets = target_multiples * stop_distance
+    trail = trail_atr_multiple * ATR after trail_bars_min bars
 
-    first target → set holding stop = entry, then trail
+    first target → set position stop = entry, then trail
     stop never moves back
     each target → close its target_fractions share
-partial short targets → round down to whole shares; skip zero-share slices
-final target → close the remainder
+    partial short targets → round down to whole shares; skip zero-share slices
+    final target → close the remainder
     close_lead_minutes before close → close the rest
 ```
 
@@ -151,8 +160,8 @@ run(session)
 ### management
 
 ```py:surface
-manage(holding, session)
-    set holding stop = max(stop, highest close since entry - stop_atr_multiple * ATR)
+manage(position, session)
+    set position stop = max(stop, highest close since entry - stop_atr_multiple * ATR)
 
     exit at next open when:
         close < stop
@@ -173,16 +182,17 @@ enter(strategy, candidate, session)
     positions ≥ risk.positions_max → skip
     exposure ≥ equity → skip
     symbol held → skip
+    short and (symbol ∉ assets or ¬assets[symbol].shortable) → skip
     quote through stop → skip
 
-    risk = (strategy.risk_fraction_max or risk.per_trade_max) * equity
+    quantity * stop_distance ≤ (strategy.equity_risk_fraction_max or risk.per_trade_max) * equity
     position ≤ risk.position_fraction_max * equity
 ```
 
 ## protection
 
 ```py:private
-protect(holding)
+protect(position)
     long: stop ≥ last price → exit at market
     short: stop ≤ last price → exit at market
 ```
@@ -190,6 +200,8 @@ protect(holding)
 ## daily loss limit
 
 ```py:private
+cancel orders, exit all: vendor[engine] when backtesting, else vendor[broker]
+
 cron:emergency_exit[portfolio.iteration_minutes]()
     equity ≤ session open value * (1 - risk.per_day_max) →
         cancel orders
@@ -197,15 +209,16 @@ cron:emergency_exit[portfolio.iteration_minutes]()
         end day
 ```
 
-## replay
+## backtest
 
 ```py:private
 report(strategy, symbols, start, end)
-    listing.symbols = symbols
+    assets = simulated Asset per symbol using backtest.asset_defaults
+    asset ids are generated; metadata is not fetched from today's catalogue
     positions = ∅
     equity = backtest.budget_usd
 
-    candles = vendor[broker] minute bars after backtest.warm_up_days
+    bars = vendor[broker] minute bars after backtest.warm_up_days
     daily: vendor[engine] bars
 
     writes stats, trades, plots vs benchmark_symbol
@@ -273,19 +286,65 @@ GET /api/strategies
     today's rules per strategy
 
 GET /api/ledger
-    live orders, fills, P&L
+    current orders, fills, P&L
     bot state, stale after web.heartbeat_timeout_seconds
 
 GET /api/pulse
-    live account, positions, open orders
+    realtime account, positions, open orders
 
 GET /api/bars
-    past bars by timeframe ∈ dashboard.chart_timeframes
+    historical bars by timeframe ∈ dashboard.chart_timeframes
 
 GET /api/levels
     marks and averages at an entry
 ```
 
+
+### terminology and trade data
+
+- vendor field names remain at integration boundaries
+- strategy records use `key`; references to a strategy key use `strategy_key`
+- price observations are bars; selected intervals are timeframes
+- sequence offsets use `index`; holdings remain positions
+- entry display components derive from `entered_at` in exchange time
+- fractional P&L and percentage P&L remain distinct
+- renamed application fields and configuration keys replace previous names together
+
+```py:types
+OrderTag = { strategy_key, kind, symbol, stop_fraction }
+    encoded broker tag format and strategy codes remain unchanged
+    encoded stop fraction = round(stop_fraction * order_tag.stop_fraction_scale)
+
+Trade = {
+    symbol, side, strategy_key, quantity, entry, exit, pnl
+    date, minute = exit components in exchange time
+    entered_at = timezone-aware ISO timestamp of first entry fill
+    duration_minutes = max(0, floor(elapsed seconds / 60))
+    fills = [{ d, m, p, quantity, s }]
+}
+OpenTrade = { strategy_key, entered_at, fills }
+    current positions without entry history: entered_at = null
+
+Totals = { n, wins, losses, gross_profit, gross_loss, net_pnl }
+    gross_profit = sum(positive trade pnl)
+    gross_loss = abs(sum(nonpositive trade pnl))
+    net_pnl = sum(trade pnl)
+
+unrealized_pnl = unrealized profit or loss in account currency
+unrealized_pnl_fraction = vendor[broker].unrealized_plpc
+unrealized_pnl_percent = 100 * unrealized_pnl_fraction
+
+strategy selection state ∈ online|paused|unselected|unknown
+unattributed strategy label = "Unattributed"
+TC_STATE.timeframe = selected chart interval
+```
+
+```py:surface
+match_trades(fills, orders, flat_quantity_max) → trades, open_trades
+    a trade spans flat position → entry fills → exit fills → flat position
+    partial exits accumulate until flat; a reversal starts a new trade
+    entered_at comes from the original fill timestamp, including its offset
+```
 
 ### calendar periods
 
