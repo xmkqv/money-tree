@@ -17,6 +17,10 @@ general:
 [rs](./rs.md)
 [ts](./ts.md)
 
+## code volume
+
+- code volume change is the change in of non-whitespace chars and non-whitespace lines
+
 ## packages
 
 - use the widest and latest version ranges
