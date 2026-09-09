@@ -359,4 +359,6 @@ class BarsClientAlpaca:
             if not page.next_page_token:
                 break
             query = {**params, "page_token": page.next_page_token}
+        else:
+            raise httpx.HTTPError("Bars exceed the configured page limit")
         return rows
