@@ -2,7 +2,6 @@
 
 [ex1](./spec.ex1.md)
 
-- content ratios = 80% syntax, 10% prose, 10% any (globally, per layer, per form)
 - vendor layers, e.g. domain services, are denoted vendor[{name}] e.g. `vendor[mesh].send(…)`
 - external layers, e.g. workspace packages, are denoted ${name} e.g. `$db.rpc(…)`
 
@@ -13,6 +12,16 @@
 
 {layers?}
 ```
+
+## economy
+
+- elementary relationships are expressed in ordinary domain language
+- pseudocode is reserved for behavior whose alternatives change an outcome
+- code identifiers are retained only where their exact spelling is contractual
+- each requirement appears once in its owning layer
+- data shapes include only fields needed to state a contract
+- formatting follows the information rather than a fixed content ratio
+- reduction revisions decrease both non-whitespace lines and characters
 
 ## frontmatter
 
@@ -54,15 +63,10 @@
 - names are canonical (i.e. well-known) or conventional (i.e. in spec)
 - `nn` = not null
 
-## pseudo-code
+## pseudocode
 
-- pseudo-code syntax is idiomatic and flexible
-- selected field mutation is `set {name}[{predicate}] {field} = {value}`
-- comma-separated assignments after one selector form one atomic field mutation
-- prose describes protocols and architectural roles
-- logic can alternate between syntax and prose
-- inv:{predicate} → error declares a failure mode
-- a cron declaration is `cron:{name}[{period}]()`
+- pseudocode is lang idiomatic and functional style
+- specs may introduce simple conventions that are not described in pseudocode forms
 
 Examples:
 
@@ -75,15 +79,55 @@ Examples:
 …
 
 {signature}
-    set {name}[{predicate}] {field} = {value} -- e.g. syntax
-    ${layer}.{name}({args}) -- e.g. external layer
-    vendor[{alias}].{name}({args}) -- e.g. vendor
-    … wait for {event} -- e.g. prose
+    {logic}
+
+<!-- e.g. logic -->
+
+{signature}
+    set {name}[{predicate}] {field} = {value}
+    ${layer}.{name}({args})
+    vendor[{alias}].{name}({args})
+    … wait for {event}
     …
 …
 ```
 
+### rules and logic
+
+- pseudocode logic prefers short simple semantic expressions over correct code syntax
+- rules refer to architectural roles, protocols, and occasionally code tokens
+- permitted code name tokens:
+  - essential and non-elementary objects, e.g. private functions
+  - self-explanatory code tokens, e.g. “{name}” is equivalent to the semantic {name}
+- forbidden code name tokens:
+  - elementary expressions, e.g. well-known primitives
+  - overly and unnecessarily prescriptive names, e.g. "{unconventional-name}.{module-assignment}"
+  - highly driftable names, i.e. that are likely to change over time
+
+### http
+
+- server api surfaces use http request blocks
+- request lines retain methods, paths and contractual query parameters
+- `#` lines are spec annotations outside the wire format
+- response annotations state result meaning and outcome-changing conditions
+- shared authentication and response conventions appear once before the block
+- headers and bodies appear only when needed to state the contract
+
+```http:form:surface
+{METHOD} /{path}?{parameter}={value}
+# {response meaning}
+# {condition} → {outcome}
+
+{METHOD} /{path}
+{Header}: {value}
+
+{body}
+# {response meaning}
+```
+
 ### sql
+
+- selected field mutation is `set {name}[{predicate}] {field} = {value}`
 
 ```sql:form:types
 enum {enum} { … }

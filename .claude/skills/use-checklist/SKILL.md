@@ -15,6 +15,7 @@ mk(key)
 - rules declare the evaluation criteria
 - md:form:check`- [ ] {fact} = {resolver}`
 - 1 ≤ count(checks) ≤ 7
+- 1 ≤ count(rules) ≤ 3
 
 ```md:form:checklist
 # {key}

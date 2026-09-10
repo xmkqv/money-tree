@@ -1,7 +1,7 @@
 ---
 name: mk
 description: only-if-asked
-argument-hint: "[subject=skill|command|cli|tree|sketch|recs|handoff|table|steps|contract|model|brief|manifest]"
+argument-hint: "[subject=skill|tree|sketch|recs|handoff|table|contract|model|brief]"
 ---
 
 mk(subject)

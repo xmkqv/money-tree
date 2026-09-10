@@ -3,7 +3,7 @@ name: scan
 description: only-if-asked
 ---
 
-scan(spec?)
+scan(spec?,observer?)
   fov=./**/*
   foe=fov (iff ¬spec then excl spec)
   skills.guides
@@ -11,15 +11,21 @@ scan(spec?)
   layers = infer(fov)
   log fov, layers
   layers.each(scan-layer)
+  if observer
+    spawn an agent to repeat the scan
+    log both reports paths
+    log every fix the observer agent caught that you did not
 
 scan-layer(layer)
   skills.mk.tree
   skills.mk.sketch(protocols)
-  fix basic issues
-  fix dof issues incl remove dead-code
-  fix tests issues incl remove bad-tests
-  fix code issues
+  flavors.each(fix)
   log report
+
+fix(flavor)
+  log flavor, rules
+  log foe.issues
+  solve issues
 
 # rules
 
@@ -38,30 +44,36 @@ scan-layer(layer)
 {conclusion}
 ```
 
-## basic
+## issues flavors
+
+### basic
 
 - typos
-- grammar
-- simple lint issues
-- voice asd-ste100
-- names consistency
+- inhuman grammar
+- lint
+- voice asd-ste100 mismatch
+- names inconsistency
 
-## dof
+### dof
 
+- skills.use-checklist.dead-code matches
 - duplication
 - redundancy
-- over-engineering
-- spaghetti
 - legacy echoes
 
-## code
+### code
 
-- skills.guides.code.infer()
-- spec satisfiability
-- idiomatic pattern matching
-- skills.use-cheatsheet(infer())
+- skills.guides.code.infer() non-compliance
+- skills.use-cheatsheet.infer() missed opportunities
+- drift from spec
+- non-idiomatic patterns
 
-## tests
+### tests
 
-- skills.guides.code.tests
-- skills.use-checklist.use(bad-tests)
+- skills.guides.code.tests non-compliance
+- skills.use-checklist.bad-tests matches
+
+## observer
+
+- spawn happens **after** your scan
+- observer is **not aware** of its observer status
