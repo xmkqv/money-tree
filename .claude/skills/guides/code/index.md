@@ -34,6 +34,7 @@ general:
 
 - generally, order module concerns: imports, types, constants, surface, private
 - generally, imports of a co-module or a lower-module are relative; every other import is absolute
+- code never contains functions that are exclusively used by tests
 
 ## names
 

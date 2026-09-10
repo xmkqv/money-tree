@@ -18,6 +18,7 @@ mk-model()
 
 ## rules
 
+- the glossary is not prescriptive, i.e. it is design register and light touch
 - intent is a list of design register statements
 - each intent statement is a single bullet (≤ 80 chars)
 - inv ≡ invariant
