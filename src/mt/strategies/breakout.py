@@ -23,7 +23,6 @@ class Signal:
     direction: Direction
     high: float
     low: float
-    close: float
     signal_at: Timestamp
 
 
@@ -278,7 +277,9 @@ class Breakout(Strategy):
 
     def _price(self, found: Signal) -> float:
         price = self.portfolio.last_price(found.asset)
-        return price if isfinite(price) and price > 0 else found.close
+        if not isfinite(price) or price <= 0:
+            raise ValueError(f"current price for {found.asset} must be finite and positive")
+        return price
 
     def _signals(
         self, frames: dict[Asset, DataFrame], session: Session, opening_end: datetime
@@ -304,9 +305,7 @@ class Breakout(Strategy):
                 continue
             if len(after) - index > settings.breakout.signal_bars_max:
                 continue
-            signals.append(
-                Signal(asset, direction, high, low, close, cast(Timestamp, after.index[index]))
-            )
+            signals.append(Signal(asset, direction, high, low, cast(Timestamp, after.index[index])))
         return signals
 
     def _first_break(

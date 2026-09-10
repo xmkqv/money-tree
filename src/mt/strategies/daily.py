@@ -7,7 +7,6 @@ from pandas import DataFrame
 
 from mt.config.shared import settings
 from mt.data.asset import Asset
-from mt.data.earnings import is_earnings_blocked, is_earnings_exit_due
 from mt.exchange import TRADING_ZONE
 from mt.frames import frame_since, last_close
 from mt.indicators import finite_row, finite_value, latest_atr, latest_turnover_usd
@@ -115,7 +114,7 @@ class Daily(Strategy):
         for asset, frame in self._ranked():
             if not self.does_clear(frame) or not self.does_enter(frame):
                 continue
-            if self.does_heed_earnings and is_earnings_blocked(asset, now.date()):
+            if self.does_heed_earnings and self.portfolio.is_earnings_blocked(asset, now.date()):
                 continue
             last = last_close(frame)
             stop = last - self.stop_atr_multiple * latest_atr(frame, settings.indicators.period)
@@ -134,7 +133,7 @@ class Daily(Strategy):
         if (
             self.does_heed_earnings
             and session.opens <= now < session.closes
-            and is_earnings_exit_due(position.asset, now.date())
+            and self.portfolio.is_earnings_exit_due(position.asset, now.date())
         ):
             self.portfolio.exit(position)
             return

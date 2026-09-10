@@ -11,6 +11,7 @@ from mt.config.shared import settings
 from mt.config.values import StrategyKey, is_strategy_key
 from mt.data.asset import Asset, AssetType
 from mt.data.broker import Broker, BrokerAlpaca, BrokerAsset, BrokerEngine
+from mt.data.earnings import is_earnings_blocked, is_earnings_exit_due
 from mt.data.finnhub import stocks
 from mt.exchange import TRADING_ZONE, session_bounds
 from mt.frames import last_close, normalize_ohlcv
@@ -181,6 +182,12 @@ class Portfolio(LumibotStrategy):
 
     def last_price(self, asset: Asset) -> float:
         return float(self.get_last_price(asset.to_lumibot()))
+
+    def is_earnings_blocked(self, asset: Asset, day: date) -> bool:
+        return is_earnings_blocked(asset, day)
+
+    def is_earnings_exit_due(self, asset: Asset, day: date) -> bool:
+        return is_earnings_exit_due(asset, day)
 
     def position_count(self, keys: frozenset[StrategyKey]) -> int:
         held = sum(1 for position in self._positions.values() if position.strategy.key in keys)
