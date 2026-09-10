@@ -7,6 +7,7 @@ const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD"
 const money = v => usd.format(v);
 const signedMoney = v => (v > 0 ? "+" : v < 0 ? "−" : "") + usd.format(Math.abs(v));
 const signedPct = (v, d = 2) => v === null || !Number.isFinite(v) ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d) + "%";
+const ratio = v => Number.isFinite(v) ? v.toFixed(2) : "—";
 const plainNum = new Intl.NumberFormat("en-US").format;
 const tone = v => (v > 0 ? "pos" : v < 0 ? "neg" : "flat");
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -89,8 +90,12 @@ function monthData(y, m) {
   if (monthCache.has(key)) return monthCache.get(key);
 
   const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const start = y + "-" + String(m + 1).padStart(2, "0") + "-01";
+  const end = y + "-" + String(m + 1).padStart(2, "0") + "-" + daysInMonth;
+  const opening = (LEDGER.equityDaily.findLast(row => row.date < start)
+    ?? LEDGER.equityDaily.find(row => row.date >= start && row.date <= end))?.equity ?? null;
   const days = [];
-  let running = ACCOUNT.invested;
+  let running = opening;
 
   for (let d = 1; d <= daysInMonth; d++) {
     const weekday = new Date(y, m, d).getDay();
@@ -113,7 +118,7 @@ function monthData(y, m) {
 
   const traded = days.filter(d => d.pnl !== null);
   const result = {
-    y, m, days, opening: ACCOUNT.invested,
+    y, m, days, opening,
     pnl: Math.round(traded.reduce((s, d) => s + d.pnl, 0) * 100) / 100,
     trades: traded.reduce((s, d) => s + d.trades, 0),
     wins: traded.reduce((s, d) => s + d.wins, 0),
@@ -156,7 +161,7 @@ function derive(ledger, readAt) {
     }) };
   }
   const changed = keys => keys.some(key => JSON.stringify(ledger[key]) !== JSON.stringify(LEDGER?.[key]));
-  const historyChanged = changed(["trades", "strategies", "days", "periods", "invested", "benchmark", "benchmarkSymbol", "today", "totals", "windows"]) || ledger.equityDaily[0]?.date !== LEDGER?.equityDaily[0]?.date || !ledger.days.length && ledger.equityDaily.at(-1)?.date !== LEDGER?.equityDaily.at(-1)?.date;
+  const historyChanged = changed(["trades", "strategies", "days", "periods", "invested", "benchmark", "benchmarkSymbol", "today", "totals", "windows", "equityDaily"]);
   const seriesChanged = changed(["equityDaily", "intraday", "intradayDate", "invested", "today"]);
   LEDGER = ledger;
   if (historyChanged) {
@@ -1131,11 +1136,11 @@ function renderHistory() {
     tile("Realised P&L", signedMoney(L.net_pnl), tone(L.net_pnl), "closed round trips"),
     tile("Trades", plainNum(L.n), "", SESSIONS.length + " sessions"),
     tile("Win rate", L.winRate.toFixed(1) + "%", "", L.wins + "W / " + L.losses + "L"),
-    tile("Profit factor", L.profitFactor.toFixed(2), L.profitFactor >= 1 ? "pos" : "neg", "gross profit ÷ gross loss"),
+    tile("Profit factor", ratio(L.profitFactor), Number.isFinite(L.profitFactor) ? tone(L.profitFactor - 1) : "flat", "gross profit ÷ gross loss"),
     tile("Expectancy", signedMoney(L.expectancy), tone(L.expectancy), "per trade"),
     tile("Average win", signedMoney(L.avgWin), "pos", plainNum(L.wins) + " trades"),
     tile("Average loss", signedMoney(-L.avgLoss), "neg", plainNum(L.losses) + " trades"),
-    tile("Payoff ratio", (L.avgWin / L.avgLoss).toFixed(2), "", "avg win ÷ avg loss"),
+    tile("Payoff ratio", ratio(L.avgWin / L.avgLoss), "", "avg win ÷ avg loss"),
     tile("Best trade", signedMoney(L.best), "pos"),
     tile("Worst trade", signedMoney(L.worst), "neg"),
   ], tiles);
@@ -1166,7 +1171,7 @@ function renderHistory() {
         stratCell(st.key),
         { t: plainNum(st2.n), r: true, dim: true },
         { t: st2.n ? st2.winRate.toFixed(1) + "%" : "—", r: true, dim: true },
-        { t: st2.n ? st2.profitFactor.toFixed(2) : "—", r: true, cls: st2.profitFactor >= 1 ? "pos" : "neg" },
+        { t: st2.n ? ratio(st2.profitFactor) : "—", r: true, cls: Number.isFinite(st2.profitFactor) ? tone(st2.profitFactor - 1) : "flat" },
         { t: signedMoney(st2.net_pnl), r: true, cls: tone(st2.net_pnl) },
       ];
     }), 1);
@@ -1174,9 +1179,12 @@ function renderHistory() {
   const fs = document.getElementById("f-strategy");
   if (fs.options.length === 1) {
     for (const st of STRATEGIES) fs.append(new Option(st.short, st.key));
-    const sessions = document.getElementById("f-session");
-    for (const session of [...SESSIONS].reverse()) sessions.append(new Option(session.long, session.date));
   }
+  const sessions = document.getElementById("f-session");
+  const selected = sessions.value;
+  sessions.replaceChildren(new Option("All", ""),
+    ...[...SESSIONS].reverse().map(session => new Option(session.long, session.date)));
+  sessions.value = SESSIONS.some(session => session.date === selected) ? selected : "";
 
   renderLog();
 }
