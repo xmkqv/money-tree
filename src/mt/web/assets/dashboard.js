@@ -1894,7 +1894,7 @@ function switchView(name) {
   if (!viewReady[name]) {
     if (name === "portfolio") renderPortfolio();
     if (name === "history") renderHistory();
-    if (name === "strategies") renderRules();
+    if (name === "strategies") renderConfig();
     viewReady[name] = true;
   }
 
@@ -1905,58 +1905,51 @@ function switchView(name) {
 
 
 
-let RULES = null;
+let CONFIG = null;
 
-function ruleRow(row) {
-  return html`<tr><th scope="row">${row.field}</th><td>${row.value}
-    ${row.source ? html`<span class="rule-source">${row.source}</span>` : nothing}</td></tr>`;
+function configRow(row) {
+  return html`<div class="config-row" title=${row.name}>
+    <span class="label">${row.label}</span>
+    <span class="value">${row.bound ? html`<i>${row.bound}</i>` : nothing}${row.value}</span>
+  </div>`;
 }
 
-function renderRuleStates() {
-  const bot = LEDGER.bot || {};
-  const warning = document.getElementById("rules-bot");
-  if (warning) {
-    const down = bot.reported && !bot.running;
-    warning.textContent = !bot.reported
-      ? "The bot has not reported its selected strategies."
-      : down
-        ? "The bot has stopped reporting — the switches below are from its last report."
-        : "";
-    warning.hidden = !warning.textContent;
-  }
-  paintRules();
+function configCard(card) {
+  const isStrategy = Boolean(STRAT_BY_KEY?.[card.key]);
+  const idle = isStrategy && switchState(card.key) !== "online";
+  return html`<section class=${"panel config-card" + (idle ? " is-idle" : "")}>
+    <div class="panel-head">
+      <h2>${isStrategy ? strategyChip(strategyHue(card.key)) : nothing}<span>${card.name}</span></h2>
+      ${isStrategy ? stateBadges(card.key) : nothing}
+    </div>
+    <div class="panel-body">
+      <div class="config-rows">${card.rows.map(configRow)}</div>
+      ${card.namespace ? html`<p class="config-foot">${card.namespace}*</p>` : nothing}
+    </div>
+  </section>`;
 }
 
-
-function paintRules() {
-  if (!RULES) return;
-  render(html`<caption>Applies to every strategy at once</caption><tbody>${RULES.portfolio.map(ruleRow)}</tbody>`,
-    document.getElementById("rules-portfolio"));
-  document.getElementById("rules-config").textContent = RULES.configured
-    ? "Risk limits as reported by the bot"
-    : "Bot not reporting — risk limits shown are from the mode environment";
-  render(repeat(RULES.strategies, strategy => strategy.key, strategy => html`
-    <section class=${"panel rule-card" + (switchState(strategy.key) === "online" ? "" : " is-idle")}
-      data-strategy-key=${strategy.key}><div class="panel-head"><h2>
-      ${strategyChip(strategy.key === "unattributed" ? null : strategyHue(strategy.key))}
-      <span>${strategy.name}</span></h2>${stateBadges(strategy.key)}</div>
-      <div class="rule-sub">${strategy.name} · ${strategy.kind}</div>
-      <div class="panel-body"><table class="data rules-table"><tbody>${strategy.rows.map(ruleRow)}</tbody></table></div>
-    </section>`), document.getElementById("rules-cards"));
+function paintConfig() {
+  if (!CONFIG) return;
+  document.getElementById("rules-config").textContent = CONFIG.configured
+    ? "Reported by the bot"
+    : "From the mode environment";
+  render(repeat(CONFIG.cards, card => card.name, configCard),
+    document.getElementById("rules-cards"));
 }
 
-async function renderRules() {
-  if (RULES) { renderRuleStates(); return; }
+async function renderConfig() {
+  if (CONFIG) { paintConfig(); return; }
   try {
     const response = await fetch("/api/strategies", { credentials: "same-origin" });
     if (!response.ok) throw new Error("HTTP " + response.status);
-    RULES = (await response.json()).data;
+    CONFIG = (await response.json()).data;
   } catch (error) {
     document.getElementById("rules-cards").textContent =
-      "The rule sheet could not be loaded. Reload the page to try again.";
+      "The configuration could not be loaded. Reload the page to try again.";
     return;
   }
-  renderRuleStates();
+  paintConfig();
 }
 
 
@@ -1970,7 +1963,7 @@ function renderAll() {
   renderToday();
   if (viewReady.portfolio) renderPortfolio();
   if (viewReady.history) renderHistory();
-  if (viewReady.strategies) renderRuleStates();
+  if (viewReady.strategies) paintConfig();
 }
 
 

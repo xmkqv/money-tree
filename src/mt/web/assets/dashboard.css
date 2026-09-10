@@ -300,7 +300,7 @@
   .rules-grid {
     display: grid;
     gap: var(--space-lg);
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 32.5rem), 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
     align-items: start;
   }
 
@@ -802,15 +802,6 @@
   .run-state.session.is-open { color: var(--gain-ink); border-color: color-mix(in oklab, var(--gain-mark) 45%, transparent); }
   .run-state.session.is-closed { color: var(--ink-2); border-color: var(--rule-strong); }
 
-  .rules-warning {
-    margin: 0 0 var(--space-md);
-    padding: var(--space-sm) var(--space-md);
-    border-radius: var(--radius-sm);
-    color: var(--loss-ink);
-    background: color-mix(in oklab, var(--loss-mark) 10%, var(--surface));
-    border: 1px solid color-mix(in oklab, var(--loss-mark) 26%, transparent);
-  }
-
   .pnl-cell { white-space: nowrap; }
 
   .pnl-cell .sub {
@@ -1299,66 +1290,60 @@
   }
 
   .rules { display: flex; flex-direction: column; gap: var(--space-lg); }
-  .rules-note { color: var(--ink-2); max-inline-size: 78ch; line-height: 1.5; margin: 0 0 var(--space-md); }
-  .rule-card .panel-head h2 { display: flex; align-items: center; gap: var(--space-sm); }
 
-  .rule-sub {
-    padding: 0 var(--pad) var(--space-sm);
-    color: var(--ink-3);
-    font-size: var(--text-xs);
-    margin-block-start: calc(var(--space-xs) * -1);
+  .rules-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: var(--space-md);
+    flex-wrap: wrap;
   }
 
-  .rule-card.is-idle .rules-table td { color: var(--ink-2); }
+  .rules-head h2 { font-weight: 600; font-size: var(--text-lg); letter-spacing: var(--track-tight); }
 
-  .rules-table { inline-size: 100%; table-layout: fixed; }
+  .config-card .panel-head h2 { display: flex; align-items: center; gap: var(--space-sm); }
+  .config-card .panel-body { padding-block-end: var(--space-md); }
 
-  .rules-table caption {
-    caption-side: top;
-    text-align: left;
-    color: var(--ink-3);
-    font-size: var(--text-xs);
-    font-stretch: var(--width-narrow);
-    letter-spacing: var(--track-label);
-    text-transform: uppercase;
-    padding-block-end: var(--space-sm);
+  .config-rows { display: grid; grid-template-columns: 1fr auto; }
+
+  .config-row {
+    display: grid;
+    grid-column: span 2;
+    grid-template-columns: subgrid;
+    align-items: baseline;
+    column-gap: var(--space-md);
+    padding-block: var(--space-2xs);
   }
 
-  .rules-table th[scope="row"] {
-    inline-size: 8.5rem;
-    text-align: left;
-    vertical-align: top;
-    font-weight: 600;
+  .config-row .label {
     font-size: var(--text-xs);
     font-stretch: var(--width-narrow);
     color: var(--ink-2);
-    padding: var(--space-sm) var(--space-md) var(--space-sm) 0;
+    text-wrap: balance;
     overflow-wrap: anywhere;
   }
 
-  #rules-portfolio th[scope="row"] { inline-size: 11rem; }
-
-  .rules-table td {
-    vertical-align: top;
-    padding-block: var(--space-sm);
-    line-height: 1.5;
-    color: var(--ink);
-    overflow-wrap: anywhere;
-  }
-
-  .rules-table tr + tr :is(th, td) { border-block-start: 1px solid var(--rule); }
-
-  .rule-source {
-    display: block;
-    margin-block-start: var(--space-2xs);
-    color: var(--ink-3);
+  .config-row .value {
     font-family: var(--font-data);
-    font-size: var(--text-2xs);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--ink);
+    text-align: end;
+    white-space: nowrap;
   }
 
-  @container panel (inline-size < 34rem) {
-    .rules-table th[scope="row"],
-    #rules-portfolio th[scope="row"] { inline-size: 6.5rem; }
+  .config-row .value i { font-style: normal; color: var(--ink-3); padding-inline-end: var(--space-3xs); }
+
+  .config-card.is-idle .config-row .value { color: var(--ink-2); }
+
+  .config-foot {
+    margin: var(--space-md) 0 0;
+    padding-block-start: var(--space-sm);
+    border-block-start: 1px solid var(--rule);
+    font-family: var(--font-data);
+    font-size: var(--text-3xs);
+    color: var(--ink-3);
+    overflow-wrap: anywhere;
   }
 
   .sym.linked {
@@ -1769,13 +1754,6 @@
     .field.grow { grid-column: 1 / -1; max-inline-size: none; }
     .filters .mini { grid-column: 1 / -1; justify-self: start; margin: 0; }
     .field select, .field input { inline-size: 100%; min-inline-size: 0; padding: var(--space-sm); font-size: 1rem; }
-
-    .rules-table, .rules-table tbody, .rules-table caption { display: block; }
-    .rules-table tr { display: block; padding-block: var(--space-sm); border-block-start: 1px solid var(--rule); }
-    .rules-table tr:first-child { border-block-start: 0; }
-    .rules-table tr + tr :is(th, td) { border-block-start: 0; }
-    .rules-table th[scope="row"], #rules-portfolio th[scope="row"] { display: block; inline-size: auto; padding: 0 0 3px; }
-    .rules-table td { display: block; padding: 0; }
 
     .trade-head .segmented { margin-inline-start: 0; }
     .trade-stage { padding-inline: var(--pad); }

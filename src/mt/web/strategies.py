@@ -1,35 +1,63 @@
+from collections.abc import Callable
 from datetime import datetime
-from typing import TypedDict, cast
+from typing import TypedDict, cast, get_args
 
-from mt.config.sections import RiskSection
+from pydantic.fields import FieldInfo
+
 from mt.config.settings import RuleSettings
+from mt.config.values import SettingsSection
 from mt.exchange import TRADING_ZONE, upcoming_session_bounds
 from mt.strategies.base import Strategy
 from mt.strategies.breakout import Breakout
 from mt.strategies.order_tag import ORDER_TAG_PREFIX, UNATTRIBUTED
 from mt.strategies.registry import STRATEGIES
 
-from .rules import KINDS, RULE_FIELDS, Row, percent, strategy_rows
+
+KINDS = {"breakout": "Intraday breakout", "daily": "Daily trend"}
+ACRONYMS = {"atr": "ATR", "adx": "ADX", "rsi": "RSI", "sma": "SMA", "tfb": "TFB"}
+BOUNDS = {"max": "≤", "min": "≥"}
+UNITS = {
+    "minutes": "min",
+    "seconds": "s",
+    "sessions": "sess",
+    "days": "days",
+    "bars": "bars",
+    "multiple": "×",
+    "multiples": "×",
+    "fraction": "",
+    "fractions": "",
+}
+FRACTIONS = {"Fraction", "OptionalFraction"}
+NUMBERS = {"Count", "Amount", "int", "float"}
+TEXTS = {"Symbol", "str"}
+FLAGS = {"bool"}
+STATE_FIELDS = {"is_paused"}
+MARKET_CARD = "Market"
 
 
-class StrategyCard(TypedDict):
+class ConfigRow(TypedDict):
+    label: str
+    bound: str
+    value: str
+    name: str
+
+
+class ConfigCard(TypedDict):
     key: str
     name: str
-    kind: str
-    rows: list[Row]
+    namespace: str
+    rows: list[ConfigRow]
+
+
+class StrategyConfig(TypedDict):
+    cards: list[ConfigCard]
+    configured: bool
 
 
 class StrategyLabel(TypedDict):
     key: str
     short: str
     label: str
-
-
-class StrategyRules(TypedDict):
-    fields: list[str]
-    strategies: list[StrategyCard]
-    portfolio: list[Row]
-    configured: bool
 
 
 EntryWindow = TypedDict("EntryWindow", {"from": str, "to": str})
@@ -56,59 +84,110 @@ def strategy_labels() -> list[StrategyLabel]:
     return labels
 
 
-def strategy_rules(configuration: RuleSettings, *, configured: bool) -> StrategyRules:
-    opens, closes = upcoming_session_bounds(datetime.now(TRADING_ZONE).date())
-    return StrategyRules(
-        fields=list(RULE_FIELDS),
-        strategies=[_card(cls, configuration, opens, closes) for cls in STRATEGIES],
-        portfolio=portfolio_rules(configuration.risk, configuration.breakout.positions_max),
-        configured=configured,
+def strategy_config(configuration: RuleSettings, *, configured: bool) -> StrategyConfig:
+    scalars = [
+        _row("", name, info, getattr(configuration, name))
+        for name, info in RuleSettings.model_fields.items()
+        if not _is_section(info)
+    ]
+    sections = [
+        _card(name, getattr(configuration, name))
+        for name, info in RuleSettings.model_fields.items()
+        if _is_section(info)
+    ]
+    market = ConfigCard(key="", name=MARKET_CARD, namespace="", rows=scalars)
+    return StrategyConfig(cards=[market, *sections], configured=configured)
+
+
+def _is_section(info: FieldInfo) -> bool:
+    return isinstance(info.annotation, type) and issubclass(info.annotation, SettingsSection)
+
+
+def _card(key: str, section: SettingsSection) -> ConfigCard:
+    namespace = f"{key.upper()}__"
+    return ConfigCard(
+        key=key,
+        name=_card_name(key),
+        namespace=namespace,
+        rows=[
+            _row(namespace, name, info, getattr(section, name))
+            for name, info in type(section).model_fields.items()
+            if name not in STATE_FIELDS
+        ],
     )
 
 
-def portfolio_rules(risk: RiskSection, breakout_positions_max: int) -> list[Row]:
-    return [
-        Row(
-            field="Position cap",
-            value=f"At most {risk.positions_max} positions open at once, counting orders already "
-            "placed but not yet filled.",
-            source="portfolio.py · enter",
-        ),
-        Row(
-            field="Breakout cap",
-            value=f"At most {breakout_positions_max} breakout positions open at once "
-            "across both breakout strategies, including pending entries.",
-            source="strategies/breakout.py · cap_keys",
-        ),
-        Row(
-            field="Exposure",
-            value="An entry is skipped if its estimated value would put gross exposure "
-            "above account equity. Exposure includes pending entries.",
-            source="portfolio.py · enter",
-        ),
-        Row(
-            field="One owner per symbol",
-            value="Only one strategy holds a symbol at a time; the others skip it while "
-            "that position is open.",
-            source="portfolio.py · _is_owned",
-        ),
-        Row(
-            field="Daily loss limit",
-            value=f"If equity falls {percent(risk.per_day_max)} below the session's opening "
-            "value, every position is closed and no new trade is opened until the next session.",
-            source="portfolio.py · _emergency_exit",
-        ),
-    ]
+def _card_name(key: str) -> str:
+    named = {cls.key: cls.name() for cls in STRATEGIES}
+    if key in named:
+        return named[key]
+    if key in KINDS:
+        return f"{key.capitalize()} family"
+    return key.capitalize()
 
 
-def _card(
-    cls: type[Strategy], configuration: RuleSettings, opens: datetime, closes: datetime
-) -> StrategyCard:
-    described = _described(cls, configuration)
-    rows = strategy_rows(described, configuration, opens, closes)
-    if [row["field"] for row in rows] != list(RULE_FIELDS):
-        raise ValueError(f"{cls.__name__} must describe every rule field in order")
-    return StrategyCard(key=cls.key, name=cls.name(), kind=KINDS[cls.family], rows=rows)
+def _row(namespace: str, name: str, info: FieldInfo, value: object) -> ConfigRow:
+    words = name.split("_")
+    if words[0] in {"is", "does"}:
+        words = words[1:]
+    bound = BOUNDS.get(words[-1], "")
+    if bound:
+        words = words[:-1]
+    unit = next((UNITS[word] for word in words if word in UNITS), "")
+    words = [word for word in words if word not in UNITS]
+    money = "usd" in words
+    words = [word for word in words if word != "usd"]
+    return ConfigRow(
+        label=" ".join(ACRONYMS.get(word, word) for word in words),
+        bound="" if value is None else bound,
+        value=_value(info, value, unit=unit, money=money),
+        name=f"{namespace}{name.upper()}",
+    )
+
+
+def _value(info: FieldInfo, value: object, *, unit: str, money: bool) -> str:
+    if value is None:
+        return "—"
+    figures = _figure(info.annotation, money=money)(_parts(value))
+    return f"{figures} {unit}" if unit.isalpha() else f"{figures}{unit}"
+
+
+def _parts(value: object) -> tuple[object, ...]:
+    return cast(tuple[object, ...], value) if isinstance(value, tuple) else (value,)
+
+
+def _figure(annotation: object, *, money: bool) -> Callable[[tuple[object, ...]], str]:
+    names = {getattr(part, "__name__", "") for part in get_args(annotation) or (annotation,)}
+    if names & FRACTIONS:
+        return _joined(_percent)
+    if names & NUMBERS:
+        return _joined(_money if money else _number)
+    if names & TEXTS:
+        return _joined(str)
+    if names & FLAGS:
+        return _joined(_flag)
+    raise ValueError(f"{names} has no configuration card figure")
+
+
+def _joined(figure: Callable[[object], str]) -> Callable[[tuple[object, ...]], str]:
+    return lambda parts: " / ".join(figure(part) for part in parts)
+
+
+def _flag(value: object) -> str:
+    return "yes" if value else "no"
+
+
+def _percent(value: object) -> str:
+    return f"{cast(float, value) * 100:.2f}".rstrip("0").rstrip(".") + "%"
+
+
+def _number(value: object) -> str:
+    return f"{cast(float, value):g}"
+
+
+def _money(value: object) -> str:
+    figure = cast(float, value)
+    return f"${figure / 1_000_000:g}M" if figure >= 1_000_000 else f"${figure:g}"
 
 
 def _described(cls: type[Strategy], configuration: RuleSettings) -> type[Strategy]:

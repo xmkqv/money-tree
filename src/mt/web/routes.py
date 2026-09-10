@@ -32,7 +32,7 @@ from .ledger import Ledger, build_ledger, match_trades
 from .levels import Levels, add_breakout_levels, opening_range
 from .pulse import bot_state, build_pulse
 from .state import StateStore
-from .strategies import entry_windows, strategy_rules
+from .strategies import entry_windows, strategy_config
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
@@ -268,7 +268,7 @@ def dashboard_router(configuration: WebSettings, state_store: StateStore) -> API
         reported = snapshot is not None
         active_configuration = snapshot.configuration if snapshot else settings
         return read_response(
-            strategy_rules(active_configuration, configured=reported),
+            strategy_config(active_configuration, configured=reported),
             dashboard_section.strategies_max_age_seconds,
         )
 
