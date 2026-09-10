@@ -22,6 +22,7 @@ scan(fov=infer())
 - auto-fixes consider guides and spec authoratitive over code and tests
 - fixes are generally reductions, i.e. consolidation, normalization, simplification, collapse, etc.
 - any log files are written to /tmp/{rnd}.md
+- code and tests reflect spec; spec bugs materialize as failing tests
 
 ## basic
 

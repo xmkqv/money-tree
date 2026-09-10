@@ -2,6 +2,7 @@
 
 - code is self-explanatory
 - code is human-readable
+- code prefers a functional style
 - code names align with spec naming conventions
 - code has no comments
 - code fails fast, i.e. if an error handling branch is not declared in spec then branch panics instead of inventing a handler
