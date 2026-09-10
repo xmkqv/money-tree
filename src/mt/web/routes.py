@@ -26,7 +26,7 @@ from mt.strategies.breakout import Breakout
 from mt.strategies.daily import Daily
 from mt.strategies.registry import STRATEGIES_BY_KEY
 
-from .bars import bar_averages, bars_atr, chart_window, session_hour_bars
+from .bars import bar_averages, bars_atr, chart_window, session_bars, session_hour_bars
 from .cache import Cache
 from .ledger import Ledger, build_ledger, match_trades
 from .levels import Levels, add_breakout_levels, opening_range
@@ -193,6 +193,8 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
                         pages_max=1,
                     )
                 )[instrument]
+                if timeframe == "5Min" and instrument.asset_type == AssetType.STOCK:
+                    rows = session_bars(rows)
             read_at = datetime.now(UTC)
             return read_at, {
                 "symbol": symbol,

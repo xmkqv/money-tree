@@ -3,7 +3,7 @@ from datetime import time as dtime
 from math import isfinite
 from typing import Any, TypedDict, cast
 
-from pandas import DatetimeIndex, Series, Timedelta
+from pandas import DatetimeIndex, Series, Timedelta, Timestamp
 from pandas_ta_classic.overlap.sma import sma
 
 from mt.config.sections import ChartTimeframeSection
@@ -12,6 +12,13 @@ from mt.data.bars import Bar, bar_frame
 from mt.exchange import TRADING_ZONE, session_starts
 from mt.frames import regular_session
 from mt.indicators import latest_atr
+
+
+def session_bars(bars: list[Bar]) -> list[Bar]:
+    if not bars:
+        return []
+    timestamps = set(regular_session(bar_frame(bars)).index)
+    return [bar for bar in bars if Timestamp(bar.opened_at) in timestamps]
 
 
 def session_hour_bars(bars: list[Bar]) -> list[Bar]:
