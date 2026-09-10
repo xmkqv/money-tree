@@ -32,7 +32,7 @@ class Asset(BaseModel, frozen=True):
         if separator and (not base or not quote or "/" in quote):
             raise ValueError("crypto symbols require a base and quote currency")
         if quote:
-            return cls(symbol=base.upper(), asset_type=AssetType.CRYPTO, precision=quote.upper())
+            return cls(symbol=base, asset_type=AssetType.CRYPTO, precision=quote)
         return cls.from_lumibot(LumibotAsset.symbol2asset(symbol))
 
     @classmethod

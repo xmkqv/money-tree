@@ -2,7 +2,6 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
 
 import httpx
 from alpaca.common.enums import BaseURL
@@ -150,7 +149,7 @@ class TradingClientAlpaca:
             orders.update((row.id, row) for row in orders_read.result())
             async with asyncio.TaskGroup() as reads:
                 missing = {
-                    order_id: reads.create_task(self._get(f"/v2/orders/{order_id}"))
+                    order_id: reads.create_task(get_json(self._client, f"/v2/orders/{order_id}"))
                     for order_id in {row.order_id for row in fills.values()} - orders.keys()
                 }
             orders.update(
@@ -191,10 +190,10 @@ class TradingClientAlpaca:
             return self._daily[1]
 
     async def account(self) -> Account:
-        return Account.model_validate(await self._get("/v2/account"))
+        return Account.model_validate(await get_json(self._client, "/v2/account"))
 
     async def positions(self) -> list[Position]:
-        return positions_adapter.validate_python(await self._get("/v2/positions"))
+        return positions_adapter.validate_python(await get_json(self._client, "/v2/positions"))
 
     async def open_orders(self) -> list[Order]:
         return await self._pages(
@@ -207,7 +206,7 @@ class TradingClientAlpaca:
         )
 
     async def clock(self) -> Clock:
-        return Clock.model_validate(await self._get("/v2/clock"))
+        return Clock.model_validate(await get_json(self._client, "/v2/clock"))
 
     async def fills(self, after: str | None = None) -> list[Fill]:
         return await self._pages(
@@ -237,7 +236,7 @@ class TradingClientAlpaca:
         if timeframe != "1D":
             params["intraday_reporting"] = "market_hours"
         history = _PortfolioHistory.model_validate(
-            await self._get("/v2/account/portfolio/history", params)
+            await get_json(self._client, "/v2/account/portfolio/history", params)
         )
         return [
             EquityPoint(timestamp=timestamp, equity=equity)
@@ -257,7 +256,9 @@ class TradingClientAlpaca:
         token: str | None = None
         for _ in range(self._pages_max):
             page = adapter.validate_python(
-                await self._get(path, {**params, "direction": "desc", token_name: token})
+                await get_json(
+                    self._client, path, {**params, "direction": "desc", token_name: token}
+                )
             )
             collected.extend(page)
             if len(page) < self._page_rows_max:
@@ -269,6 +270,3 @@ class TradingClientAlpaca:
         else:
             raise httpx.HTTPError("Account history exceeds the configured page limit")
         return collected
-
-    async def _get(self, path: str, params: dict[str, object] | None = None) -> Any:
-        return await get_json(self._client, path, params)

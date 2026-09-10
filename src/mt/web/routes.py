@@ -18,7 +18,7 @@ from mt.config.shared import settings
 from mt.config.values import ChartTimeframe, StrategyKey, Symbol, Unattributed, is_strategy_key
 from mt.data.alpaca import AccountObservation, TradingClientAlpaca
 from mt.data.asset import Asset, AssetType
-from mt.data.bars import BarsClientAlpaca
+from mt.data.bars import BarsClientAlpaca, check_supported_asset
 from mt.exchange import TRADING_ZONE, session_bounds
 from mt.position import Direction
 from mt.state import read_state
@@ -155,9 +155,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
         closed: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
     ) -> JSONResponse:
         try:
-            instrument = Asset.from_symbol(symbol)
-            if instrument.asset_type not in (AssetType.STOCK, AssetType.CRYPTO, AssetType.OPTION):
-                raise ValueError("unsupported asset type")
+            instrument = _query_asset(symbol)
         except ValueError:
             return error_response("The asset is invalid", 422)
         try:
@@ -218,9 +216,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
         opened: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
     ) -> JSONResponse:
         try:
-            instrument = Asset.from_symbol(symbol)
-            if instrument.asset_type not in (AssetType.STOCK, AssetType.CRYPTO, AssetType.OPTION):
-                raise ValueError("unsupported asset type")
+            instrument = _query_asset(symbol)
         except ValueError:
             return error_response("The asset is invalid", 422)
         try:
@@ -330,3 +326,9 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
         return read_response(cached, 0, account.read_at)
 
     return router
+
+
+def _query_asset(symbol: str) -> Asset:
+    asset = Asset.from_symbol(symbol)
+    check_supported_asset(asset)
+    return asset

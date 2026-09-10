@@ -34,7 +34,8 @@ class Cache[Value]:
         if self._pending.get(key) is task:
             del self._pending[key]
             if not failed:
-                self.store(key, task.result())
+                self._entries.pop(key, None)
+                self._entries[key] = task.result()
 
     async def close(self) -> None:
         self._closed = True
@@ -44,10 +45,6 @@ class Cache[Value]:
 
     def fresh(self, key: str) -> Value | None:
         return self._entries.get(key)
-
-    def store(self, key: str, value: Value) -> None:
-        self.drop(key)
-        self._entries[key] = value
 
     def drop(self, key: str) -> None:
         self._entries.pop(key, None)

@@ -28,6 +28,11 @@ class _BarsPage(Payload):
     next_page_token: str | None = None
 
 
+def check_supported_asset(asset: Asset) -> None:
+    if asset.asset_type not in (AssetType.STOCK, AssetType.CRYPTO, AssetType.OPTION):
+        raise ValueError(f"historical bars do not support {asset.asset_type}")
+
+
 def bars_api_url() -> str:
     return BaseURL.DATA.value
 
@@ -65,8 +70,7 @@ class BarsClientAlpaca:
         groups: dict[AssetType, dict[str, Asset]] = {}
         rows: dict[Asset, list[Bar]] = {asset: [] for asset in assets}
         for asset in rows:
-            if asset.asset_type not in (AssetType.STOCK, AssetType.CRYPTO, AssetType.OPTION):
-                raise ValueError(f"historical bars do not support {asset.asset_type}")
+            check_supported_asset(asset)
             symbols = groups.setdefault(asset.asset_type, {})
             symbol = str(asset)
             if symbol in symbols and symbols[symbol] != asset:
