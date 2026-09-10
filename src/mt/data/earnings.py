@@ -1,9 +1,10 @@
 from datetime import date, timedelta
 from functools import lru_cache
 
-from mt.config.settings import settings
+from mt.config.shared import settings
 from mt.exchange import XNYS
 
+from .asset import Asset, AssetType
 from .finnhub import earnings_dates
 
 
@@ -12,12 +13,14 @@ def _calendar(day: date) -> dict[str, date]:
     return earnings_dates(day, day + timedelta(days=settings.earnings.block_days))
 
 
-def is_earnings_blocked(symbol: str, day: date) -> bool:
-    return symbol in _calendar(day)
+def is_earnings_blocked(asset: Asset, day: date) -> bool:
+    return asset.asset_type == AssetType.STOCK and asset.symbol in _calendar(day)
 
 
-def is_earnings_exit_due(symbol: str, day: date) -> bool:
-    upcoming = _calendar(day).get(symbol)
+def is_earnings_exit_due(asset: Asset, day: date) -> bool:
+    if asset.asset_type != AssetType.STOCK:
+        return False
+    upcoming = _calendar(day).get(asset.symbol)
     if upcoming is None:
         return False
     session = XNYS.date_to_session(upcoming, direction="next")

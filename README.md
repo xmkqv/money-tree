@@ -36,12 +36,32 @@ mise exec -- uv run mt trade --strategies breakout_5m
 mise --env production exec -- uv run mt trade --strategies breakout_5m
 ```
 
-Serve the dashboard and stop it. `mise run deploy` ships both services at one revision.
+Serve the dashboard with local Redis and stop both processes. This does not start trading.
 
 ```sh
 mise run serve
 mise run stop
 ```
+
+The bot writes its latest snapshot to Redis at `mt:state`. The dashboard reads it
+and marks it stale after the heartbeat timeout. Snapshots have no expiry. Local
+Redis data stays in `.run/redis` across stops.
+
+Production uses a Railway service named `Redis` with a persistent volume. Set
+`REDIS__URL='${{Redis.REDIS_URL}}'` in `.env.production`; the deploy task sends that
+reference to both services. Keep one bot replica.
+
+```sh
+mise --env production run deploy
+```
+
+Deployment ships the bot before web at one revision. Before the first Redis
+deployment, remove retired variables from the next deployment environment:
+`EXPORT__URL`, `EXPORT__SECRET`, `EXPORT__TIMEOUT__*`,
+`WEB__SIGNATURE_WINDOW_SECONDS`, and `WEB__STATE_BODY_BYTES_MAX`. Stage remote
+removal without restarting the old application; its running process keeps its
+existing environment. The deploy task does not remove old variables. Start a
+fresh local shell if it still exports these retired settings.
 
 ## vocabulary
 

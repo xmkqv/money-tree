@@ -1,13 +1,17 @@
+from __future__ import annotations
+
 from datetime import datetime
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 import typer
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
-from mt.config.bot import settings as bot_settings
 from mt.config.services import SERVICE_SETTINGS, ServiceName, service_secrets
-from mt.config.settings import settings
-from mt.config.values import STRATEGY_KEYS, StrategyKey, Symbol, strategy_selection_adapter
+from mt.config.values import STRATEGY_KEYS, StrategyKey, strategy_selection_adapter
+
+
+if TYPE_CHECKING:
+    from mt.data.asset import Asset
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -29,16 +33,18 @@ def _parse_service(value: str) -> ServiceName:
     raise typer.BadParameter(f"service must be one of: {names}")
 
 
-def _parse_symbols(value: str) -> list[str]:
+def _parse_assets(value: str) -> list[Asset]:
+    from mt.data.asset import Asset, AssetType
+
     try:
-        symbols = TypeAdapter(list[Symbol]).validate_python(
-            [item.strip() for item in value.split(",")]
-        )
-        if len(set(symbols)) != len(symbols):
+        assets = [Asset.from_symbol(item.strip()) for item in value.split(",")]
+        if len(set(assets)) != len(assets):
             raise ValueError("symbols must be distinct")
-        return symbols
+        if any(asset.asset_type != AssetType.STOCK for asset in assets):
+            raise ValueError("reports support equities only")
+        return assets
     except ValueError as error:
-        raise typer.BadParameter("symbols must be distinct uppercase ticker symbols") from error
+        raise typer.BadParameter(str(error)) from error
 
 
 def _parse_strategies(value: str) -> list[StrategyKey]:
@@ -59,24 +65,33 @@ def _parse_strategy(value: str) -> StrategyKey:
 
 @app.command("report")
 def run_report(
-    strategy: Annotated[str, typer.Option()] = bot_settings.strategies[0],
-    symbols: Annotated[str, typer.Option()] = settings.benchmark_symbol,
-    start: Annotated[datetime, typer.Option()] = bot_settings.backtest.start_at,
-    end: Annotated[datetime, typer.Option()] = bot_settings.backtest.end_at,
+    strategy: Annotated[str | None, typer.Option()] = None,
+    symbols: Annotated[str | None, typer.Option()] = None,
+    start: Annotated[datetime | None, typer.Option()] = None,
+    end: Annotated[datetime | None, typer.Option()] = None,
 ) -> None:
+    from mt.config.bot import settings as bot_settings
+    from mt.config.shared import settings
+
+    strategy = bot_settings.strategies[0] if strategy is None else strategy
+    symbols = settings.benchmark_symbol if symbols is None else symbols
+    start = bot_settings.backtest.start_at if start is None else start
+    end = bot_settings.backtest.end_at if end is None else end
     if start.tzinfo != end.tzinfo or end <= start:
         raise typer.BadParameter("end must follow start in the same timezone")
     selected = _parse_strategy(strategy)
-    tickers = _parse_symbols(symbols)
+    assets = _parse_assets(symbols)
     from mt.bot.backtest import report
 
-    typer.echo(report(selected, tickers, start, end))
+    typer.echo(report(selected, assets, start, end))
 
 
 @app.command("trade")
 def run_trade(
-    strategies: Annotated[str, typer.Option()] = ",".join(bot_settings.strategies),
+    strategies: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     from mt.bot.trade import trade
+    from mt.config.bot import settings as bot_settings
 
+    strategies = ",".join(bot_settings.strategies) if strategies is None else strategies
     trade(_parse_strategies(strategies))

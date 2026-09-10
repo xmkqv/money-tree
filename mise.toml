@@ -29,6 +29,9 @@ FINNHUB__TIMEOUT__WRITE_SECONDS = "5.0"
 FINNHUB__TIMEOUT__POOL_SECONDS = "5.0"
 
 ## bars
+BARS__SYMBOLS_PER_REQUEST = "200"
+BARS__OPTIONS_PER_REQUEST = "100"
+BARS__BARS_PER_REQUEST = "10000"
 BARS__INTRADAY_FEED = "iex"
 BARS__DAILY_FEED = "sip"
 BARS__SIP_DELAY_MINUTES = "15"
@@ -52,7 +55,6 @@ SCREEN__TURNOVER_SESSIONS = "20"
 SCREEN__LOOKBACK_DAYS = "45"
 
 ## portfolio
-PORTFOLIO__SYMBOLS_PER_REQUEST = "200"
 PORTFOLIO__ORDERS_PER_REQUEST = "500"
 PORTFOLIO__LOOKBACK_DAYS = "390"
 PORTFOLIO__PENDING_TTL_MINUTES = "5"
@@ -63,10 +65,6 @@ PORTFOLIO__STOP_COVERAGE_DRIFT_MAX = "0.000001"
 ## export
 EXPORT__INTERVAL_SECONDS = "5"
 EXPORT__EVENTS_MAX = "50"
-EXPORT__TIMEOUT__CONNECT_SECONDS = "1.0"
-EXPORT__TIMEOUT__READ_SECONDS = "1.0"
-EXPORT__TIMEOUT__WRITE_SECONDS = "1.0"
-EXPORT__TIMEOUT__POOL_SECONDS = "1.0"
 EXPORT__CLOSE_TIMEOUT_SECONDS = "5.0"
 
 ## backtest
@@ -99,8 +97,6 @@ REQUESTS__PAUSE_SECONDS = "60"
 ## web
 WEB__SESSION_TTL_SECONDS = "28800"
 WEB__HEARTBEAT_TIMEOUT_SECONDS = "15"
-WEB__SIGNATURE_WINDOW_SECONDS = "30"
-WEB__STATE_BODY_BYTES_MAX = "65536"
 
 ## login
 LOGIN__TIMEOUT__CONNECT_SECONDS = "2.0"
@@ -241,63 +237,7 @@ for service in web bot; do
   done
 done
 
-for service in web bot; do
+for service in bot web; do
   railway up --service "money-tree-$service" --ci --message "$revision"
 done
-'''
-
-[tasks.serve]
-run = '''
-set -euo pipefail
-
-run_dir="${MISE_PROJECT_ROOT}/.run"
-pid_file="$run_dir/web.pid"
-log_file="$run_dir/web.log"
-
-if [[ -f "$pid_file" ]] && kill -0 "$(<"$pid_file")" 2>/dev/null; then
-  echo "already serving on ${WEB__BASE_URL} (pid $(<"$pid_file"))"
-  exit 0
-fi
-
-mkdir -p "$run_dir"
-uv run --locked uvicorn mt.web.app:create_app \
-  --factory --workers 1 --host 127.0.0.1 --port "${PORT}" \
-  >"$log_file" 2>&1 &
-echo $! >"$pid_file"
-
-if ! curl -sf --retry 60 --retry-connrefused --retry-delay 1 \
-  "${WEB__BASE_URL}/healthz" >/dev/null; then
-  echo "the dashboard never became healthy; see $log_file" >&2
-  exit 1
-fi
-echo "serving ${WEB__BASE_URL} (pid $(<"$pid_file"))"
-'''
-
-[tasks.stop]
-run = '''
-set -euo pipefail
-
-pid_file="${MISE_PROJECT_ROOT}/.run/web.pid"
-
-if [[ ! -f "$pid_file" ]]; then
-  echo "nothing is serving"
-  exit 0
-fi
-
-pid="$(<"$pid_file")"
-rm -f "$pid_file"
-if ! kill -0 "$pid" 2>/dev/null; then
-  echo "nothing is serving"
-  exit 0
-fi
-
-kill "$pid"
-for _ in $(seq 20); do
-  kill -0 "$pid" 2>/dev/null || break
-  sleep 0.5
-done
-if kill -0 "$pid" 2>/dev/null; then
-  kill -9 "$pid"
-fi
-echo "stopped pid $pid"
 '''

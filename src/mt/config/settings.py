@@ -21,6 +21,7 @@ from .sections import (
     LoginSection,
     OrderTagSection,
     PortfolioSection,
+    RedisSection,
     RequestSection,
     RiskSection,
     ScreenSection,
@@ -53,6 +54,7 @@ class SharedSettings(RuleSettings):
     broker: BrokerSection
     bars: BarsSection
     export: ExportSection
+    redis: RedisSection
 
 
 class BotSettings(Settings):
@@ -79,6 +81,3 @@ class DeploymentSettings(Settings):
 
 class LoginSettings(Settings):
     login: LoginSection
-
-
-settings = SharedSettings()  # pyright: ignore[reportCallIssue]

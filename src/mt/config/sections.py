@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Self
 
-from pydantic import AfterValidator, AnyHttpUrl, Field, model_validator
+from pydantic import AfterValidator, AnyHttpUrl, Field, RedisDsn, model_validator
 
 from .values import (
     CHART_TIMEFRAMES,
@@ -51,6 +51,9 @@ class FinnhubSection(SettingsSection):
 
 
 class BarsSection(SettingsSection):
+    symbols_per_request: Count
+    options_per_request: Count
+    bars_per_request: Count
     intraday_feed: DataFeedName
     daily_feed: DataFeedName
     sip_delay_minutes: MaxAge
@@ -72,12 +75,13 @@ class RiskSection(SettingsSection):
         return self
 
 
+class RedisSection(SettingsSection):
+    url: RedisDsn
+
+
 class ExportSection(SettingsSection):
-    url: AnyHttpUrl
-    secret: SigningSecret
     interval_seconds: Count
     events_max: Count
-    timeout: TimeoutSection
     close_timeout_seconds: Amount
 
 
@@ -89,7 +93,6 @@ class ScreenSection(SettingsSection):
 
 
 class PortfolioSection(SettingsSection):
-    symbols_per_request: Count
     orders_per_request: Count
     lookback_days: Count
     pending_ttl_minutes: Count
@@ -214,8 +217,6 @@ class WebSection(SettingsSection):
     session_secret: SigningSecret
     session_ttl_seconds: Count
     heartbeat_timeout_seconds: Count
-    signature_window_seconds: Count
-    state_body_bytes_max: Count
 
 
 class ChartTimeframeSection(SettingsSection):

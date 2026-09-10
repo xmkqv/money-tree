@@ -10,12 +10,13 @@ from mt.config.sections import DashboardSection
 from mt.config.values import StrategyKey, Symbol
 from mt.data.alpaca import (
     AccountObservation,
-    BarsClientAlpaca,
     ClosedOrder,
     EquityPoint,
     Fill,
     TradingClientAlpaca,
 )
+from mt.data.asset import Asset
+from mt.data.bars import BarsClientAlpaca
 from mt.exchange import TRADING_ZONE, trading_time
 from mt.strategies.order_tag import UNATTRIBUTED, find_order_tag
 
@@ -303,7 +304,16 @@ async def build_ledger(
     rows = _position_rows(pulse["positions"], open_trades)
     benchmark_start = funded or today
 
-    bars = await bars_client.daily_bars(benchmark, benchmark_start)
+    asset = Asset.from_symbol(benchmark)
+    bars = (
+        await bars_client.bars(
+            [asset],
+            "1Day",
+            datetime.fromisoformat(benchmark_start),
+            limit=dashboard.bars_max,
+            pages_max=1,
+        )
+    )[asset]
 
     benchmark_closes = [BenchmarkClose(date=bar.opened_at[:10], close=bar.close) for bar in bars]
     return {

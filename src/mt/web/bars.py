@@ -3,21 +3,21 @@ from datetime import time as dtime
 from math import isfinite
 from typing import Any, TypedDict, cast
 
-from pandas import DataFrame, DatetimeIndex, Series, Timedelta
+from pandas import DatetimeIndex, Series, Timedelta
 from pandas_ta_classic.overlap.sma import sma
 
 from mt.config.sections import ChartTimeframeSection
-from mt.config.settings import settings
-from mt.data.alpaca import Bar
-from mt.exchange import TRADING_ZONE, session_starts, trading_time
-from mt.frames import normalize_ohlcv, regular_session
+from mt.config.shared import settings
+from mt.data.bars import Bar, bar_frame
+from mt.exchange import TRADING_ZONE, session_starts
+from mt.frames import regular_session
 from mt.indicators import latest_atr
 
 
 def session_hour_bars(bars: list[Bar]) -> list[Bar]:
     if not bars:
         return []
-    frame = _bar_frame(bars)
+    frame = bar_frame(bars)
     regular = regular_session(frame)
     if regular.empty:
         return []
@@ -62,13 +62,7 @@ def bars_atr(bars: list[Bar]) -> float | None:
     period = settings.indicators.period
     if len(bars) <= period:
         return None
-    return latest_atr(_bar_frame(bars), period)
-
-
-def _bar_frame(bars: list[Bar]) -> DataFrame:
-    frame = DataFrame([bar.model_dump() for bar in bars]).drop(columns="opened_at")
-    frame.index = DatetimeIndex([trading_time(bar.opened_at) for bar in bars], tz=TRADING_ZONE)
-    return normalize_ohlcv(frame, {"open", "high", "low", "close", "volume"})
+    return latest_atr(bar_frame(bars), period)
 
 
 class Average(TypedDict):

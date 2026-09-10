@@ -3,15 +3,14 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, cast
 from uuid import uuid4
 
-from alpaca.trading.models import Asset
 from lumibot.strategies import Strategy as LumibotStrategy
 from pandas import DataFrame, DatetimeIndex
 
 from mt.config.bot import settings as bot_settings
-from mt.config.settings import settings
+from mt.config.shared import settings
 from mt.config.values import StrategyKey, is_strategy_key
-from mt.data.bars import BarsAlpaca
-from mt.data.broker import Broker, BrokerAlpaca, BrokerEngine
+from mt.data.asset import Asset, AssetType
+from mt.data.broker import Broker, BrokerAlpaca, BrokerAsset, BrokerEngine
 from mt.data.finnhub import stocks
 from mt.exchange import TRADING_ZONE, session_bounds
 from mt.frames import last_close, normalize_ohlcv
@@ -23,6 +22,7 @@ from mt.strategies.daily import Daily
 from mt.strategies.order_tag import order_tag
 from mt.strategies.registry import STRATEGIES
 
+from .bars import Bars
 from .export import StateExporter
 
 
@@ -56,28 +56,31 @@ class Portfolio(LumibotStrategy):
         selected: list[StrategyKey] = [value for value in supplied if is_strategy_key(value)]
         if len(selected) != len(supplied):
             raise ValueError("strategies parameter contains unknown strategy keys")
-        given = cast(list[str] | None, self.parameters.get("symbols"))
+        given = cast(list[Asset] | None, self.parameters.get("assets"))
         if self.is_backtesting and not given:
-            raise ValueError("a backtest needs its symbols")
+            raise ValueError("a backtest needs its assets")
+        if given and any(asset.asset_type != AssetType.STOCK for asset in given):
+            raise ValueError("trading strategies support equities only")
         self._broker: Broker = BrokerEngine(given) if given else BrokerAlpaca()
-        self._bars = BarsAlpaca()
+        self._bars = cast(Bars, self.parameters.pop("bars"))
         self._given = given
+        self._benchmark = Asset.from_symbol(settings.benchmark_symbol)
         self._selected = set(selected)
         self._strategies: dict[StrategyKey, Strategy] = {cls.key: cls(self) for cls in STRATEGIES}
-        self._positions: dict[str, Position] = {}
-        self._pending: dict[str, Pending] = {}
-        self._stops: dict[str, tuple[float, float]] = {}
-        self._closing: set[str] = set()
+        self._positions: dict[Asset, Position] = {}
+        self._pending: dict[Asset, Pending] = {}
+        self._stops: dict[Asset, tuple[float, float]] = {}
+        self._closing: set[Asset] = set()
         self._events: set[str] = set()
-        self._traded: dict[StrategyKey, set[tuple[date, str]]] = {
+        self._traded: dict[StrategyKey, set[tuple[date, Asset]]] = {
             cls.key: set() for cls in STRATEGIES
         }
         self._day: date | None = None
         self._session_baseline = 0.0
         self._locked_at: date | None = None
-        self._daily_frames: dict[str, DataFrame] = {}
-        self._symbols: list[str] = []
-        self._assets: dict[str, Asset] = {}
+        self._daily_frames: dict[Asset, DataFrame] = {}
+        self._assets: list[Asset] = []
+        self._permissions: dict[Asset, BrokerAsset] = {}
         self._prepared_at: date | None = None
 
     def before_market_opens(self) -> None:
@@ -97,7 +100,7 @@ class Portfolio(LumibotStrategy):
             return
         self._prepare(now)
         for position in list(self._positions.values()):
-            if position.symbol not in self._pending and position.symbol not in self._closing:
+            if position.asset not in self._pending and position.asset not in self._closing:
                 position.strategy.manage(position, session)
         for strategy in self._strategies.values():
             if self._is_runnable(strategy):
@@ -127,9 +130,9 @@ class Portfolio(LumibotStrategy):
         *,
         complete: bool,
     ) -> None:
-        symbol = str(order.asset.symbol)
+        asset = Asset.from_lumibot(order.asset)
         side = str(order.side).lower()
-        pending = self._pending.get(symbol)
+        pending = self._pending.get(asset)
         entry_side = "buy" if pending is None or pending.position.direction == 1 else "sell"
         if pending is not None and entry_side in side:
             position = pending.position
@@ -144,52 +147,52 @@ class Portfolio(LumibotStrategy):
             position.highest = price if first_fill else max(position.highest, price)
             position.lowest = price if first_fill else min(position.lowest, price)
             position.ladder = position.strategy.ladder(position, pending.filled_quantity)
-            self._positions[symbol] = position
+            self._positions[asset] = position
             pending.notional = max(0.0, pending.notional - abs(float(quantity)) * price)
             if complete:
-                self._pending.pop(symbol)
+                self._pending.pop(asset)
             if self._locked_at == self.get_datetime().astimezone(TRADING_ZONE).date():
                 self._liquidate()
             elif position.strategy.is_stop_resting:
                 self.protect(position, abs(float(engine_position.quantity)))
             return
         if complete:
-            self._closing.discard(symbol)
+            self._closing.discard(asset)
         remaining = abs(float(getattr(engine_position, "quantity", 0.0)))
         if remaining <= 0:
-            self._release(symbol)
-        elif symbol in self._positions and complete:
-            self.protect(self._positions[symbol], remaining)
+            self._release(asset)
+        elif asset in self._positions and complete:
+            self.protect(self._positions[asset], remaining)
 
-    def symbols(self) -> list[str]:
-        return self._symbols
+    def assets(self) -> list[Asset]:
+        return self._assets
 
-    def daily_frame(self, symbol: str) -> DataFrame | None:
-        return self._daily_frames.get(symbol)
+    def daily_frame(self, asset: Asset) -> DataFrame | None:
+        return self._daily_frames.get(asset)
 
     def benchmark_frame(self) -> DataFrame | None:
-        return self._daily_frames.get(settings.benchmark_symbol)
+        return self._daily_frames.get(self._benchmark)
 
     def minute_frames(
-        self, symbols: list[str], start: datetime, now: datetime, minutes: int
-    ) -> dict[str, DataFrame]:
-        frames = self._bars.bars(symbols, f"{minutes}Min", start, now)
-        return {symbol: self._completed(frame, now, minutes) for symbol, frame in frames.items()}
+        self, assets: list[Asset], start: datetime, now: datetime, minutes: int
+    ) -> dict[Asset, DataFrame]:
+        frames = self._bars.bars(assets, f"{minutes}Min", start, now)
+        return {asset: self._completed(frame, now, minutes) for asset, frame in frames.items()}
 
-    def last_price(self, symbol: str) -> float:
-        return float(self.get_last_price(symbol))
+    def last_price(self, asset: Asset) -> float:
+        return float(self.get_last_price(asset.to_lumibot()))
 
     def position_count(self, keys: frozenset[StrategyKey]) -> int:
         held = sum(1 for position in self._positions.values() if position.strategy.key in keys)
         ordered = sum(
             1
-            for symbol, pending in self._pending.items()
-            if pending.position.strategy.key in keys and symbol not in self._positions
+            for asset, pending in self._pending.items()
+            if pending.position.strategy.key in keys and asset not in self._positions
         )
         return held + ordered
 
-    def is_taken(self, strategy: Strategy, symbol: str, day: date) -> bool:
-        return self._is_owned(symbol) or (day, symbol) in self._traded[strategy.key]
+    def is_taken(self, strategy: Strategy, asset: Asset, day: date) -> bool:
+        return self._is_owned(asset) or (day, asset) in self._traded[strategy.key]
 
     def record(self, strategy: Strategy, kind: str, level: EventLevel, message: str) -> None:
         self._record(f"{strategy.key}.{kind}", level, message, strategy.key)
@@ -255,58 +258,62 @@ class Portfolio(LumibotStrategy):
     def _liquidate(self) -> None:
         if self.is_backtesting:
             quantities = {
-                symbol: float(position.quantity)
-                for symbol, position in self._engine_positions().items()
-                if str(position.asset.asset_type) == "stock"
+                asset: float(position.quantity)
+                for asset, position in self._engine_positions().items()
+                if position.asset.asset_type == AssetType.STOCK
             }
         else:
             quantities = {
-                position.symbol: float(position.qty) for position in self._broker.positions()
+                Asset.from_symbol(position.symbol): float(position.qty)
+                for position in self._broker.positions()
             }
-        for symbol, quantity in quantities.items():
-            if not quantity or symbol in self._closing:
+        for asset, quantity in quantities.items():
+            if not quantity or asset in self._closing:
                 continue
             order = self.create_order(
-                symbol,
+                asset.to_lumibot(),
                 abs(quantity),
                 "sell" if quantity > 0 else "buy",
                 time_in_force="day",
                 custom_params={"client_order_id": f"mt-liquidate-{uuid4().hex}"},
             )
-            self._closing.add(symbol)
+            self._closing.add(asset)
             self.submit_order(order)
 
-    def _engine_positions(self) -> dict[str, Any]:
-        return {str(value.asset.symbol): value for value in cast(list[Any], self.get_positions())}
+    def _engine_positions(self) -> dict[Asset, Any]:
+        return {
+            Asset.from_lumibot(value.asset): value
+            for value in cast(list[Any], self.get_positions())
+        }
 
     def _reconcile(self, now: datetime) -> None:
         positions = self._engine_positions()
-        for symbol in list(self._positions):
-            if symbol not in positions:
-                self._release(symbol)
+        for asset in list(self._positions):
+            if asset not in positions:
+                self._release(asset)
         active = {
-            str(order.asset.symbol)
+            Asset.from_lumibot(order.asset)
             for order in cast(list[Any], self.get_orders())
             if order.is_active()
         }
-        for symbol, pending in list(self._pending.items()):
+        for asset, pending in list(self._pending.items()):
             ttl = timedelta(minutes=bot_settings.portfolio.pending_ttl_minutes)
             expired = now - pending.submitted_at > ttl
-            if symbol not in active and expired:
-                self._pending.pop(symbol, None)
-                if symbol not in positions:
-                    self._release(symbol)
-        for symbol in set(self._stops).difference(active):
-            self._stops.pop(symbol, None)
+            if asset not in active and expired:
+                self._pending.pop(asset, None)
+                if asset not in positions:
+                    self._release(asset)
+        for asset in set(self._stops).difference(active):
+            self._stops.pop(asset, None)
         self._closing.intersection_update(active)
         if self._locked_at != now.date():
             self._resync_stops(positions)
 
-    def _resync_stops(self, positions: dict[str, Any]) -> None:
-        for symbol, position in self._positions.items():
-            if not position.strategy.is_stop_resting or symbol in self._closing:
+    def _resync_stops(self, positions: dict[Asset, Any]) -> None:
+        for asset, position in self._positions.items():
+            if not position.strategy.is_stop_resting or asset in self._closing:
                 continue
-            engine_position = positions.get(symbol)
+            engine_position = positions.get(asset)
             if engine_position is None:
                 continue
             quantity = abs(float(engine_position.quantity))
@@ -315,7 +322,7 @@ class Portfolio(LumibotStrategy):
             ladder = position.ladder
             if ladder is not None and ladder.stage == 0:
                 ladder.original_quantity = max(ladder.original_quantity, quantity)
-            resting = self._stops.get(symbol)
+            resting = self._stops.get(asset)
             drift_max = bot_settings.portfolio.stop_coverage_drift_max
             if resting is None or resting[1] < quantity - drift_max:
                 self.protect(position, quantity)
@@ -326,19 +333,22 @@ class Portfolio(LumibotStrategy):
             return
         first = day - timedelta(days=bot_settings.portfolio.lookback_days)
         start = datetime.combine(first, time(), TRADING_ZONE)
-        self._assets = self._broker.assets()
-        symbols = self._given or self._screen(now, self._assets)
-        requested = sorted(set(symbols).union({settings.benchmark_symbol}, self._positions))
-        frames: dict[str, DataFrame] = {}
+        self._permissions = self._broker.assets()
+        assets = self._given or self._screen(now)
+        requested = sorted(
+            set(assets).union({self._benchmark}, self._positions),
+            key=str,
+        )
+        frames: dict[Asset, DataFrame] = {}
         if self.is_backtesting and all(
             isinstance(self._strategies[key], Daily) for key in self._selected
         ):
-            for symbol in requested:
+            for asset in requested:
                 bars = self.get_historical_prices(
-                    symbol, bot_settings.portfolio.lookback_days, timestep="day"
+                    asset.to_lumibot(), bot_settings.portfolio.lookback_days, timestep="day"
                 )
                 if bars is not None:
-                    frames[symbol] = normalize_ohlcv(bars.df, {"high", "low", "close", "volume"})
+                    frames[asset] = normalize_ohlcv(bars.df, {"high", "low", "close", "volume"})
         else:
             frames = self._bars.bars(requested, "1Day", start, now)
         lengths = {
@@ -349,28 +359,34 @@ class Portfolio(LumibotStrategy):
         }
         period = settings.indicators.period
         self._daily_frames = {
-            symbol: daily_indicators(self._completed(frame, now), lengths, period)
-            for symbol, frame in frames.items()
+            asset: daily_indicators(self._completed(frame, now), lengths, period)
+            for asset, frame in frames.items()
         }
-        self._symbols = list(symbols)
+        self._assets = list(assets)
         self._prepared_at = day
 
-    def _screen(self, now: datetime, assets: dict[str, Asset]) -> list[str]:
-        symbols = sorted(assets.keys() & stocks())
+    def _screen(self, now: datetime) -> list[Asset]:
+        common_stocks = stocks()
+        assets = sorted(
+            (
+                asset
+                for asset in self._permissions
+                if asset.asset_type == AssetType.STOCK and asset.symbol in common_stocks
+            ),
+            key=str,
+        )
         first = now.date() - timedelta(days=settings.screen.lookback_days)
         start = datetime.combine(first, time(), TRADING_ZONE)
-        frames = self._bars.bars(symbols, "1Day", start, now)
-        cleared: dict[str, float] = {}
-        for symbol, frame in frames.items():
+        frames = self._bars.bars(assets, "1Day", start, now)
+        cleared: dict[Asset, float] = {}
+        for asset, frame in frames.items():
             completed = self._completed(frame, now)
             if completed.empty or last_close(completed) < settings.screen.price_usd_min:
                 continue
             turnover = average_turnover_usd(completed, settings.screen.turnover_sessions)
             if turnover >= settings.screen.turnover_usd_min:
-                cleared[symbol] = turnover
-        return ranked(
-            cleared, symbol=lambda symbol: symbol, turnover=lambda symbol: cleared[symbol]
-        )
+                cleared[asset] = turnover
+        return ranked(cleared, symbol=str, turnover=lambda asset: cleared[asset])
 
     def _completed(self, frame: DataFrame, now: datetime, minutes: int = 0) -> DataFrame:
         index = cast(DatetimeIndex, frame.index)
@@ -381,23 +397,26 @@ class Portfolio(LumibotStrategy):
 
     def enter(self, strategy: Strategy, candidate: Candidate, session: Session) -> bool:
         now = session.now
-        symbol, price, stop = candidate.symbol, candidate.price, candidate.stop
+        asset, price, stop = candidate.asset, candidate.price, candidate.stop
         direction = candidate.direction
         positions = self._engine_positions()
         owned = positions.keys() | self._pending.keys()
         if (
-            not self._is_runnable(strategy)
-            or symbol in owned
-            or symbol in self._positions
+            asset.asset_type != AssetType.STOCK
+            or not self._is_runnable(strategy)
+            or asset in owned
+            or asset in self._positions
             or direction * (price - stop) <= 0
         ):
             return False
-        if direction == -1 and (symbol not in self._assets or not self._assets[symbol].shortable):
+        if direction == -1 and (
+            asset not in self._permissions or not self._permissions[asset].shortable
+        ):
             self.record(
                 strategy,
-                f"short.refused.{symbol}.{now.date()}",
+                f"short.refused.{asset}.{now.date()}",
                 "warning",
-                f"Short entry skipped for {symbol}: security is not shortable",
+                f"Short entry skipped for {asset}: security is not shortable",
             )
             return False
         equity = self._equity()
@@ -408,9 +427,9 @@ class Portfolio(LumibotStrategy):
         if len(owned) >= settings.risk.positions_max or gross >= equity:
             self.record(
                 strategy,
-                f"portfolio.capped.{symbol}.{now.date()}",
+                f"portfolio.capped.{asset}.{now.date()}",
                 "warning",
-                f"{symbol} entry skipped: portfolio position capacity reached",
+                f"{asset} entry skipped: portfolio position capacity reached",
             )
             return False
         equity_risk_fraction = strategy.equity_risk_fraction_max
@@ -429,14 +448,14 @@ class Portfolio(LumibotStrategy):
         if quantity <= 0 or gross + notional > equity:
             self.record(
                 strategy,
-                f"size.rejected.{symbol}.{now.date()}",
+                f"size.rejected.{asset}.{now.date()}",
                 "warning",
-                f"{symbol} entry skipped: no affordable position size",
+                f"{asset} entry skipped: no affordable position size",
             )
             return False
         position = Position(
             strategy,
-            symbol,
+            asset,
             direction,
             price,
             stop,
@@ -445,39 +464,36 @@ class Portfolio(LumibotStrategy):
             price,
             price,
         )
-        self._pending[symbol] = Pending(position, now, notional)
+        self._pending[asset] = Pending(position, now, notional)
         order = self.create_order(
-            symbol,
+            asset.to_lumibot(),
             quantity,
             "buy" if direction == 1 else "sell",
             time_in_force="day",
             custom_params={
-                "client_order_id": order_tag(
-                    strategy.key, "e", symbol, position.stop_distance / price
-                )
+                "client_order_id": order_tag(strategy.key, position.stop_distance / price)
             },
         )
-        self._traded[strategy.key].add((now.date(), symbol))
+        self._traded[strategy.key].add((now.date(), asset))
         self.submit_order(order)
         return True
 
     def protect(self, position: Position, quantity: float | None = None) -> None:
         if (
-            position.symbol in self._closing
+            position.asset in self._closing
             or not position.strategy.is_stop_resting
             or self._locked_at == self.get_datetime().astimezone(TRADING_ZONE).date()
         ):
             return
-        amount = self._quantity(position.symbol) if quantity is None else quantity
-        price = self.last_price(position.symbol)
+        amount = self._quantity(position.asset) if quantity is None else quantity
+        price = self.last_price(position.asset)
         stop = round_stop(position.direction, position.stop)
         if amount <= 0 or stop <= 0:
             self.record(
                 position.strategy,
-                f"stop.unplaced.{position.symbol}.{position.entered_at.date()}",
+                f"stop.unplaced.{position.asset}.{position.entered_at.date()}",
                 "warning",
-                f"{position.symbol} has no resting stop yet: "
-                "quantity or stop price is not positive",
+                f"{position.asset} has no resting stop yet: quantity or stop price is not positive",
             )
             return
         if (position.direction == 1 and stop >= price) or (
@@ -485,18 +501,18 @@ class Portfolio(LumibotStrategy):
         ):
             self.record(
                 position.strategy,
-                f"stop.passed.{position.symbol}.{position.entered_at.date()}",
+                f"stop.passed.{position.asset}.{position.entered_at.date()}",
                 "warning",
-                f"{position.symbol} is already through its stop at {price:.2f}: closing at market",
+                f"{position.asset} is already through its stop at {price:.2f}: closing at market",
             )
             self.exit(position)
             return
         size = round_quantity(amount)
-        if size <= 0 or self._stops.get(position.symbol) == (stop, float(size)):
+        if size <= 0 or self._stops.get(position.asset) == (stop, float(size)):
             return
-        self._cancel(position.symbol, stops_only=True)
+        self._cancel(position.asset, stops_only=True)
         order = self.create_order(
-            position.symbol,
+            position.asset.to_lumibot(),
             size,
             "sell" if position.direction == 1 else "buy",
             stop_price=stop,
@@ -504,47 +520,43 @@ class Portfolio(LumibotStrategy):
             custom_params={
                 "client_order_id": order_tag(
                     position.strategy.key,
-                    "s",
-                    position.symbol,
                     position.stop_distance / position.entry,
                 )
             },
         )
         self.submit_order(order)
-        self._stops[position.symbol] = (stop, float(size))
+        self._stops[position.asset] = (stop, float(size))
 
     def exit(self, position: Position, quantity: float | None = None) -> None:
-        if position.symbol in self._closing:
+        if position.asset in self._closing:
             return
-        current = self._quantity(position.symbol)
+        current = self._quantity(position.asset)
         amount = current if quantity is None else min(quantity, current)
         if amount <= 0:
-            self._release(position.symbol)
+            self._release(position.asset)
             return
         size = round_quantity(amount, whole=position.direction == -1 and quantity is not None)
         if size <= 0:
             return
-        self._cancel(position.symbol)
+        self._cancel(position.asset)
         order = self.create_order(
-            position.symbol,
+            position.asset.to_lumibot(),
             size,
             "sell" if position.direction == 1 else "buy",
             time_in_force="day",
             custom_params={
                 "client_order_id": order_tag(
                     position.strategy.key,
-                    "x",
-                    position.symbol,
                     position.stop_distance / position.entry,
                 )
             },
         )
-        self._closing.add(position.symbol)
+        self._closing.add(position.asset)
         self.submit_order(order)
 
-    def _cancel(self, symbol: str, *, stops_only: bool = False) -> None:
+    def _cancel(self, asset: Asset, *, stops_only: bool = False) -> None:
         def matches(order: Any) -> bool:
-            if not order.is_active() or str(order.asset.symbol) != symbol:
+            if not order.is_active() or Asset.from_lumibot(order.asset) != asset:
                 return False
             return not stops_only or bool(order.is_stop_order())
 
@@ -552,17 +564,17 @@ class Portfolio(LumibotStrategy):
         self.cancel_open_orders(orders)
         if orders:
             self.sleep(1)
-        self._stops.pop(symbol, None)
+        self._stops.pop(asset, None)
 
-    def _quantity(self, symbol: str) -> float:
-        position = self.get_position(symbol)
+    def _quantity(self, asset: Asset) -> float:
+        position = self.get_position(asset.to_lumibot())
         return 0.0 if position is None else abs(float(position.quantity))
 
-    def _is_owned(self, symbol: str) -> bool:
-        return symbol in self._pending or symbol in self._positions or self._quantity(symbol) > 0
+    def _is_owned(self, asset: Asset) -> bool:
+        return asset in self._pending or asset in self._positions or self._quantity(asset) > 0
 
-    def _release(self, symbol: str) -> None:
-        self._pending.pop(symbol, None)
-        self._positions.pop(symbol, None)
-        self._stops.pop(symbol, None)
-        self._closing.discard(symbol)
+    def _release(self, asset: Asset) -> None:
+        self._pending.pop(asset, None)
+        self._positions.pop(asset, None)
+        self._stops.pop(asset, None)
+        self._closing.discard(asset)

@@ -2,7 +2,7 @@ from decimal import ROUND_DOWN, Decimal
 from math import ceil, floor
 from typing import Literal
 
-from mt.config.settings import settings
+from mt.config.shared import settings
 
 
 type Direction = Literal[-1, 1]

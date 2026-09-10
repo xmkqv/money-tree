@@ -1,15 +1,103 @@
+[tools]
+redis = "8.2"
+
 [vars]
+redis_bind = "127.0.0.1"
+redis_port = "6379"
+redis_appendonly = "yes"
+start_attempts = "60"
+start_delay_seconds = "1"
+stop_attempts = "20"
+stop_delay_seconds = "0.5"
 secrets = """
 BROKER__API_KEY
 BROKER__API_SECRET
 FINNHUB__API_KEY
 WEB__SESSION_SECRET
-EXPORT__SECRET
 """
 
 [env]
+REDIS__URL = "redis://{{vars.redis_bind}}:{{vars.redis_port}}/0"
 PORT = "8000"
 WEB__BASE_URL = "http://127.0.0.1:8000"
-EXPORT__URL = "http://127.0.0.1:8000/internal/state"
 
 _.file = { path = ".env.development", redact = true }
+
+[tasks.serve]
+run = '''
+set -euo pipefail
+
+run_dir="${MISE_PROJECT_ROOT}/.run"
+mkdir -p "$run_dir/redis"
+redis_pid_file="$run_dir/redis.pid"
+
+if [[ ! -f "$redis_pid_file" ]] || ! kill -0 "$(<"$redis_pid_file")" 2>/dev/null; then
+  redis-server --bind "{{vars.redis_bind}}" --port "{{vars.redis_port}}" \
+    --appendonly "{{vars.redis_appendonly}}" --dir "$run_dir/redis" \
+    >"$run_dir/redis.log" 2>&1 &
+  echo $! >"$redis_pid_file"
+fi
+redis_pid="$(<"$redis_pid_file")"
+redis_ready=false
+for _ in $(seq {{vars.start_attempts}}); do
+  kill -0 "$redis_pid" 2>/dev/null || break
+  if redis-cli -h "{{vars.redis_bind}}" -p "{{vars.redis_port}}" INFO server 2>/dev/null \
+    | tr -d '\r' | grep -qx "process_id:$redis_pid"; then
+    redis_ready=true
+    break
+  fi
+  sleep {{vars.start_delay_seconds}}
+done
+if [[ "$redis_ready" != true ]]; then
+  echo "Redis never became healthy; see $run_dir/redis.log" >&2
+  exit 1
+fi
+
+pid_file="$run_dir/web.pid"
+log_file="$run_dir/web.log"
+if [[ ! -f "$pid_file" ]] || ! kill -0 "$(<"$pid_file")" 2>/dev/null; then
+  uv run --locked uvicorn mt.web.app:create_app \
+    --factory --workers 1 --host 127.0.0.1 --port "${PORT}" \
+    >"$log_file" 2>&1 &
+  echo $! >"$pid_file"
+fi
+
+if ! curl -sf --retry {{vars.start_attempts}} --retry-connrefused \
+  --retry-delay {{vars.start_delay_seconds}} "${WEB__BASE_URL}/healthz" >/dev/null; then
+  echo "the dashboard never became healthy; see $log_file" >&2
+  exit 1
+fi
+echo "serving ${WEB__BASE_URL} (pid $(<"$pid_file")), Redis pid $redis_pid"
+'''
+
+[tasks.stop]
+run = '''
+set -euo pipefail
+
+for service in web redis; do
+  pid_file="${MISE_PROJECT_ROOT}/.run/$service.pid"
+  if [[ ! -f "$pid_file" ]]; then
+    continue
+  fi
+  pid="$(<"$pid_file")"
+  if ! kill -0 "$pid" 2>/dev/null; then
+    rm -f "$pid_file"
+    continue
+  fi
+  command="$(ps -p "$pid" -o command=)"
+  case "$service:$command" in
+    web:*"uvicorn mt.web.app:create_app"*|redis:*"redis-server {{vars.redis_bind}}:{{vars.redis_port}}"*) ;;
+    *) echo "refusing to stop unrelated pid $pid" >&2; exit 1 ;;
+  esac
+  kill "$pid"
+  for _ in $(seq {{vars.stop_attempts}}); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep {{vars.stop_delay_seconds}}
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid"
+  fi
+  rm -f "$pid_file"
+  echo "stopped $service pid $pid"
+done
+'''

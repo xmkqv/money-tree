@@ -3,7 +3,7 @@ from datetime import date
 import httpx
 from pydantic import Field, TypeAdapter
 
-from mt.config.settings import settings
+from mt.config.shared import settings
 
 from .http import Payload, http_timeout
 

@@ -5,7 +5,8 @@ from typing import Any, ClassVar, cast
 
 from pandas import DataFrame
 
-from mt.config.settings import settings
+from mt.config.shared import settings
+from mt.data.asset import Asset
 from mt.data.earnings import is_earnings_blocked, is_earnings_exit_due
 from mt.exchange import TRADING_ZONE
 from mt.frames import frame_since, last_close
@@ -95,36 +96,34 @@ class Daily(Strategy):
                     f"{self.name()} entries paused: {self.positions_max} positions already open",
                 )
                 return
-            if self.portfolio.is_taken(self, candidate.symbol, now.date()):
+            if self.portfolio.is_taken(self, candidate.asset, now.date()):
                 continue
-            price = self.portfolio.last_price(candidate.symbol)
+            price = self.portfolio.last_price(candidate.asset)
             if not isfinite(price) or price <= 0:
-                raise ValueError(
-                    f"current price for {candidate.symbol} must be finite and positive"
-                )
+                raise ValueError(f"current price for {candidate.asset} must be finite and positive")
             if price <= candidate.stop:
                 continue
             distance = candidate.price - candidate.stop
-            refreshed = Candidate(candidate.symbol, price, price - distance, candidate.direction)
+            refreshed = Candidate(candidate.asset, price, price - distance, candidate.direction)
             self.portfolio.enter(self, refreshed, session)
 
     def scan(self, session: Session) -> list[Candidate]:
         now = session.now
         candidates: list[Candidate] = []
-        for symbol, frame in self._ranked(now):
+        for asset, frame in self._ranked(now):
             if not self.does_clear(frame) or not self.does_enter(frame):
                 continue
-            if self.does_heed_earnings and is_earnings_blocked(symbol, now.date()):
+            if self.does_heed_earnings and is_earnings_blocked(asset, now.date()):
                 continue
             last = last_close(frame)
             stop = last - self.stop_atr_multiple * latest_atr(frame, settings.indicators.period)
-            candidates.append(Candidate(symbol, last, stop))
+            candidates.append(Candidate(asset, last, stop))
         if not candidates:
             self.portfolio.record(
                 self,
                 f"scan.emptied.{now.date()}",
                 "info",
-                f"{self.name()} found no candidate: no symbol passed its screen and setup",
+                f"{self.name()} found no candidate: no asset passed its screen and setup",
             )
         return candidates
 
@@ -133,11 +132,11 @@ class Daily(Strategy):
         if (
             self.does_heed_earnings
             and session.opens <= now < session.closes
-            and is_earnings_exit_due(position.symbol, now.date())
+            and is_earnings_exit_due(position.asset, now.date())
         ):
             self.portfolio.exit(position)
             return
-        frame = self.portfolio.daily_frame(position.symbol)
+        frame = self.portfolio.daily_frame(position.asset)
         if frame is None or len(frame) < settings.daily.average_sessions:
             return
         since = frame_since(frame, position.entered_at.astimezone(TRADING_ZONE))
@@ -149,14 +148,14 @@ class Daily(Strategy):
         if last < position.stop or does_signal_exit(frame):
             self.portfolio.exit(position)
 
-    def _ranked(self, now: datetime) -> list[tuple[str, DataFrame]]:
+    def _ranked(self, now: datetime) -> list[tuple[Asset, DataFrame]]:
         rows = [
-            (symbol, frame)
-            for symbol in self.portfolio.symbols()
-            if (frame := self.portfolio.daily_frame(symbol)) is not None
+            (asset, frame)
+            for asset in self.portfolio.assets()
+            if (frame := self.portfolio.daily_frame(asset)) is not None
         ]
         return ranked(
             rows,
-            symbol=lambda row: row[0],
+            symbol=lambda row: str(row[0]),
             turnover=lambda row: latest_turnover_usd(row[1]),
         )

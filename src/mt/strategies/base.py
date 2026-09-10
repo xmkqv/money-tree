@@ -6,8 +6,9 @@ from typing import ClassVar, Protocol
 
 from pandas import DataFrame
 
-from mt.config.settings import settings
+from mt.config.shared import settings
 from mt.config.values import STRATEGY_KEYS, SettingsSection, StrategyKey
+from mt.data.asset import Asset
 from mt.position import Direction
 from mt.snapshot import EventLevel
 
@@ -21,7 +22,7 @@ class Session:
 
 @dataclass(frozen=True, slots=True)
 class Candidate:
-    symbol: str
+    asset: Asset
     price: float
     stop: float
     direction: Direction = 1
@@ -37,7 +38,7 @@ class Ladder:
 @dataclass(slots=True)
 class Position:
     strategy: "Strategy"
-    symbol: str
+    asset: Asset
     direction: Direction
     entry: float
     stop: float
@@ -49,21 +50,21 @@ class Position:
 
 
 class Portfolio(Protocol):
-    def symbols(self) -> list[str]: ...
+    def assets(self) -> list[Asset]: ...
 
-    def daily_frame(self, symbol: str) -> DataFrame | None: ...
+    def daily_frame(self, asset: Asset) -> DataFrame | None: ...
 
     def benchmark_frame(self) -> DataFrame | None: ...
 
     def minute_frames(
-        self, symbols: list[str], start: datetime, now: datetime, minutes: int
-    ) -> dict[str, DataFrame]: ...
+        self, assets: list[Asset], start: datetime, now: datetime, minutes: int
+    ) -> dict[Asset, DataFrame]: ...
 
-    def last_price(self, symbol: str) -> float: ...
+    def last_price(self, asset: Asset) -> float: ...
 
     def position_count(self, keys: frozenset[StrategyKey]) -> int: ...
 
-    def is_taken(self, strategy: "Strategy", symbol: str, day: date) -> bool: ...
+    def is_taken(self, strategy: "Strategy", asset: Asset, day: date) -> bool: ...
 
     def enter(self, strategy: "Strategy", candidate: Candidate, session: Session) -> bool: ...
 

@@ -1,8 +1,8 @@
 from datetime import datetime, timedelta
 from typing import NotRequired, TypedDict
 
-from mt.config.settings import settings
-from mt.data.alpaca import Bar
+from mt.config.shared import settings
+from mt.data.bars import Bar
 from mt.exchange import trading_time
 from mt.position import Direction
 from mt.strategies.breakout import Breakout, range_level, range_stop

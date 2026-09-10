@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
@@ -9,11 +9,10 @@ from alpaca.common.enums import BaseURL
 from alpaca.trading.models import Order
 from pydantic import Field, TypeAdapter
 
-from mt.config.sections import BarsSection, BrokerSection, DashboardSection
-from mt.config.values import DataFeedName
+from mt.config.sections import BrokerSection, DashboardSection
 from mt.exchange import TRADING_ZONE, upcoming_session_bounds
 
-from .http import Payload
+from .http import Payload, get_json
 
 
 class Account(Payload):
@@ -69,15 +68,6 @@ class ClosedOrder(Payload):
     client_order_id: str | None = None
 
 
-class Bar(Payload):
-    opened_at: str = Field(alias="t")
-    open: float = Field(alias="o")
-    high: float = Field(alias="h")
-    low: float = Field(alias="l")
-    close: float = Field(alias="c")
-    volume: float = Field(alias="v", default=0.0)
-
-
 class EquityPoint(Payload):
     timestamp: int
     equity: float
@@ -97,11 +87,6 @@ class _PortfolioHistory(Payload):
     equity: list[float | None]
 
 
-class _BarsPage(Payload):
-    bars: list[Bar] | None = None
-    next_page_token: str | None = None
-
-
 orders_adapter = TypeAdapter(list[Order])
 positions_adapter = TypeAdapter(list[Position])
 fills_adapter = TypeAdapter(list[Fill])
@@ -111,31 +96,6 @@ closed_orders_adapter = TypeAdapter(list[ClosedOrder])
 def trading_api_url(broker: BrokerSection) -> str:
     target = BaseURL.TRADING_PAPER if broker.is_paper else BaseURL.TRADING_LIVE
     return target.value
-
-
-def bars_api_url() -> str:
-    return BaseURL.DATA.value
-
-
-def bars_feed(timeframe: str, bars: BarsSection) -> DataFeedName:
-    return bars.daily_feed if timeframe.endswith("Day") else bars.intraday_feed
-
-
-def bars_end_at(end: datetime, feed: DataFeedName, sip_delay_minutes: int) -> datetime:
-    if end.tzinfo is None:
-        end = end.replace(tzinfo=UTC)
-    if feed == "sip":
-        return min(end, datetime.now(UTC) - timedelta(minutes=sip_delay_minutes))
-    return end
-
-
-async def get_json(
-    client: httpx.AsyncClient, path: str, params: Mapping[str, object] | None = None
-) -> Any:
-    query = {key: str(value) for key, value in (params or {}).items() if value is not None}
-    response = await client.get(path, params=query)
-    response.raise_for_status()
-    return response.json()
 
 
 def credential_headers(broker: BrokerSection) -> dict[str, str]:
@@ -312,53 +272,3 @@ class TradingClientAlpaca:
 
     async def _get(self, path: str, params: dict[str, object] | None = None) -> Any:
         return await get_json(self._client, path, params)
-
-
-class BarsClientAlpaca:
-    def __init__(
-        self, client: httpx.AsyncClient, configuration: BarsSection, bars_max: int
-    ) -> None:
-        self._client = client
-        self._configuration = configuration
-        self._bars_max = bars_max
-
-    async def daily_bars(self, symbol: str, start: str) -> list[Bar]:
-        return await self.bars(symbol, "1Day", start)
-
-    async def bars(
-        self,
-        symbol: str,
-        timeframe: str,
-        start: str,
-        end: str | None = None,
-        limit: int | None = None,
-        pages_max: int = 1,
-    ) -> list[Bar]:
-        feed = bars_feed(timeframe, self._configuration)
-        params = {
-            "timeframe": timeframe,
-            "start": start,
-            "limit": str(self._bars_max if limit is None else limit),
-            "feed": feed,
-            "adjustment": "all",
-        }
-        if end is not None:
-            params["end"] = bars_end_at(
-                datetime.fromisoformat(end), feed, self._configuration.sip_delay_minutes
-            ).isoformat()
-        return await self._page(symbol, params, pages_max=pages_max)
-
-    async def _page(self, symbol: str, params: dict[str, str], pages_max: int) -> list[Bar]:
-        rows: list[Bar] = []
-        query = dict(params)
-        for _ in range(pages_max):
-            page = _BarsPage.model_validate(
-                await get_json(self._client, f"/v2/stocks/{symbol}/bars", query)
-            )
-            rows.extend(page.bars or [])
-            if not page.next_page_token:
-                break
-            query = {**params, "page_token": page.next_page_token}
-        else:
-            raise httpx.HTTPError("Bars exceed the configured page limit")
-        return rows

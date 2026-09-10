@@ -1,5 +1,4 @@
 import contextlib
-import hashlib
 import logging
 import queue
 import threading
@@ -7,13 +6,14 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
-import httpx
-from itsdangerous import TimestampSigner
+from redis import Redis
+from redis.exceptions import RedisError
 
-from mt.config.settings import RuleSettings, settings
+from mt.config.settings import RuleSettings
+from mt.config.shared import settings
 from mt.config.values import StrategyKey
-from mt.data.http import http_timeout
-from mt.snapshot import STATE_SIGNATURE_SALT, EventLevel, RunStatus, StateEvent, StateSnapshot
+from mt.snapshot import EventLevel, RunStatus, StateEvent, StateSnapshot
+from mt.state import publish_state
 
 
 logger = logging.getLogger(__name__)
@@ -22,18 +22,10 @@ logger = logging.getLogger(__name__)
 class StateExporter:
     def __init__(
         self,
-        url: str,
-        secret: str,
         strategies: list[StrategyKey],
         paused: list[StrategyKey],
         configuration: RuleSettings,
     ) -> None:
-        self.url = url
-        self.signer = TimestampSigner(
-            secret,
-            salt=STATE_SIGNATURE_SALT,
-            digest_method=hashlib.sha256,
-        )
         self.strategies = strategies
         self.paused = paused
         self.configuration = configuration
@@ -98,7 +90,9 @@ class StateExporter:
         )
 
     def _export(self) -> None:
-        with httpx.Client(timeout=http_timeout(settings.export.timeout)) as client:
+        with Redis.from_url(  # pyright: ignore[reportUnknownMemberType]
+            str(settings.redis.url)
+        ) as client:
             while True:
                 try:
                     snapshot = self.pending.get(timeout=settings.export.interval_seconds)
@@ -112,14 +106,8 @@ class StateExporter:
                 if self.stopping.is_set() and self.pending.empty():
                     return
 
-    def _send(self, client: httpx.Client, snapshot: StateSnapshot) -> None:
-        body = self.signer.sign(snapshot.model_dump_json().encode())
+    def _send(self, client: Redis, snapshot: StateSnapshot) -> None:
         try:
-            response = client.post(
-                self.url,
-                content=body,
-                headers={"Content-Type": "application/octet-stream"},
-            )
-            response.raise_for_status()
-        except httpx.HTTPError as error:
+            publish_state(client, snapshot)
+        except RedisError as error:
             logger.warning("State export failed: %s", type(error).__name__)

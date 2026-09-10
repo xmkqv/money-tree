@@ -9,8 +9,6 @@ from mt.config.values import STRATEGY_KEYS, StrategyKey
 type EventLevel = Literal["info", "warning", "error"]
 type RunStatus = Literal["starting", "running", "stopped", "failed"]
 
-STATE_SIGNATURE_SALT = "money-tree.runtime-state.v1"
-
 
 class _StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)

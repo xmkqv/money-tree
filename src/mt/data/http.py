@@ -3,7 +3,9 @@ import logging
 import math
 import re
 import time
+from collections.abc import Mapping
 from email.utils import parsedate_to_datetime
+from typing import Any
 
 import httpx
 from limits import RateLimitItemPerMinute
@@ -19,6 +21,15 @@ logger = logging.getLogger(__name__)
 
 class Payload(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True, validate_by_name=True)
+
+
+async def get_json(
+    client: httpx.AsyncClient, path: str, params: Mapping[str, object] | None = None
+) -> Any:
+    query = {key: str(value) for key, value in (params or {}).items() if value is not None}
+    response = await client.get(path, params=query)
+    response.raise_for_status()
+    return response.json()
 
 
 def http_timeout(timeout: TimeoutSection) -> httpx.Timeout:

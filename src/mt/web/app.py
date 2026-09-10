@@ -9,25 +9,25 @@ import httpx
 import httpx2
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
+from redis.asyncio import Redis as AsyncRedis
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from mt.config.settings import LoginSettings, WebSettings, settings
+from mt.config.settings import LoginSettings, WebSettings
+from mt.config.shared import settings
 from mt.data.alpaca import (
-    BarsClientAlpaca,
     TradingClientAlpaca,
-    bars_api_url,
     credential_headers,
     trading_api_url,
 )
+from mt.data.bars import BarsClientAlpaca, bars_api_url
 from mt.data.http import RequestTransport, http_timeout
 from mt.data.railway import RailwayOAuthClient
 
 from .routes import NO_STORE, dashboard_router, error_response
-from .state import StateStore
 
 
-PUBLIC_PATHS = frozenset({"/healthz", "/login", "/auth/callback", "/internal/state"})
+PUBLIC_PATHS = frozenset({"/healthz", "/login", "/auth/callback"})
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
@@ -77,6 +77,9 @@ def create_app() -> FastAPI:
         requests = configuration.requests
         concurrency = asyncio.Semaphore(requests.web_concurrency_max)
         async with (
+            AsyncRedis.from_url(  # pyright: ignore[reportUnknownMemberType]
+                str(settings.redis.url), decode_responses=True
+            ) as state,
             httpx.AsyncClient(
                 transport=RequestTransport(
                     requests.web_reads_per_minute, concurrency, requests.pause_seconds
@@ -95,6 +98,7 @@ def create_app() -> FastAPI:
             ) as bars,
         ):
             yield {
+                "state": state,
                 "trading": TradingClientAlpaca(
                     trading,
                     configuration.dashboard,
@@ -102,7 +106,6 @@ def create_app() -> FastAPI:
                 "bars": BarsClientAlpaca(
                     bars,
                     settings.bars,
-                    configuration.dashboard.bars_max,
                 ),
             }
 
@@ -213,6 +216,6 @@ def create_app() -> FastAPI:
             status_code=204, headers={**NO_STORE, "Clear-Site-Data": '"cache", "storage"'}
         )
 
-    app.include_router(dashboard_router(configuration, StateStore()))
+    app.include_router(dashboard_router(configuration))
 
     return app
