@@ -5,11 +5,11 @@ from typing import TypedDict, cast, get_args
 from pydantic.fields import FieldInfo
 
 from mt.config.settings import RuleSettings
-from mt.config.values import SettingsSection
+from mt.config.values import UNATTRIBUTED, SettingsSection
 from mt.exchange import TRADING_ZONE, upcoming_session_bounds
 from mt.strategies.base import Strategy
 from mt.strategies.breakout import Breakout
-from mt.strategies.order_tag import ORDER_TAG_PREFIX, UNATTRIBUTED
+from mt.strategies.order_tag import ORDER_TAG_PREFIX
 from mt.strategies.registry import STRATEGIES
 
 

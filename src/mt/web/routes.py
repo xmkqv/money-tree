@@ -15,7 +15,7 @@ from starlette.responses import FileResponse
 
 from mt.config.settings import WebSettings
 from mt.config.shared import settings
-from mt.config.values import ChartTimeframe, StrategyKey, Symbol, is_strategy_key
+from mt.config.values import ChartTimeframe, StrategyKey, Symbol, Unattributed, is_strategy_key
 from mt.data.alpaca import AccountObservation, TradingClientAlpaca
 from mt.data.asset import Asset, AssetType
 from mt.data.bars import BarsClientAlpaca
@@ -24,7 +24,6 @@ from mt.position import Direction
 from mt.state import read_state
 from mt.strategies.breakout import Breakout
 from mt.strategies.daily import Daily
-from mt.strategies.order_tag import Unattributed
 from mt.strategies.registry import strategy_class
 
 from .bars import bar_averages, bars_atr, chart_window, session_hour_bars

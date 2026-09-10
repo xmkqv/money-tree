@@ -13,6 +13,9 @@ from pydantic import (
 
 type StrategyKey = Literal["breakout_5m", "breakout_10m", "daily_sma", "daily_tfb"]
 
+type Unattributed = Literal["unattributed"]
+
+UNATTRIBUTED: Unattributed = "unattributed"
 STRATEGY_KEYS: tuple[StrategyKey, ...] = get_args(StrategyKey.__value__)
 
 

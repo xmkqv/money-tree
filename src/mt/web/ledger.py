@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from typing import TypedDict
 
 from mt.config.sections import DashboardSection
-from mt.config.values import StrategyKey, Symbol
+from mt.config.values import UNATTRIBUTED, StrategyKey, Symbol
 from mt.data.alpaca import (
     AccountObservation,
     ClosedOrder,
@@ -18,7 +18,7 @@ from mt.data.alpaca import (
 from mt.data.asset import Asset
 from mt.data.bars import BarsClientAlpaca
 from mt.exchange import TRADING_ZONE, trading_time
-from mt.strategies.order_tag import UNATTRIBUTED, find_order_tag
+from mt.strategies.order_tag import find_order_strategy_key
 
 from .pulse import Pulse, PulsePosition, build_pulse
 from .strategies import StrategyLabel, strategy_labels
@@ -138,8 +138,7 @@ def match_trades(
     flat_quantity_max: float,
 ) -> tuple[list[Trade], dict[str, OpenTrade]]:
     strategies: dict[str, StrategyKey | None] = {
-        order.id: tag.strategy_key if (tag := find_order_tag(order.client_order_id or "")) else None
-        for order in orders
+        order.id: find_order_strategy_key(order.client_order_id or "") for order in orders
     }
     held: defaultdict[str, float] = defaultdict(float)
     tallies: dict[str, _Tally] = {}

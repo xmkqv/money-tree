@@ -318,3 +318,13 @@ class Breakout(Strategy):
             if direction is not None:
                 return index, direction, close
         return None
+
+
+class Breakout5m(Breakout):
+    key = "breakout_5m"
+    code = "o"
+
+
+class Breakout10m(Breakout):
+    key = "breakout_10m"
+    code = "m"

@@ -1,8 +1,7 @@
 from mt.config.values import STRATEGY_KEYS, StrategyKey
 
 from .base import Strategy
-from .breakout_5m import Breakout5m
-from .breakout_10m import Breakout10m
+from .breakout import Breakout5m, Breakout10m
 from .daily_sma import DailySma
 from .daily_tfb import DailyTfb
 
