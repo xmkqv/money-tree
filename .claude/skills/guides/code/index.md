@@ -11,7 +11,7 @@
 general:
   [env](./env.md)
   [tests](./tests.md)
-  [libs](../libs/index.md)
+  [cheatsheets](../../use-cheatsheet/SKILL.md)
 [css](./css.md)
 [nu](./nu.md)
 [py](./py.md)
@@ -20,7 +20,7 @@ general:
 
 ## code volume
 
-- code volume change is the change in of non-whitespace chars and non-whitespace lines
+- code volume change is the change in non-whitespace chars and non-whitespace lines
 
 ## packages
 

@@ -4,7 +4,6 @@
 
 - py:form:code`*`
 
-[research catalog](../../catalogs/beautiful-py.md)
 
 ## types
 

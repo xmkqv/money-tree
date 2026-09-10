@@ -10,7 +10,6 @@ guides(paths=infer())
 [forms](./forms.md)
 [spec](./spec.md)
 [code](./code/index.md)
-[libs](./libs/index.md)
 
 # rules
 

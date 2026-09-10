@@ -1,7 +1,7 @@
 @mise.toml
 @./.claude/AGENTS.md
 do not write tests
-cheatsheets ../ddoc/agents/skills/use-cheatsheet/py.{limits,pydantic,pydantic-settings,redis,reflex}.md
+read when needed: /use-cheatsheets limits,pydantic,pydantic-settings,redis,reflex
 
 # voice
 
@@ -24,3 +24,9 @@ after planning:
 # sync skills
 
 rsync -a ../ddoc/agents/skills/ .claude/skills/
+
+# ignore
+
+- [x] data clients
+- [x] storage
+- [ ] framework
