@@ -10,7 +10,7 @@ from mt.config.shared import settings
 from mt.config.values import STRATEGY_KEYS, SettingsSection, StrategyKey
 from mt.data.asset import Asset
 from mt.position import Direction
-from mt.snapshot import EventLevel
+from mt.state import EventLevel
 
 
 @dataclass(frozen=True, slots=True)

@@ -4,16 +4,15 @@ import queue
 import threading
 from datetime import UTC, datetime
 from typing import Literal
-from uuid import uuid4
 
 from redis import Redis
 from redis.exceptions import RedisError
 
+from mt.config.bot import settings as bot_settings
 from mt.config.settings import RuleSettings
 from mt.config.shared import settings
 from mt.config.values import StrategyKey
-from mt.snapshot import EventLevel, RunStatus, StateEvent, StateSnapshot
-from mt.state import publish_state
+from mt.state import EventLevel, RunStatus, State, StateEvent, publish_state
 
 
 logger = logging.getLogger(__name__)
@@ -26,15 +25,15 @@ class StateExporter:
         paused: list[StrategyKey],
         configuration: RuleSettings,
     ) -> None:
-        self.strategies = strategies
-        self.paused = paused
-        self.configuration = configuration
-        self.run_id = uuid4()
-        self.started_at = datetime.now(UTC)
-        self.status: RunStatus = "starting"
-        self.events: list[StateEvent] = []
-        self.sequence = 0
-        self.pending: queue.Queue[StateSnapshot] = queue.Queue(maxsize=1)
+        self._state = State(
+            status="starting",
+            strategies=list(strategies),
+            paused=list(paused),
+            heartbeat_at=datetime.now(UTC),
+            configuration=configuration,
+            events=[],
+        )
+        self.pending: queue.Queue[State] = queue.Queue(maxsize=1)
         self.stopping = threading.Event()
         self.lock = threading.Lock()
         self.thread = threading.Thread(target=self._export, name="state-exporter", daemon=True)
@@ -52,42 +51,55 @@ class StateExporter:
         strategy_key: StrategyKey | None = None,
     ) -> None:
         with self.lock:
-            self.status = status
-            self.sequence += 1
-            self.events.append(
+            if self.stopping.is_set():
+                return
+            if self._publish(
+                status,
                 StateEvent(
                     kind=kind,
                     occurred_at=datetime.now(UTC),
                     level=level,
                     message=message,
                     strategy_key=strategy_key,
-                )
-            )
-            self.events = self.events[-settings.export.events_max :]
-            with contextlib.suppress(queue.Empty):
-                self.pending.get_nowait()
-            self.pending.put_nowait(self._snapshot())
+                ),
+            ):
+                self._enqueue()
 
     def close(self, status: Literal["stopped", "failed"], message: str) -> None:
-        if self.stopping.is_set():
-            return
-        level: EventLevel = "info" if status == "stopped" else "error"
-        self.publish(status, f"run.{status}", level, message)
-        self.stopping.set()
-        self.thread.join(timeout=settings.export.close_timeout_seconds)
+        with self.lock:
+            if self.stopping.is_set():
+                return
+            now = datetime.now(UTC)
+            self._publish(
+                status,
+                StateEvent(
+                    kind=f"run.{status}",
+                    occurred_at=now,
+                    level="info" if status == "stopped" else "error",
+                    message=message,
+                ),
+            )
+            self._state = _build_state(self._state, now, bot_settings.export.events_max)
+            self._enqueue()
+            self.stopping.set()
+        self.thread.join(timeout=bot_settings.export.close_timeout_seconds)
 
-    def _snapshot(self) -> StateSnapshot:
-        return StateSnapshot(
-            run_id=self.run_id,
-            sequence=self.sequence,
-            status=self.status,
-            strategies=self.strategies,
-            paused=self.paused,
-            started_at=self.started_at,
-            heartbeat_at=datetime.now(UTC),
-            configuration=self.configuration,
-            events=list(self.events),
+    def _publish(self, status: RunStatus, event: StateEvent) -> bool:
+        if self._state.status in {"stopped", "failed"} and status != "failed":
+            return False
+        self._state = _build_state(
+            self._state,
+            event.occurred_at,
+            bot_settings.export.events_max,
+            status=status,
+            event=event,
         )
+        return True
+
+    def _enqueue(self) -> None:
+        with contextlib.suppress(queue.Empty):
+            self.pending.get_nowait()
+        self.pending.put_nowait(self._state)
 
     def _export(self) -> None:
         with Redis.from_url(  # pyright: ignore[reportUnknownMemberType]
@@ -95,19 +107,45 @@ class StateExporter:
         ) as client:
             while True:
                 try:
-                    snapshot = self.pending.get(timeout=settings.export.interval_seconds)
+                    state = self.pending.get(timeout=bot_settings.export.interval_seconds)
                 except queue.Empty:
-                    if self.stopping.is_set():
-                        return
                     with self.lock:
-                        self.sequence += 1
-                        snapshot = self._snapshot()
-                self._send(client, snapshot)
+                        if self.stopping.is_set() and self.pending.empty():
+                            return
+                        try:
+                            state = self.pending.get_nowait()
+                        except queue.Empty:
+                            state = self._state = _build_state(
+                                self._state, datetime.now(UTC), bot_settings.export.events_max
+                            )
+                self._send(client, state)
                 if self.stopping.is_set() and self.pending.empty():
                     return
 
-    def _send(self, client: Redis, snapshot: StateSnapshot) -> None:
+    def _send(self, client: Redis, state: State) -> None:
         try:
-            publish_state(client, snapshot)
+            publish_state(client, state)
         except RedisError as error:
             logger.warning("State export failed: %s", type(error).__name__)
+
+
+def _build_state(
+    previous: State,
+    heartbeat_at: datetime,
+    events_max: int,
+    *,
+    event: StateEvent | None = None,
+    status: RunStatus | None = None,
+) -> State:
+    events = [*previous.events, event] if event is not None else list(previous.events)
+    return State(
+        run_id=previous.run_id,
+        sequence=previous.sequence,
+        started_at=previous.started_at,
+        status=previous.status if status is None else status,
+        strategies=list(previous.strategies),
+        paused=list(previous.paused),
+        heartbeat_at=heartbeat_at,
+        configuration=previous.configuration,
+        events=events[-events_max:],
+    )

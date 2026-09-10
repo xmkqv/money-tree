@@ -280,9 +280,9 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
 
     @router.get("/api/strategies")
     async def strategies(request: Request) -> JSONResponse:
-        snapshot = await read_state(request.state.state)
-        reported = snapshot is not None
-        active_configuration = snapshot.configuration if snapshot else settings
+        state = await read_state(request.state.state)
+        reported = state is not None
+        active_configuration = state.configuration if state else settings
         return read_response(
             strategy_config(active_configuration, configured=reported),
             dashboard_section.strategies_max_age_seconds,
@@ -290,8 +290,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
 
     @router.get("/api/ledger")
     async def ledger(request: Request) -> JSONResponse:
-        snapshot = await read_state(request.state.state)
-        stale = snapshot is None or datetime.now(UTC) - snapshot.heartbeat_at > heartbeat_timeout
+        state = await read_state(request.state.state)
 
         async def build() -> tuple[datetime, Ledger]:
             account = await observation(request)
@@ -306,12 +305,12 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
             return account.read_at, result
 
         read_at, cached = await ledger_cache.get_or_build(LEDGER_KEY, build)
-        reported_configuration = snapshot.configuration if snapshot else settings
+        reported_configuration = state.configuration if state else settings
         risk = reported_configuration.risk
         return read_response(
             {
                 **cached,
-                "bot": bot_state(snapshot, stale),
+                "bot": bot_state(state, heartbeat_timeout),
                 "windows": entry_windows(reported_configuration),
                 "positionCapPct": round(100 * risk.position_fraction_max, 2),
                 "dailyLossLimitPct": round(100 * risk.per_day_max, 2),

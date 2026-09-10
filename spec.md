@@ -276,13 +276,10 @@ bot ──SET mt:state──→ redis ←──GET mt:state── web
 ```
 
 ```py:types
-snapshot = {
-    run_id
-    sequence
+state = {
     status ∈ starting|running|stopped|failed
     strategies
     paused
-    started_at
     heartbeat_at
     configuration
     events ≤ export.events_max
@@ -292,18 +289,20 @@ snapshot = {
 ```py:surface
 redis.url: required RedisDsn, shared by bot and web
 state key = "mt:state"
-    latest snapshot JSON
+    latest state JSON
     no expiry
     one bot writer; each SET replaces the previous value
 
-publish_state(client, snapshot)
-    client.SET(state key, snapshot JSON)
+publish_state(client, state)
+    client.SET(state key, state JSON)
 
 async read_state(client)
     raw = await client.GET(state key)
     absent → None
-    otherwise → validated snapshot
+    otherwise → validated state
     connection or validation failure → error
+    accepts optional legacy run_id, sequence, started_at with their original value constraints
+    legacy fields are excluded from writes; all other unknown fields are rejected
 ```
 
 ```py:private
@@ -311,13 +310,19 @@ bot:
     owns synchronous client in exporter thread
     publishes events and heartbeat per export.interval_seconds
     RedisError → warn and continue
-    shutdown waits at most export.close_timeout_seconds
+    trade joins exporter ≤ export.close_timeout_seconds
     final publication is best effort
 
 web:
     owns asynchronous client in application lifespan
     closes client on shutdown
     reads persisted state after restart
+
+deployment:
+    activate compatible web reader and retire old readers before deploying reduced bot writer
+    initial rollout uses separate deployments; build completion is not reader readiness
+    rollback restores old writer and full record before old readers
+    retain legacy read fields until old writers are retired and stored state omits them
 ```
 
 # web
@@ -353,13 +358,13 @@ GET /api/session → csrf token, poll cadence
 GET / → dashboard
 
 GET /api/strategies
-    snapshot.configuration when reported; otherwise configured rules
+    state.configuration when reported; otherwise configured rules
 
 GET /api/ledger
     current orders, fills, P&L
     bot state from Redis
-    stale = snapshot absent
-        or now - snapshot.heartbeat_at > web.heartbeat_timeout_seconds
+    stale = state absent
+        or now - state.heartbeat_at > web.heartbeat_timeout_seconds
     retain reported state when stale
 
 GET /api/pulse

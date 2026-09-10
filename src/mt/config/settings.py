@@ -53,11 +53,11 @@ class SharedSettings(RuleSettings):
     finnhub: FinnhubSection
     broker: BrokerSection
     bars: BarsSection
-    export: ExportSection
     redis: RedisSection
 
 
 class BotSettings(Settings):
+    export: ExportSection
     strategies: Annotated[StrategySelection, NoDecode]
     portfolio: PortfolioSection
     backtest: BacktestSection

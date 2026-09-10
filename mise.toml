@@ -237,7 +237,7 @@ for service in web bot; do
   done
 done
 
-for service in bot web; do
+for service in web bot; do
   railway up --service "money-tree-$service" --ci --message "$revision"
 done
 '''

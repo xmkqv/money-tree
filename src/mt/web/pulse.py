@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TypedDict
 
 from alpaca.trading.models import Order
@@ -7,7 +7,7 @@ from pydantic import computed_field
 
 from mt.data.alpaca import AccountObservation, Position
 from mt.exchange import TRADING_ZONE
-from mt.snapshot import StateEvent, StateSnapshot
+from mt.state import State, StateEvent
 
 
 class BotState(TypedDict):
@@ -58,20 +58,21 @@ def build_pulse(observation: AccountObservation) -> Pulse:
     )
 
 
-def bot_state(snapshot: StateSnapshot | None, stale: bool) -> BotState:
-    running = snapshot is not None and snapshot.status == "running" and not stale
-    silence = datetime.now(UTC) - snapshot.heartbeat_at if snapshot else None
+def bot_state(state: State | None, heartbeat_timeout: timedelta) -> BotState:
+    silence = datetime.now(UTC) - state.heartbeat_at if state else None
+    stale = silence is None or silence > heartbeat_timeout
+    running = state is not None and state.status == "running" and not stale
     return BotState(
-        status=snapshot.status if snapshot else "unknown",
+        status=state.status if state else "unknown",
         stale=stale,
         running=running,
-        reported=snapshot is not None,
+        reported=state is not None,
         reportedAgoMinutes=(
             round(silence.total_seconds() / 60, 1) if silence is not None else None
         ),
-        strategies=list(snapshot.strategies) if snapshot else [],
-        paused=list(snapshot.paused) if snapshot else [],
-        events=list(reversed(snapshot.events)) if snapshot else [],
+        strategies=list(state.strategies) if state else [],
+        paused=list(state.paused) if state else [],
+        events=list(reversed(state.events)) if state else [],
     )
 
 

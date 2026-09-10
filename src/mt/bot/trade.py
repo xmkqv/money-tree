@@ -22,8 +22,8 @@ def trade(strategies: list[StrategyKey]) -> None:
         RuleSettings.model_validate(settings.model_dump()),
     )
     exporter.start()
-    exporter.publish("starting", "run.started", "info", "Trading run is starting")
     try:
+        exporter.publish("starting", "run.started", "info", "Trading run is starting")
         with bars_client() as bars:
             parameters: dict[str, object] = {"strategies": strategies, "bars": bars}
             strategy = Portfolio(broker=alpaca_broker(), parameters=parameters, name="Portfolio")
@@ -35,10 +35,13 @@ def trade(strategies: list[StrategyKey]) -> None:
             try:
                 trader.run_all()
             finally:
-                trader.stop_all()
-                if strategy._executor.ident is not None:
-                    strategy._executor.join()
+                try:
+                    trader.stop_all()
+                finally:
+                    if strategy._executor.ident is not None:
+                        strategy._executor.join()
     except BaseException:
-        exporter.close("failed", "Trading run failed")
+        exporter.publish("failed", "run.failed", "error", "Trading run failed")
         raise
-    exporter.close("stopped", "Trading run stopped")
+    finally:
+        exporter.close("stopped", "Trading run stopped")

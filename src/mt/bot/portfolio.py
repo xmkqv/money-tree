@@ -16,7 +16,7 @@ from mt.exchange import TRADING_ZONE, session_bounds
 from mt.frames import last_close, normalize_ohlcv
 from mt.indicators import average_turnover_usd, daily_indicators
 from mt.position import entry_quantity, round_quantity, round_stop
-from mt.snapshot import EventLevel
+from mt.state import EventLevel
 from mt.strategies.base import Candidate, Position, Session, Strategy, ranked
 from mt.strategies.daily import Daily
 from mt.strategies.order_tag import order_tag
@@ -44,7 +44,7 @@ class Portfolio(LumibotStrategy):
 
     def on_abrupt_closing(self) -> None:
         if self.exporter is not None:
-            self.exporter.close("stopped", "Trading run stopped")
+            self.exporter.publish("stopped", "run.stopped", "info", "Trading run stopped")
 
     def on_strategy_end(self) -> None:
         self.on_abrupt_closing()

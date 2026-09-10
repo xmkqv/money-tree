@@ -43,9 +43,15 @@ mise run serve
 mise run stop
 ```
 
-The bot writes its latest snapshot to Redis at `mt:state`. The dashboard reads it
-and marks it stale after the heartbeat timeout. Snapshots have no expiry. Local
-Redis data stays in `.run/redis` across stops.
+The bot writes its current state to Redis at `mt:state`. The dashboard reads it
+and marks it stale after the heartbeat timeout. State has no expiry. Local
+Redis data stays in `.run/redis` across stops. The shared state model and Redis
+read/write functions live in `src/mt/state.py`.
+
+Readers accept the retired `run_id`, `sequence`, and `started_at` fields; new
+writes omit them. Remove these temporary read fields after old bot writers are
+retired and `mt:state` contains the reduced record. Keep the existing Redis key
+and data during rollout.
 
 Production uses a Railway service named `Redis` with a persistent volume. Set
 `REDIS__URL='${{Redis.REDIS_URL}}'` in `.env.production`; the deploy task sends that
@@ -55,8 +61,16 @@ reference to both services. Keep one bot replica.
 mise --env production run deploy
 ```
 
-Deployment ships the bot before web at one revision. Before the first Redis
-deployment, remove retired variables from the next deployment environment:
+Deployment submits web before the bot at one revision. `railway up --ci` waits
+for build logs, not deployment readiness. For the first reduced-state rollout,
+deploy web separately with `railway up --service money-tree-web --ci`, confirm
+that deployment is active and all old web readers have stopped, then deploy the
+bot with `railway up --service money-tree-bot --ci`. Do not use the combined deploy
+task for this transition. After the bot publishes, confirm `mt:state` omits the
+three retired fields before removing their read compatibility. To roll back,
+restore the old bot writer and its full record before restoring old web readers.
+
+Before the first Redis deployment, remove retired variables from the next deployment environment:
 `EXPORT__URL`, `EXPORT__SECRET`, `EXPORT__TIMEOUT__*`,
 `WEB__SIGNATURE_WINDOW_SECONDS`, and `WEB__STATE_BODY_BYTES_MAX`. Stage remote
 removal without restarting the old application; its running process keeps its
