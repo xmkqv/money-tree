@@ -10,9 +10,12 @@ defer:
   - trading restarts and recovery
 ---
 
-- the bot trades the selected strategies on one broker account
+- the bot trades selected US-equity strategies on one broker account
 - one daily loss limit ends the day for every strategy
 - fractional positions are supported
+- the whole account reads on one screen without scrolling
+- the dashboard says when it does not know
+- every number leads to the trade or rule behind it
 
 ```sh:surface
 mt trade --strategies KEY,…
@@ -20,415 +23,229 @@ mt report --strategy KEY --symbols SYM,… --start DATE --end DATE
 mt env list --service {web|bot}
 ```
 
+# configuration
+
+bot and web share validated trading rules.
+service configuration owns credentials and runtime settings.
+unknown nested fields fail validation.
+published rules omit secrets.
+
 # data
 
-## sources
+vendor[broker] supplies account, positions, orders, fills, quotes and clock.
+broker metadata owns trading permissions.
+vendor[calendar] supplies common stocks and scheduled earnings.
+earnings event dates differ from announcement dates.
+historical announcement snapshots are unavailable.
 
-```py:types
-vendor[broker]: account, positions, orders, fills, quotes, clock
-    vendor[engine] supplies simulated account data when backtesting
+asset identity is immutable across providers and ownership.
+crypto identity includes base and quote.
+option identity includes underlying, expiration, strike and right.
 
-series = observations ordered by time
-    realtime = current observations at the engine clock
-    historical = earlier observations through the engine clock
-    lookback = days or sessions of earlier data requested
-    bars = vendor[broker] price and volume series
-    account series = fills, closed orders, equity
-    explicit stock SIP query end ≤ wall clock - bars.sip_delay_minutes
+```py:surface
+bars(assets, timeframe, start, end?) → {Asset: [Bar]}
+    type outside stock | crypto | option → error before requesting
+    observations are time-ordered
+    missing → []
+    incomplete retrieval → error
+    stock: configured daily or intraday feed, adjustment = all
+    crypto and option: native series without stock feed or adjustment
+    explicit stock SIP end ≤ wall clock - bars.sip_delay_minutes
 
-earnings = vendor[calendar] scheduled releases, including upcoming dates
-    event date differs from announcement date
-    historical announcement snapshots are not supplied
-    earnings checks accept Asset
+earnings(asset, date)
     non-stock → False without consulting the calendar
-
-Asset = immutable {
-    symbol, asset_type, expiration, strike, right,
-    multiplier, leverage, precision, underlying_asset
-}
-    crypto identity includes quote currency in precision
-    option identity includes expiration, strike, and right
-    provider symbols preserve the complete pair or contract
-
-permissions = {Asset: vendor[broker].Asset}
-    active, tradable, fractionable
-    broker metadata owns trading permissions
 ```
 
-## historical bars
-
-```py:surface
-bars(assets, timeframe, start, end?, limit, pages_max?) → {Asset: [Bar]}
-    bot and web share one fetcher
-    group by asset_type; batch by bars.symbols_per_request
-    options also respect bars.options_per_request
-
-    stock → /v2/stocks/bars
-        daily timeframe → bars.daily_feed
-        otherwise → bars.intraday_feed
-        adjustment = all
-    crypto → /v1beta3/crypto/us/bars
-    option → /v1beta1/options/bars
-    crypto and options omit stock feed and adjustment
-
-    missing observations → []
-    unsupported asset_type → error before requesting
-    follow pagination; remaining pages beyond pages_max → error
-    bot converts observations to frames; web retains Bar records
-```
-
-## screening
-
-```py:private
-assets = {
-    asset ∈ permissions:
-    asset.asset_type = stock
-    and asset.symbol ∈ vendor[calendar] common stocks
-}
-    price over screen.price_usd_min
-    turnover over screen.turnover_usd_min
-    order by turnover desc, symbol asc
-```
-
-# strategies
-
-## identity and indicators
-
-```py:types
-strategy = {
-    key = {family}_{variation} uq
-    code uq frozen
-    is_paused
-    positions_max
-    equity_risk_fraction_max
-}
-
-Candidate = { asset: Asset, price, stop, direction }
-Position = { asset: Asset, strategy, direction, entry, stop, … }
-    portfolio ownership and frame maps use complete Asset keys
-    strings remain at provider and display boundaries
-
-SMA ATR RSI ADX: period = indicators.period unless given
-stop_distance = |entry - stop|
-stop_fraction = stop_distance / entry
-equity_risk_fraction_max = maximum fraction of equity risked per trade
-```
-
-## breakout
-
-### range
-
-```py:types
-range(p) = range.low + p * range.size
-marks = range(0), range(mid_fraction), range(1)
-```
-
-### entry
-
-```py:surface
-run(session)
-    range = high and low across the first opening_minutes
-    range.size < range_fraction_min * price → skip
-    stop_distance / price ∉ [stop_fraction_min, stop_fraction_max] → skip
-    volume to signal close < volume_multiple * its lookback_sessions mean → skip
-
-    window = range close → min(session close, open + scan_minutes)
-    signal = first close outside the range
-    signal ∉ last signal_bars_max bars in window → skip
-    when entry_extension_max is set:
-        long: entry > range.high + entry_extension_max * range.size → skip
-        short: entry < range.low - entry_extension_max * range.size → skip
-    quote through stop → skip
-    family positions ≥ positions_max → skip
-
-    order = next open
-    stop =
-        long: range(long_stop_fraction)
-        short: range(short_stop_fraction)
-```
-
-### management
-
-```py:surface
-manage(position, bar)
-    targets = target_multiples * stop_distance
-    trail = trail_atr_multiple * ATR after trail_bars_min bars
-
-    first target → set position stop = entry, then trail
-    stop never moves back
-    each target → close its target_fractions share
-    partial short targets → round down to whole shares; skip zero-share slices
-    final target → close the remainder
-    close_lead_minutes before close → close the rest
-```
-
-## daily
-
-### signals
-
-```py:surface
-is_market_favorable = benchmark close > SMA(average_sessions)
-
-daily_sma =
-    price > SMA(trend_sessions) > SMA(trend_sessions_long)
-    and RSI ≥ rsi_min
-    and ADX ≥ adx_min
-    and close crosses above SMA(average_sessions)
-    and close[-1] > close[-2]
-
-daily_tfb =
-    turnover over turnover_sessions
-    and price > SMA(trend_sessions) rising over trend_lag_sessions
-    and ADX ≥ adx_min
-    and close > previous high
-```
-
-### entry
-
-```py:surface
-run(session)
-    ¬is_market_favorable → skip
-    when does_heed_earnings:
-        earnings within earnings.block_days → skip
-
-    window = open → close
-    cadence = portfolio.iteration_minutes
-    one entry per asset per session
-
-    order = next open, else the next iteration enter allows
-    stop = entry - stop_atr_multiple * ATR
-```
-
-### management
-
-```py:surface
-manage(position, session)
-    set position stop = max(stop, highest close since entry - stop_atr_multiple * ATR)
-
-    exit at next open when:
-        close < stop
-        or close < SMA(average_sessions)
-        or RSI < exit_rsi_max
-        or at the open of the last exchange session strictly before earnings, when heeded
-    weekend and holiday earnings → use the last preceding exchange session
-    retry during that session until an exit is submitted
-```
+bot and web share bar retrieval.
+historical bot observations end at the engine clock.
 
 # bot
 
-## entry limits
+## portfolio
 
-```py:private
-enter(strategy, candidate, session)
-    candidate.asset.asset_type ≠ stock → skip
-    strategy.is_paused → skip
-    positions ≥ risk.positions_max → skip
-    exposure ≥ equity → skip
-    asset held → skip
-    short and (asset ∉ permissions or ¬permissions[asset].shortable) → skip
-    quote through stop → skip
-
-    quantity * stop_distance ≤ (strategy.equity_risk_fraction_max or risk.per_trade_max) * equity
-    position ≤ risk.position_fraction_max * equity
-```
-
-## protection
-
-```py:private
-protect(position)
-    long: stop ≥ last price → exit at market
-    short: stop ≤ last price → exit at market
-```
-
-## daily loss limit
-
-```py:private
-cancel orders, exit all: vendor[engine] when backtesting, else vendor[broker]
-
-cron:emergency_exit[portfolio.iteration_minutes]()
-    equity ≤ session open value * (1 - risk.per_day_max) →
-        cancel orders
-        exit all
-        end day
-```
-
-## backtest
-
-```py:private
-report(strategy, assets, start, end)
-    CLI symbols are parsed into Assets
-    empty assets or non-stock asset → error before creating artifacts
-    permissions = simulated broker metadata using backtest.asset_defaults
-    broker ids are generated; metadata is not fetched from today's catalogue
-    positions = ∅
-    equity = backtest.budget_usd
-
-    bars = vendor[broker] minute bars after backtest.warm_up_days
-    daily: vendor[engine] bars
-
-    writes stats, trades, plots vs benchmark_symbol
-```
-
-# bot state
-
-```sketch
-bot ──SET mt:state──→ redis ←──GET mt:state── web
-```
-
-```py:types
-state = {
-    status ∈ starting|running|stopped|failed
-    strategies
-    paused
-    heartbeat_at
-    configuration
-    events ≤ export.events_max
-}
-```
+portfolio owns screening, exposure, ownership and execution.
+strategies obtain observations and actions through portfolio.
 
 ```py:surface
-redis.url: required RedisDsn, shared by bot and web
-state key = "mt:state"
-    latest state JSON
-    no expiry
-    one bot writer; each SET replaces the previous value
+screen
+    active, tradable, fractionable stocks ∩ calendar common stocks
+    price > screen.price_usd_min; turnover > screen.turnover_usd_min
+    rank by turnover descending, symbol ascending
 
-publish_state(client, state)
-    client.SET(state key, state JSON)
+enter(strategy, candidate, session)
+    non-stock, paused strategy, held asset or quote through stop → skip
+    short without broker shortable permission → skip
+    positions including pending ≥ risk.positions_max → skip
+    quantity * stop distance ≤ (strategy risk override or risk.per_trade_max) * equity
+    position notional ≤ risk.position_fraction_max * equity
+    gross exposure including pending and new entry ≤ equity
 
-async read_state(client)
-    raw = await client.GET(state key)
-    absent → None
-    otherwise → validated state
-    connection or validation failure → error
-    accepts optional legacy run_id, sequence, started_at with their original value constraints
-    legacy fields are excluded from writes; all other unknown fields are rejected
+protect(position)
+    resting stop through last price → exit at market
+
+iteration
+    reconcile positions; check daily loss; manage positions; run selected strategies
+    equity ≤ session open value * (1 - risk.per_day_max) →
+        cancel orders; exit all; block entries for the day
+        retry liquidation on subsequent iterations
 ```
 
-```py:private
-bot:
-    owns synchronous client in exporter thread
-    publishes events and heartbeat per export.interval_seconds
-    RedisError → warn and continue
-    trade joins exporter ≤ export.close_timeout_seconds
-    final publication is best effort
+## strategies
 
-web:
-    owns asynchronous client in application lifespan
-    closes client on shutdown
-    reads persisted state after restart
+strategies own signals and position management.
+keys identify family and variation.
+frozen unique codes attribute orders.
+indicators use configured SMA, ATR, RSI and ADX periods.
 
-deployment:
-    activate compatible web reader and retire old readers before deploying reduced bot writer
-    initial rollout uses separate deployments; build completion is not reader readiness
-    rollback restores old writer and full record before old readers
-    retain legacy read fields until old writers are retired and stored state omits them
+### breakout
+
+```py:surface
+entry
+    range = opening high and low
+    marks = low, configured midpoint, high
+    range width / price below minimum → skip
+    stop distance / price outside configured bounds → skip
+    volume to signal close below configured multiple of historical mean → skip
+    window = range close → min(session close, open + scan_minutes)
+    signal = first close outside range, within configured recent bars
+    entry extension beyond configured fraction of range, when set → skip
+    family position cap reached → skip
+    enter at next open
+    stop = configured long or short fraction above range low
+
+management
+    targets = configured multiples of initial stop distance
+    each target → close configured share; final target → close remainder
+    partial short exits round down to whole shares; zero → skip
+    first target → stop at entry; then trail by configured ATR multiple
+    trailing requires configured minimum bars
+    stop never moves back
+    configured lead before session close → close remainder
 ```
+
+### daily
+
+```py:surface
+signals
+    daily_sma = price > SMA(trend_sessions) > SMA(trend_sessions_long)
+        and RSI ≥ rsi_min and ADX ≥ adx_min
+        and close crosses above SMA(average_sessions) and close[-1] > close[-2]
+    daily_tfb = turnover over turnover_sessions
+        and price > SMA(trend_sessions) rising over trend_lag_sessions
+        and ADX ≥ adx_min and close > previous high
+
+entry
+    benchmark close ≤ SMA(average_sessions) → skip
+    heeded earnings within configured window → skip
+    strategy position cap reached → skip
+    one entry per asset per session, between open and close
+    enter at next open, else next permitted iteration
+    stop = entry - stop_atr_multiple * ATR
+
+management
+    stop = max(stop, highest close since entry - stop_atr_multiple * ATR)
+    close < stop or close < SMA(average_sessions) or RSI < exit_rsi_max → exit at next open
+    heeded earnings → exit at open of last exchange session strictly before earnings
+    retry earnings exit until submitted
+```
+
+## execution
+
+vendor[engine] supplies lifecycle callbacks, order submission and partial or final fills.
+paper and live use vendor[broker].
+reports simulate execution under the same portfolio and strategy contracts.
+
+reports start with an empty account funded by backtest budget.
+asset defaults are independent of today's catalogue.
+results include statistics, trades and plots against the benchmark.
+empty or non-stock assets fail before artifact creation.
+breakout uses broker minute bars with warm-up.
+daily uses engine daily bars without minute-level fill fidelity.
+
+# state
+
+state = status (starting | running | stopped | failed), selected and paused
+strategies, heartbeat, configuration, bounded events.
+unknown fields fail validation except temporary rollout compatibility.
+
+one bot writer replaces validated JSON at `mt:state` every export interval.
+state has no expiry.
+vendor[state] publication failure warns without stopping trading.
+shutdown publication is best effort with bounded wait.
+reads return absent or validated state.
+read failures remain errors.
+web retains persisted state across restarts and stale heartbeats.
 
 # web
 
-- the whole account reads on one screen without scrolling
-- the dashboard says when it does not know
-- every number leads to the trade or rule behind it
-
 ## access
 
-```py:surface
-public:
-    GET /healthz
-    GET /login
-    GET /auth/callback
+web serves HTML, JSON and static assets using FastAPI and vendored Lit.
+production login requires vendor[host] OAuth and an allowed email.
+development login creates a local session.
 
-others need a session cookie
-unsafe session-authenticated methods: X-CSRF-Token
+session cookies authenticate all routes except the public routes below.
+unsafe session-authenticated methods require X-CSRF-Token.
 
-GET /login → /auth/callback
-    development: local session
-    production:
-        vendor[host] oauth
-        email ∉ login.allowed_emails → reject
+```http
+GET /healthz
+# public
+
+GET /login
+# public
+
+GET /auth/callback?code={code}&state={state}
+# public; production only
+
+GET /
+# dashboard
+
+GET /assets/{filename}
+# static asset
+
+GET /api/session
+# CSRF token and polling cadence
 
 POST /logout
-GET /api/session → csrf token, poll cadence
+# end session
 ```
 
 ## dashboard
 
-```py:surface
-GET / → dashboard
-
+```http
 GET /api/strategies
-    state.configuration when reported; otherwise configured rules
+# reported rules, otherwise configured rules
+# selection: online | paused | unselected | unknown
 
 GET /api/ledger
-    current orders, fills, P&L
-    bot state from Redis
-    stale = state absent
-        or now - state.heartbeat_at > web.heartbeat_timeout_seconds
-    retain reported state when stale
+# orders, fills, P&L, bot state
+# gross loss is a positive magnitude
+# stale when state is absent or heartbeat overdue
 
 GET /api/pulse
-    realtime account, positions, open orders
+# realtime account, positions, open orders
 
-GET /api/bars
-    historical bars by timeframe ∈ dashboard.chart_timeframes
-    query symbol → complete Asset
-    stock hourly bars → equity-session aggregation
-    crypto and option hourly bars → native hourly observations
-    response fields remain unchanged
+GET /api/bars?symbol={symbol}&timeframe={timeframe}&opened={date}&closed={date}
+# configured timeframes; symbol → Asset
+# stock hours follow equity sessions; crypto and options use native hours
 
-GET /api/levels
-    marks and averages at an entry
-    non-stock → no equity strategy levels
+GET /api/levels?symbol={symbol}&strategy_key={key}&side={side}&entry={price}&opened={date}
+# entry marks and averages; non-stock → no equity strategy levels
 ```
 
+pulse and ledger share account observations.
+dashboard responses include source read_at.
+older responses cannot replace newer account values.
 
-### terminology and trade data
+## trades
 
-- strategy records use `key`; references to a strategy key use `strategy_key`
-- price observations are bars; selected intervals are timeframes
-- sequence offsets use `index`; holdings remain positions
-- entry display components derive from `entered_at` in exchange time
-- fractional P&L and percentage P&L remain distinct
-- renamed application fields and configuration keys replace previous names together
+trades span flat to flat.
+partial exits accumulate.
+reversals start a new trade.
+missing entry history → entry time unavailable.
 
-```py:types
-Trade = {
-    symbol, side, strategy_key, quantity, entry, exit, pnl
-    date, minute = exit components in exchange time
-    entered_at = timezone-aware ISO timestamp of first entry fill
-    duration_minutes = max(0, floor(elapsed seconds / 60))
-    fills = [{ d, m, p, quantity, s }]
-}
-OpenTrade = { strategy_key, entered_at, fills }
-    current positions without entry history: entered_at = null
-
-Totals = { n, wins, losses, gross_profit, gross_loss, net_pnl }
-    gross_profit = sum(positive trade pnl)
-    gross_loss = abs(sum(nonpositive trade pnl))
-    net_pnl = sum(trade pnl)
-
-unrealized_pnl = unrealized profit or loss in account currency
-unrealized_pnl_fraction = vendor[broker].unrealized_plpc
-unrealized_pnl_percent = 100 * unrealized_pnl_fraction
-
-strategy selection state ∈ online|paused|unselected|unknown
-unattributed strategy label = "Unattributed"
-TC_STATE.timeframe = selected chart interval
-```
-
-```py:surface
-match_trades(fills, orders, flat_quantity_max) → trades, open_trades
-    a trade spans flat position → entry fills → exit fills → flat position
-    partial exits accumulate until flat; a reversal starts a new trade
-    entered_at comes from the original fill timestamp, including its offset
-```
-
-### calendar periods
-
-week = monday-to-date, anchored to the current exchange date
-month = calendar-month-to-date, anchored to the current exchange date
-strategy totals, benchmark comparisons, equity selection → use the same boundaries
-baseline = last available observation strictly before the boundary
-funded within period → first available observation
-zero or missing baseline → percentage unavailable
+calendar periods use exchange time: monday-to-date and calendar-month-to-date.
+strategy totals, benchmark comparisons and equity selection share boundaries.
+percentage baseline = last observation before boundary,
+    or first available when funded within period.
+zero or missing baseline → percentage unavailable.
