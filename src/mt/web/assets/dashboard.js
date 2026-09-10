@@ -1,4 +1,4 @@
-import { html, render, repeat, nothing, styleMap } from "/assets/lit.min.js";
+import { html, render, repeat, nothing, ref } from "/assets/lit.min.js";
 
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -29,12 +29,21 @@ const strategyHue = key => "var(--s-" + key.replaceAll("_", "-") + "-h)";
 
 function strategyChip(hue) {
   return html`<span class=${"chip" + (hue ? "" : " plain")}
-    style=${styleMap({"--strategy-h": hue})}></span>`;
+    ${ref(element => {
+      if (!element) return;
+      if (hue) element.style.setProperty("--strategy-h", hue);
+      else element.style.removeProperty("--strategy-h");
+    })}></span>`;
 }
 
 function meterBar(fill, extraClass = "", hue) {
   return html`<div class=${"meter " + extraClass}
-    style=${styleMap({"--meter-fill": fill, "--strategy-h": hue})}><i></i></div>`;
+    ${ref(element => {
+      if (!element) return;
+      element.style.setProperty("--meter-fill", fill);
+      if (hue) element.style.setProperty("--strategy-h", hue);
+      else element.style.removeProperty("--strategy-h");
+    })}><i></i></div>`;
 }
 
 const clockLabel = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
@@ -406,8 +415,8 @@ function renderAccount() {
     <div class="winrate-bar" id="winrate-bar" role="img"
       aria-label=${"Win rate " + TOTALS.winRate.toFixed(1) + " percent: " + TOTALS.wins + " wins and " +
         TOTALS.losses + " losses across " + TOTALS.n + " closed trades"}>
-      <span class="w" id="bar-w" style=${styleMap({flex: TOTALS.wins})}></span>
-      <span class="l" id="bar-l" style=${styleMap({flex: TOTALS.losses})}></span></div>
+      <span class="w" id="bar-w" ${ref(element => { if (element) element.style.flex = TOTALS.wins; })}></span>
+      <span class="l" id="bar-l" ${ref(element => { if (element) element.style.flex = TOTALS.losses; })}></span></div>
     <div class="winrate-legend"><span id="lg-w">${TOTALS.wins} wins</span><span id="lg-l">${TOTALS.losses} losses</span></div>`,
     document.getElementById("performance"));
 }
@@ -438,7 +447,7 @@ function renderAccountValues(view) {
     <div class="stat-grid">${stats.map(([label, id, value, cls, meter, fill]) => html`
       <div class="stat"><span class="k">${label}</span><span class=${cls || "v"} id=${id}>${value}</span>
         ${meter ? html`<div class=${"meter" + (meter === "m-dll" ? " loss" : "")}>
-          <i id=${meter} style=${styleMap({"--meter-fill": fill})}></i></div>` : nothing}</div>`)}</div>`,
+          <i id=${meter} ${ref(element => { if (element) element.style.setProperty("--meter-fill", fill); })}></i></div>` : nothing}</div>`)}</div>`,
     document.querySelector("#view-" + view + " .rail .panel-body"));
 }
 
@@ -1061,7 +1070,9 @@ function dayCell(cell, peak, tip) {
 
   return html`<div class=${"cell has " + (cell.pnl >= 0 ? "gain" : "loss") +
     (calY === todaySel.y && calM === todaySel.m && cell.day === todaySel.day ? " sel" : "")}
-    tabindex="0" role="button" style=${styleMap({"--depth": (Math.abs(cell.pnl) / peak).toFixed(4)})}
+    tabindex="0" role="button" ${ref(element => {
+      if (element) element.style.setProperty("--depth", (Math.abs(cell.pnl) / peak).toFixed(4));
+    })}
     @click=${() => selectDay(calY, calM, cell.day)}
     @keydown=${event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectDay(calY, calM, cell.day); } }}
     @pointerenter=${event => show(event.currentTarget)} @focus=${event => show(event.currentTarget)}
@@ -1148,7 +1159,7 @@ function renderHistory() {
   const peak = Math.max(...SESSIONS.map(m => Math.abs(m.pnl)));
   render(SESSIONS.map(session => {
     const fill = html`<div class="fill" title=${session.long + " · " + signedMoney(session.pnl)}
-      style=${styleMap({height: Math.max(2, Math.abs(session.pnl) / peak * 100) + "%"})}></div>`;
+      ${ref(element => { if (element) element.style.height = Math.max(2, Math.abs(session.pnl) / peak * 100) + "%"; })}></div>`;
     return html`<div class="ybar"><div class="track"><div class="up">${session.pnl >= 0 ? fill : nothing}</div>
       <div class="down">${session.pnl < 0 ? fill : nothing}</div></div><div class="lab">${session.label}</div></div>`;
   }), document.getElementById("hs-strip"));
@@ -1407,7 +1418,11 @@ function railToggle(key, label, averageIndex, enabled, why) {
     <input type="checkbox" .checked=${enabled && TC_SHOW[key]} ?disabled=${!enabled}
       @change=${event => { TC_SHOW[key] = event.target.checked; queueTradeChart(); }}>
     <span class=${"tc-swatch" + (averageIndex === null ? " plain" : "")}
-      style=${styleMap({"--sma-h": averageIndex === null ? undefined : "var(" + averageColor(averageIndex) + ")"})}></span>
+      ${ref(element => {
+        if (!element) return;
+        if (averageIndex === null) element.style.removeProperty("--sma-h");
+        else element.style.setProperty("--sma-h", "var(" + averageColor(averageIndex) + ")");
+      })}></span>
     <span>${label}</span></label>`;
 }
 
