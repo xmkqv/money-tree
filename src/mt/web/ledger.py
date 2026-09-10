@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from typing import TypedDict
 
 from mt.config.sections import DashboardSection
-from mt.config.values import UNATTRIBUTED, StrategyKey, Symbol
+from mt.config.values import UNATTRIBUTED, StrategyKey, Symbol, Unattributed
 from mt.data.alpaca import (
     AccountObservation,
     ClosedOrder,
@@ -18,6 +18,7 @@ from mt.data.alpaca import (
 from mt.data.asset import Asset
 from mt.data.bars import BarsClientAlpaca
 from mt.exchange import TRADING_ZONE, trading_time
+from mt.position import Direction
 from mt.strategies.order_tag import find_order_strategy_key
 
 from .pulse import Pulse, PulsePosition, build_pulse
@@ -35,7 +36,7 @@ class FillRow(TypedDict):
 class Trade(TypedDict):
     symbol: str
     side: str
-    strategy_key: str
+    strategy_key: StrategyKey | Unattributed
     quantity: float
     entry: float
     exit: float
@@ -48,7 +49,7 @@ class Trade(TypedDict):
 
 
 class OpenTrade(TypedDict):
-    strategy_key: str
+    strategy_key: StrategyKey | Unattributed
     entered_at: str
     fills: list[FillRow]
 
@@ -71,7 +72,7 @@ class Day(TypedDict):
 
 
 class PositionRow(PulsePosition):
-    strategy_key: str
+    strategy_key: StrategyKey | Unattributed
     entered_at: str | None
     fills: list[FillRow]
 
@@ -122,7 +123,7 @@ class Ledger(Pulse):
 
 @dataclass(slots=True)
 class _Tally:
-    direction: int
+    direction: Direction
     entered_at: datetime
     strategy_key: StrategyKey | None
     in_quantity: float = 0.0

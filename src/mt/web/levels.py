@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from typing import NotRequired, TypedDict
 
 from mt.config.shared import settings
+from mt.config.values import StrategyKey, Unattributed
 from mt.data.bars import Bar
 from mt.exchange import trading_time
 from mt.position import Direction
@@ -15,7 +16,7 @@ class OpeningRange(TypedDict):
 
 
 class Levels(TypedDict):
-    strategy_key: str
+    strategy_key: StrategyKey | Unattributed
     range: NotRequired[OpeningRange]
     stop: NotRequired[float]
     targets: NotRequired[list[float]]

@@ -46,8 +46,8 @@ const weekStart = d => {
 };
 
 let LEDGER, ACCOUNT, STRATEGIES, STRAT_BY_KEY, OPEN_POSITIONS, ALL_TRADES, tradesByDate;
-let SESSION = {}, TOTALS, SESSIONS, LAST_SESSION, DAY_PNL, BENCH, BENCH_SYMBOL, DAILY, INTRADAY, LATEST;
-let FIRST_MONTH, LAST_MONTH, FIRST_IX, LAST_IX;
+let SESSION = {}, TOTALS, SESSIONS, LAST_SESSION, BENCH, BENCH_SYMBOL, DAILY, INTRADAY, LATEST;
+let FIRST_IX, LAST_IX;
 let STRATEGY_PERIODS = {};
 let monthCache = new Map();
 let todaySel = null;
@@ -164,7 +164,7 @@ function derive(ledger, readAt) {
     STRATEGY_PERIODS = {};
 
     STRATEGIES = ledger.strategies.map(s => ({
-      key: s.key, label: s.short, sub: s.label,
+      ...s,
       hue: s.key === "unattributed" ? null : strategyHue(s.key),
     }));
     STRAT_BY_KEY = Object.fromEntries(STRATEGIES.map(x => [x.key, x]));
@@ -187,7 +187,6 @@ function derive(ledger, readAt) {
     }));
 
     LAST_SESSION = SESSIONS[SESSIONS.length - 1] || { date: ledger.equityDaily.at(-1).date, pnl: 0, before: ledger.equity, pct: 0, trades: 0, wins: 0 };
-    DAY_PNL = LAST_SESSION.pnl;
 
     periodFromTrades("D", LAST_SESSION.before, tradesByDate.get(LAST_SESSION.date) || []);
     for (const key of ["W", "M"]) {
@@ -210,10 +209,8 @@ function derive(ledger, readAt) {
     const funded = ledger.equityDaily.length ? ledger.equityDaily[0].date : LAST_SESSION.date;
     const [fy, fm] = dparts(funded);
     const [ty, tm] = dparts(ledger.today);
-    FIRST_MONTH = { y: fy, m: fm - 1 };
-    LAST_MONTH = { y: ty, m: tm - 1 };
-    FIRST_IX = monthIndex(FIRST_MONTH.y, FIRST_MONTH.m);
-    LAST_IX = Math.max(FIRST_IX, monthIndex(LAST_MONTH.y, LAST_MONTH.m));
+    FIRST_IX = monthIndex(fy, fm - 1);
+    LAST_IX = Math.max(FIRST_IX, monthIndex(ty, tm - 1));
 
   }
   ACCOUNT = {
@@ -223,10 +220,6 @@ function derive(ledger, readAt) {
     dailyLossLimitPct: ledger.dailyLossLimitPct,
   };
 
-  ACCOUNT.closed = TOTALS.n;
-  ACCOUNT.wins = TOTALS.wins;
-  ACCOUNT.losses = TOTALS.losses;
-  ACCOUNT.winRate = TOTALS.n ? TOTALS.wins / TOTALS.n * 100 : 0;
   if (seriesChanged) {
     [DAILY, INTRADAY] = [ledger.equityDaily, ledger.intraday].map((rows, intraday) => {
       const series = rows.map((r, i) => {
@@ -359,8 +352,8 @@ function symbolCell(symbol, side, trade) {
 
 function stratCell(strategy_key) {
   const strategy = STRAT_BY_KEY[strategy_key];
-  return { node: html`<span class="tstrat" title=${strategy.sub}>
-    ${strategyChip(strategy.hue)}<span>${strategy.label}</span>
+  return { node: html`<span class="tstrat" title=${strategy.label}>
+    ${strategyChip(strategy.hue)}<span>${strategy.short}</span>
   </span>` };
 }
 
@@ -404,13 +397,13 @@ function renderAccount() {
     "Funded " + money(ACCOUNT.invested) + " · " + LEDGER.funded;
   renderAccountValues("dashboard");
   render(html`<div class="winrate-top"><span class="k">Win rate</span>
-    <span class="v" id="v-winrate">${ACCOUNT.winRate.toFixed(1)}%</span></div>
+    <span class="v" id="v-winrate">${TOTALS.winRate.toFixed(1)}%</span></div>
     <div class="winrate-bar" id="winrate-bar" role="img"
-      aria-label=${"Win rate " + ACCOUNT.winRate.toFixed(1) + " percent: " + ACCOUNT.wins + " wins and " +
-        ACCOUNT.losses + " losses across " + ACCOUNT.closed + " closed trades"}>
-      <span class="w" id="bar-w" style=${styleMap({flex: ACCOUNT.wins})}></span>
-      <span class="l" id="bar-l" style=${styleMap({flex: ACCOUNT.losses})}></span></div>
-    <div class="winrate-legend"><span id="lg-w">${ACCOUNT.wins} wins</span><span id="lg-l">${ACCOUNT.losses} losses</span></div>`,
+      aria-label=${"Win rate " + TOTALS.winRate.toFixed(1) + " percent: " + TOTALS.wins + " wins and " +
+        TOTALS.losses + " losses across " + TOTALS.n + " closed trades"}>
+      <span class="w" id="bar-w" style=${styleMap({flex: TOTALS.wins})}></span>
+      <span class="l" id="bar-l" style=${styleMap({flex: TOTALS.losses})}></span></div>
+    <div class="winrate-legend"><span id="lg-w">${TOTALS.wins} wins</span><span id="lg-l">${TOTALS.losses} losses</span></div>`,
     document.getElementById("performance"));
 }
 
@@ -421,14 +414,14 @@ function renderAccountValues(view) {
     portfolio ? "pf-cap-meter" : "m-cap", clamp(ACCOUNT.largestPositionPct / ACCOUNT.positionCapPct, 0, 1)];
   const stats = portfolio ? [
     ["Unrealized", "pf-unrealized-pnl", signedMoney(ACCOUNT.unrealized_pnl), "v " + tone(ACCOUNT.unrealized_pnl)],
-    ["Positions", "pf-count", ACCOUNT.openPositions],
+    ["Positions", "pf-count", OPEN_POSITIONS.length],
     ["Exposure", "pf-exposure", ACCOUNT.exposurePct.toFixed(1) + "%"],
     ["Largest", "pf-largest", ACCOUNT.largestPositionPct.toFixed(1) + "%"],
     ["Buying power", "pf-risk", money(ACCOUNT.buyingPower)], cap,
   ] : [
     ["Total return", "v-tr", html`${signedMoney(ACCOUNT.totalReturn)}<span class="u">${signedPct(ACCOUNT.rateOfReturn)}</span>`, "v " + tone(ACCOUNT.totalReturn)],
-    ["Last session", "v-d24", html`${signedMoney(DAY_PNL)}<span class="u">${signedPct(DAY_PNL / STRATEGY_PERIODS.D.base * 100)}</span>`, "v " + tone(DAY_PNL)],
-    ["Open positions", "v-open", ACCOUNT.openPositions],
+    ["Last session", "v-d24", html`${signedMoney(LAST_SESSION.pnl)}<span class="u">${signedPct(LAST_SESSION.pnl / STRATEGY_PERIODS.D.base * 100)}</span>`, "v " + tone(LAST_SESSION.pnl)],
+    ["Open positions", "v-open", OPEN_POSITIONS.length],
     ["Exposure", "v-exposure", ACCOUNT.exposurePct.toFixed(1) + "%"],
     ["Daily loss limit", "v-dll", limit(ACCOUNT.dayDrawdownPct, ACCOUNT.dailyLossLimitPct, 2), "lim", "m-dll",
       Math.max(clamp(ACCOUNT.dayDrawdownPct / ACCOUNT.dailyLossLimitPct, 0, 1), .015)], cap,
@@ -529,8 +522,8 @@ function renderStrategies(period) {
   render(STRATEGIES.map(strategy => {
     const [trades, pnl] = selected.rows[strategy.key];
     if (strategy.key === "unattributed" && !trades) return nothing;
-    return html`<tr><td><div class="strat" title=${strategy.sub}>
-      ${strategyChip(strategy.hue)}<span class="name">${strategy.label}</span>
+    return html`<tr><td><div class="strat" title=${strategy.label}>
+      ${strategyChip(strategy.hue)}<span class="name">${strategy.short}</span>
       ${strategy.key === "unattributed" ? nothing : stateBadges(strategy.key)}
     </div></td><td class=${"r num" + (trades ? "" : " flat")}>${trades ? plainNum(trades) : "—"}</td>
     <td class="r pnl-cell"><span class=${"num " + tone(pnl)}>${trades ? signedMoney(pnl) : "—"}</span>
@@ -1080,7 +1073,7 @@ function renderPortfolio() {
     if (!held.length) return nothing;
     const value = held.reduce((sum, position) => sum + position.value, 0);
     return html`<div class="alloc-row"><div class="nm">
-      ${strategyChip(strategy.hue)}<span>${strategy.label}</span>
+      ${strategyChip(strategy.hue)}<span>${strategy.short}</span>
       <span class="eyebrow">${held.length}${held.length === 1 ? " position" : " positions"}</span></div>
       <div class="amt">${money(value)}<span class="pc">${(value / ACCOUNT.deployed * 100).toFixed(0)}%</span></div>
       ${meterBar(value / ACCOUNT.deployed, strategy.hue ? "strategy" : "plain", strategy.hue)}</div>`;
@@ -1177,7 +1170,7 @@ function renderHistory() {
 
   const fs = document.getElementById("f-strategy");
   if (fs.options.length === 1) {
-    for (const st of STRATEGIES) fs.append(new Option(st.label, st.key));
+    for (const st of STRATEGIES) fs.append(new Option(st.short, st.key));
     const sessions = document.getElementById("f-session");
     for (const session of [...SESSIONS].reverse()) sessions.append(new Option(session.long, session.date));
   }
@@ -1412,7 +1405,7 @@ function paintTradeFacts() {
   document.getElementById("tc-title").textContent = t.symbol;
   const strategy = STRAT_BY_KEY[t.strategy_key];
   document.getElementById("tc-sub").textContent =
-    (strategy ? strategy.label : t.strategy_key) + " · " + (t.side === "short" ? "Short" : "Long") +
+    (strategy ? strategy.short : t.strategy_key) + " · " + (t.side === "short" ? "Short" : "Long") +
     (t.open ? " · Open" : "");
 
   const openNote = document.getElementById("tc-open-note");
@@ -1776,7 +1769,7 @@ function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
     val.textContent = money(price);
     const who = document.createElement("span");
     who.className = "tc-s";
-    who.textContent = strategy ? strategy.label : TRADE.strategy_key;
+    who.textContent = strategy ? strategy.short : TRADE.strategy_key;
     el.append(head, val, who);
     el.style.left = Math.round(x) + "px";
     el.style.top = Math.round(y) + "px";
@@ -2001,7 +1994,6 @@ function applyPulse(pulsed, readAt) {
   if (!SESSIONS.length) STRATEGY_PERIODS.D.base = LAST_SESSION.before = pulsed.equity;
 
   const aligned = mergePositions(pulsed.positions);
-  ACCOUNT.openPositions = OPEN_POSITIONS.length;
   ACCOUNT.largestPositionPct = OPEN_POSITIONS.length
     ? Math.max(...OPEN_POSITIONS.map(p => p.weight)) : 0;
 

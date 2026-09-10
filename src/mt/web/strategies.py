@@ -5,7 +5,7 @@ from typing import TypedDict, cast, get_args
 from pydantic.fields import FieldInfo
 
 from mt.config.settings import RuleSettings
-from mt.config.values import UNATTRIBUTED, SettingsSection
+from mt.config.values import UNATTRIBUTED, SettingsSection, StrategyKey, Unattributed
 from mt.exchange import TRADING_ZONE, upcoming_session_bounds
 from mt.strategies.base import Strategy
 from mt.strategies.breakout import Breakout
@@ -55,7 +55,7 @@ class StrategyConfig(TypedDict):
 
 
 class StrategyLabel(TypedDict):
-    key: str
+    key: StrategyKey | Unattributed
     short: str
     label: str
 
@@ -63,7 +63,7 @@ class StrategyLabel(TypedDict):
 EntryWindow = TypedDict("EntryWindow", {"from": str, "to": str})
 
 
-def entry_windows(configuration: RuleSettings) -> dict[str, EntryWindow]:
+def entry_windows(configuration: RuleSettings) -> dict[StrategyKey, EntryWindow]:
     opens, closes = upcoming_session_bounds(datetime.now(TRADING_ZONE).date())
     return {
         cls.key: _window(*_described(cls, configuration).entry_window(opens, closes))

@@ -1,23 +1,24 @@
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from alpaca.trading.models import Order
 from pydantic import computed_field
 
+from mt.config.values import StrategyKey
 from mt.data.alpaca import AccountObservation, Position
 from mt.exchange import TRADING_ZONE
-from mt.state import State, StateEvent
+from mt.state import RunStatus, State, StateEvent
 
 
 class BotState(TypedDict):
-    status: str
+    status: RunStatus | Literal["unknown"]
     stale: bool
     running: bool
     reported: bool
     reportedAgoMinutes: float | None
-    strategies: list[str]
-    paused: list[str]
+    strategies: list[StrategyKey]
+    paused: list[StrategyKey]
     events: list[StateEvent]
 
 
