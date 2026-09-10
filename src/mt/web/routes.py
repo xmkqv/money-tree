@@ -24,7 +24,7 @@ from mt.position import Direction
 from mt.state import read_state
 from mt.strategies.breakout import Breakout
 from mt.strategies.daily import Daily
-from mt.strategies.registry import strategy_class
+from mt.strategies.registry import STRATEGIES_BY_KEY
 
 from .bars import bar_averages, bars_atr, chart_window, session_hour_bars
 from .cache import Cache
@@ -230,7 +230,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
             if instrument.asset_type != AssetType.STOCK:
                 return payload
             bounds = session_bounds(opened_at)
-            found_class = strategy_class(strategy_key) if is_strategy_key(strategy_key) else None
+            found_class = STRATEGIES_BY_KEY[strategy_key] if is_strategy_key(strategy_key) else None
             if found_class is not None and issubclass(found_class, Breakout) and bounds:
                 opens = bounds[0]
                 minutes = found_class.opening_minutes

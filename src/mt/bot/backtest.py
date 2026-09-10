@@ -6,7 +6,7 @@ from mt.config.shared import settings
 from mt.config.values import StrategyKey
 from mt.data.asset import Asset, AssetType
 from mt.strategies.breakout import Breakout
-from mt.strategies.registry import strategy_class
+from mt.strategies.registry import STRATEGIES_BY_KEY
 
 from .bars import bars_client
 from .broker import broker_credentials
@@ -34,7 +34,7 @@ def report(strategy_key: StrategyKey, assets: list[Asset], start: datetime, end:
     datasource = YahooDataBacktesting
     datasource_configuration: dict[str, str | bool] | None = None
     datasource_options: dict[str, object] = {}
-    if issubclass(strategy_class(strategy_key), Breakout):
+    if issubclass(STRATEGIES_BY_KEY[strategy_key], Breakout):
         datasource = AlpacaBacktesting
         datasource_configuration = broker_credentials(paper=True)
         datasource_options = {

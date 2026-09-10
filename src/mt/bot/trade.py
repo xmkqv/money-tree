@@ -3,7 +3,7 @@ import signal
 from mt.config.settings import RuleSettings
 from mt.config.shared import settings
 from mt.config.values import StrategyKey
-from mt.strategies.registry import strategy_class
+from mt.strategies.registry import STRATEGIES_BY_KEY
 
 from .bars import bars_client
 from .broker import alpaca_broker
@@ -15,7 +15,7 @@ def trade(strategies: list[StrategyKey]) -> None:
 
     from .portfolio import Portfolio
 
-    paused: list[StrategyKey] = [key for key in strategies if strategy_class(key).is_paused]
+    paused: list[StrategyKey] = [key for key in strategies if STRATEGIES_BY_KEY[key].is_paused]
     exporter = StateExporter(
         strategies,
         paused,

@@ -4,7 +4,7 @@ from uuid import uuid4
 from mt.config.shared import settings
 from mt.config.values import StrategyKey
 
-from .registry import STRATEGIES_BY_CODE, strategy_class
+from .registry import STRATEGIES_BY_CODE, STRATEGIES_BY_KEY
 
 
 type OrderKind = Literal["e", "s", "x"]
@@ -16,7 +16,7 @@ ORDER_KINDS: tuple[OrderKind, ...] = get_args(OrderKind.__value__)
 
 def order_tag(strategy_key: StrategyKey, stop_fraction: float) -> str:
     scaled = round(stop_fraction * settings.order_tag.stop_fraction_scale)
-    code = strategy_class(strategy_key).code
+    code = STRATEGIES_BY_KEY[strategy_key].code
     return "-".join((ORDER_TAG_PREFIX, code, str(scaled), uuid4().hex[:8]))
 
 

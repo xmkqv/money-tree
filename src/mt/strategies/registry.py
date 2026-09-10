@@ -17,7 +17,3 @@ if len(STRATEGIES_BY_CODE) != len(STRATEGIES):
 for _strategy in STRATEGIES:
     if len(_strategy.code) != 1:
         raise ValueError(f"{_strategy.__name__} order-tag code must be one character")
-
-
-def strategy_class(key: StrategyKey) -> type[Strategy]:
-    return STRATEGIES_BY_KEY[key]

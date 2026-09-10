@@ -91,15 +91,15 @@ class Strategy(ABC):
         family, _, variation = cls.key.partition("_")
         cls.family = family
         cls.variation = variation.upper() if variation.isalpha() else variation
-        section = getattr(settings, cls.key)
-        missing = sorted(set(section.model_dump()) - cls.bind(section))
+        section: SettingsSection = getattr(settings, cls.key)
+        missing = sorted(set(type(section).model_fields) - cls.bind(section))
         if missing:
             raise ValueError(f"{cls.__name__} must declare {cls.key} settings: {missing}")
 
     @classmethod
     def bind(cls, section: SettingsSection) -> set[str]:
         declared = {name for owner in cls.__mro__ for name in getattr(owner, "__annotations__", {})}
-        bound = declared & set(section.model_dump())
+        bound = declared & set(type(section).model_fields)
         for name in bound:
             setattr(cls, name, getattr(section, name))
         return bound

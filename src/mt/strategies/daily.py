@@ -110,7 +110,7 @@ class Daily(Strategy):
     def scan(self, session: Session) -> list[Candidate]:
         now = session.now
         candidates: list[Candidate] = []
-        for asset, frame in self._ranked(now):
+        for asset, frame in self._ranked():
             if not self.does_clear(frame) or not self.does_enter(frame):
                 continue
             if self.does_heed_earnings and is_earnings_blocked(asset, now.date()):
@@ -148,7 +148,7 @@ class Daily(Strategy):
         if last < position.stop or does_signal_exit(frame):
             self.portfolio.exit(position)
 
-    def _ranked(self, now: datetime) -> list[tuple[Asset, DataFrame]]:
+    def _ranked(self) -> list[tuple[Asset, DataFrame]]:
         rows = [
             (asset, frame)
             for asset in self.portfolio.assets()
