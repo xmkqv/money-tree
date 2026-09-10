@@ -36,7 +36,6 @@ vendor[broker] supplies account, positions, orders, fills, quotes and clock.
 broker metadata owns trading permissions.
 vendor[calendar] supplies common stocks and scheduled earnings.
 earnings event dates differ from announcement dates.
-historical announcement snapshots are unavailable.
 
 asset identity is immutable across providers and ownership.
 crypto identity includes base and quote.
@@ -56,7 +55,6 @@ earnings(asset, date)
     non-stock → False without consulting the calendar
 ```
 
-bot and web share bar retrieval.
 historical bot observations end at the engine clock.
 
 # bot
@@ -93,9 +91,7 @@ iteration
 ## strategies
 
 strategies own signals and position management.
-keys identify family and variation.
 frozen unique codes attribute orders.
-indicators use configured SMA, ATR, RSI and ADX periods.
 
 ### breakout
 
@@ -159,14 +155,13 @@ reports start with an empty account funded by backtest budget.
 asset defaults are independent of today's catalogue.
 results include statistics, trades and plots against the benchmark.
 empty or non-stock assets fail before artifact creation.
-breakout uses broker minute bars with warm-up.
-daily uses engine daily bars without minute-level fill fidelity.
+breakout reports include warm-up.
 
 # state
 
 state = status (starting | running | stopped | failed), selected and paused
 strategies, heartbeat, configuration, bounded events.
-unknown fields fail validation except temporary rollout compatibility.
+unknown fields fail validation.
 
 one bot writer replaces validated JSON at `mt:state` every export interval.
 state has no expiry.
@@ -180,7 +175,6 @@ web retains persisted state across restarts and stale heartbeats.
 
 ## access
 
-web serves HTML, JSON and static assets using FastAPI and vendored Lit.
 production login requires vendor[host] OAuth and an allowed email.
 development login creates a local session.
 
