@@ -381,10 +381,10 @@ class Portfolio(LumibotStrategy):
         cleared: dict[Asset, float] = {}
         for asset, frame in frames.items():
             completed = self._completed(frame, now)
-            if completed.empty or last_close(completed) < settings.screen.price_usd_min:
+            if completed.empty or last_close(completed) <= settings.screen.price_usd_min:
                 continue
             turnover = average_turnover_usd(completed, settings.screen.turnover_sessions)
-            if turnover >= settings.screen.turnover_usd_min:
+            if turnover > settings.screen.turnover_usd_min:
                 cleared[asset] = turnover
         return ranked(cleared, symbol=str, turnover=lambda asset: cleared[asset])
 

@@ -17,7 +17,7 @@ class DailyTfb(Daily):
     @classmethod
     def does_clear(cls, frame: DataFrame) -> bool:
         turnover = average_turnover_usd(frame, cls.turnover_sessions)
-        return turnover >= settings.screen.turnover_usd_min
+        return turnover > settings.screen.turnover_usd_min
 
     @classmethod
     def does_enter(cls, frame: DataFrame) -> bool:

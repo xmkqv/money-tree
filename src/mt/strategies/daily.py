@@ -72,6 +72,8 @@ class Daily(Strategy):
 
     def run(self, session: Session) -> None:
         now = session.now
+        if not session.opens <= now < session.closes:
+            return
         benchmark = self.portfolio.benchmark_frame()
         if benchmark is None:
             return
