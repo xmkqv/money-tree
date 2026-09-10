@@ -5,9 +5,9 @@ vendors:
   calendar: finnhub
   engine: lumibot
   host: railway
+  state: redis
 defer:
-  - persisted state
-  - restarts and recovery
+  - trading restarts and recovery
 ---
 
 - the bot trades the selected strategies on one broker account
@@ -34,24 +34,60 @@ series = observations ordered by time
     lookback = days or sessions of earlier data requested
     bars = vendor[broker] price and volume series
     account series = fills, closed orders, equity
-    SIP bar queries end at or before wall clock - bars.sip_delay_minutes
+    explicit stock SIP query end ≤ wall clock - bars.sip_delay_minutes
 
 earnings = vendor[calendar] scheduled releases, including upcoming dates
     event date differs from announcement date
     historical announcement snapshots are not supplied
+    earnings checks accept Asset
+    non-stock → False without consulting the calendar
 
-Asset = vendor[broker].Asset(asset_class, symbol, shortable, tradable, fractionable, …)
-assets = {asset.symbol: asset}
-    active US equities, tradable and fractionable
+Asset = immutable {
+    symbol, asset_type, expiration, strike, right,
+    multiplier, leverage, precision, underlying_asset
+}
+    crypto identity includes quote currency in precision
+    option identity includes expiration, strike, and right
+    provider symbols preserve the complete pair or contract
+
+permissions = {Asset: vendor[broker].Asset}
+    active, tradable, fractionable
+    broker metadata owns trading permissions
+```
+
+## historical bars
+
+```py:surface
+bars(assets, timeframe, start, end?, limit, pages_max?) → {Asset: [Bar]}
+    bot and web share one fetcher
+    group by asset_type; batch by bars.symbols_per_request
+    options also respect bars.options_per_request
+
+    stock → /v2/stocks/bars
+        daily timeframe → bars.daily_feed
+        otherwise → bars.intraday_feed
+        adjustment = all
+    crypto → /v1beta3/crypto/us/bars
+    option → /v1beta1/options/bars
+    crypto and options omit stock feed and adjustment
+
+    missing observations → []
+    unsupported asset_type → error before requesting
+    follow pagination; remaining pages beyond pages_max → error
+    bot converts observations to frames; web retains Bar records
 ```
 
 ## screening
 
 ```py:private
-symbols = vendor[calendar] stocks ∩ assets.keys()
+assets = {
+    asset ∈ permissions:
+    asset.asset_type = stock
+    and asset.symbol ∈ vendor[calendar] common stocks
+}
     price over screen.price_usd_min
     turnover over screen.turnover_usd_min
-    order by turnover desc
+    order by turnover desc, symbol asc
 ```
 
 # strategies
@@ -66,6 +102,11 @@ strategy = {
     positions_max
     equity_risk_fraction_max
 }
+
+Candidate = { asset: Asset, price, stop, direction }
+Position = { asset: Asset, strategy, direction, entry, stop, … }
+    portfolio ownership and frame maps use complete Asset keys
+    strings remain at provider and display boundaries
 
 SMA ATR RSI ADX: period = indicators.period unless given
 stop_distance = |entry - stop|
@@ -152,7 +193,7 @@ run(session)
 
     window = open → close
     cadence = portfolio.iteration_minutes
-    one entry per symbol per session
+    one entry per asset per session
 
     order = next open, else the next iteration enter allows
     stop = entry - stop_atr_multiple * ATR
@@ -179,11 +220,12 @@ manage(position, session)
 
 ```py:private
 enter(strategy, candidate, session)
+    candidate.asset.asset_type ≠ stock → skip
     strategy.is_paused → skip
     positions ≥ risk.positions_max → skip
     exposure ≥ equity → skip
-    symbol held → skip
-    short and (symbol ∉ assets or ¬assets[symbol].shortable) → skip
+    asset held → skip
+    short and (asset ∉ permissions or ¬permissions[asset].shortable) → skip
     quote through stop → skip
 
     quantity * stop_distance ≤ (strategy.equity_risk_fraction_max or risk.per_trade_max) * equity
@@ -213,9 +255,11 @@ cron:emergency_exit[portfolio.iteration_minutes]()
 ## backtest
 
 ```py:private
-report(strategy, symbols, start, end)
-    assets = simulated Asset per symbol using backtest.asset_defaults
-    asset ids are generated; metadata is not fetched from today's catalogue
+report(strategy, assets, start, end)
+    CLI symbols are parsed into Assets
+    empty assets or non-stock asset → error before creating artifacts
+    permissions = simulated broker metadata using backtest.asset_defaults
+    broker ids are generated; metadata is not fetched from today's catalogue
     positions = ∅
     equity = backtest.budget_usd
 
@@ -225,16 +269,10 @@ report(strategy, symbols, start, end)
     writes stats, trades, plots vs benchmark_symbol
 ```
 
-# web
-
-- the whole account reads on one screen without scrolling
-- the dashboard says when it does not know
-- every number leads to the trade or rule behind it
-
-## bot state
+# bot state
 
 ```sketch
-bot ──private signed snapshot per export.interval_seconds──→ web
+bot ──SET mt:state──→ redis ←──GET mt:state── web
 ```
 
 ```py:types
@@ -252,13 +290,41 @@ snapshot = {
 ```
 
 ```py:surface
-POST /internal/state
-    reject when:
-        stale signature
-        or body > web.state_body_bytes_max
-        or invalid snapshot
-        or sequence ≤ last within the same run_id
+redis.url: required RedisDsn, shared by bot and web
+state key = "mt:state"
+    latest snapshot JSON
+    no expiry
+    one bot writer; each SET replaces the previous value
+
+publish_state(client, snapshot)
+    client.SET(state key, snapshot JSON)
+
+async read_state(client)
+    raw = await client.GET(state key)
+    absent → None
+    otherwise → validated snapshot
+    connection or validation failure → error
 ```
+
+```py:private
+bot:
+    owns synchronous client in exporter thread
+    publishes events and heartbeat per export.interval_seconds
+    RedisError → warn and continue
+    shutdown waits at most export.close_timeout_seconds
+    final publication is best effort
+
+web:
+    owns asynchronous client in application lifespan
+    closes client on shutdown
+    reads persisted state after restart
+```
+
+# web
+
+- the whole account reads on one screen without scrolling
+- the dashboard says when it does not know
+- every number leads to the trade or rule behind it
 
 ## access
 
@@ -267,7 +333,6 @@ public:
     GET /healthz
     GET /login
     GET /auth/callback
-    POST /internal/state
 
 others need a session cookie
 unsafe session-authenticated methods: X-CSRF-Token
@@ -288,20 +353,28 @@ GET /api/session → csrf token, poll cadence
 GET / → dashboard
 
 GET /api/strategies
-    today's rules per strategy
+    snapshot.configuration when reported; otherwise configured rules
 
 GET /api/ledger
     current orders, fills, P&L
-    bot state, stale after web.heartbeat_timeout_seconds
+    bot state from Redis
+    stale = snapshot absent
+        or now - snapshot.heartbeat_at > web.heartbeat_timeout_seconds
+    retain reported state when stale
 
 GET /api/pulse
     realtime account, positions, open orders
 
 GET /api/bars
     historical bars by timeframe ∈ dashboard.chart_timeframes
+    query symbol → complete Asset
+    stock hourly bars → equity-session aggregation
+    crypto and option hourly bars → native hourly observations
+    response fields remain unchanged
 
 GET /api/levels
     marks and averages at an entry
+    non-stock → no equity strategy levels
 ```
 
 
@@ -315,10 +388,6 @@ GET /api/levels
 - renamed application fields and configuration keys replace previous names together
 
 ```py:types
-OrderTag = { strategy_key, kind, symbol, stop_fraction }
-    encoded broker tag format and strategy codes remain unchanged
-    encoded stop fraction = round(stop_fraction * order_tag.stop_fraction_scale)
-
 Trade = {
     symbol, side, strategy_key, quantity, entry, exit, pnl
     date, minute = exit components in exchange time
