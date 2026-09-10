@@ -290,7 +290,11 @@ async def build_ledger(
     equity_daily = _equity_series(daily_read.result())
     intraday_points, intraday_date = _intraday_series(intraday_read.result())
 
-    funding = next((row for row in equity_daily if row["equity"]), None)
+    funding_index = next(
+        (index for index, row in enumerate(equity_daily) if row["equity"]), len(equity_daily)
+    )
+    equity_daily = equity_daily[funding_index:]
+    funding = equity_daily[0] if equity_daily else None
     invested = funding["equity"] if funding is not None else account.equity
     funded = funding["date"] if funding is not None else ""
     equity = round(account.equity, 2)
