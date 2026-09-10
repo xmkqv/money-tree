@@ -70,7 +70,7 @@ class StateExporter:
             if self.stopping.is_set():
                 return
             now = datetime.now(UTC)
-            self._publish(
+            if not self._publish(
                 status,
                 StateEvent(
                     kind=f"run.{status}",
@@ -78,8 +78,8 @@ class StateExporter:
                     level="info" if status == "stopped" else "error",
                     message=message,
                 ),
-            )
-            self._state = _build_state(self._state, now, bot_settings.export.events_max)
+            ):
+                self._state = _build_state(self._state, now, bot_settings.export.events_max)
             self._enqueue()
             self.stopping.set()
         self.thread.join(timeout=bot_settings.export.close_timeout_seconds)

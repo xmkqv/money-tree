@@ -106,8 +106,6 @@ class TradingClientAlpaca:
     def __init__(self, client: httpx.AsyncClient, configuration: DashboardSection) -> None:
         self._client = client
         self._configuration = configuration
-        self._page_rows_max = configuration.page_rows_max
-        self._pages_max = configuration.pages_max
         self._history: History | None = None
         self._history_lock = asyncio.Lock()
         self._daily: tuple[date, list[EquityPoint]] | None = None
@@ -202,7 +200,7 @@ class TradingClientAlpaca:
             lambda order: str(order.id),
             "before_order_id",
             status="open",
-            limit=self._page_rows_max,
+            limit=self._configuration.page_rows_max,
         )
 
     async def clock(self) -> Clock:
@@ -215,7 +213,7 @@ class TradingClientAlpaca:
             lambda fill: fill.id,
             "page_token",
             activity_types="FILL",
-            page_size=self._page_rows_max,
+            page_size=self._configuration.page_rows_max,
             after=after,
         )
 
@@ -226,7 +224,7 @@ class TradingClientAlpaca:
             lambda order: order.submitted_at,
             "until",
             status="closed",
-            limit=self._page_rows_max,
+            limit=self._configuration.page_rows_max,
             after=after,
         )
         return list({order.id: order for order in orders}.values())
@@ -254,14 +252,14 @@ class TradingClientAlpaca:
     ) -> list[Row]:
         collected: list[Row] = []
         token: str | None = None
-        for _ in range(self._pages_max):
+        for _ in range(self._configuration.pages_max):
             page = adapter.validate_python(
                 await get_json(
                     self._client, path, {**params, "direction": "desc", token_name: token}
                 )
             )
             collected.extend(page)
-            if len(page) < self._page_rows_max:
+            if len(page) < self._configuration.page_rows_max:
                 break
             next_token = cursor(page[-1])
             if next_token == token:
