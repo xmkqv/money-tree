@@ -316,8 +316,6 @@
   body[data-view="strategies"] .app,
   body[data-view="chart"] .app { block-size: auto; min-block-size: 100%; }
 
-  /* one screen or a scrolling stack is a page mode, so the switch and the
-     column collapse share one viewport condition and cannot disagree */
   @media (height < 36em), (width < 64em) {
     body { overflow: auto; }
     .app { block-size: auto; min-block-size: 100%; }

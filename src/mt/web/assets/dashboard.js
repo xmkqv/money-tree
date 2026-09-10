@@ -107,7 +107,7 @@ function monthData(y, m) {
       entry.wins = hit.wins;
       running = hit.before + hit.pnl;
     }
-    entry.pct = entry.pnl === null ? null : (entry.pnl / entry.before) * 100;
+    entry.pct = entry.pnl === null || !entry.before ? null : (entry.pnl / entry.before) * 100;
     days.push(entry);
   }
 
@@ -118,7 +118,7 @@ function monthData(y, m) {
     trades: traded.reduce((s, d) => s + d.trades, 0),
     wins: traded.reduce((s, d) => s + d.wins, 0),
   };
-  result.pct = result.opening ? (result.pnl / result.opening) * 100 : 0;
+  result.pct = result.opening ? (result.pnl / result.opening) * 100 : null;
   monthCache.set(key, result);
   return result;
 }
@@ -181,7 +181,7 @@ function derive(ledger, readAt) {
 
     SESSIONS = ledger.days.map(d => ({
       ...d,
-      pct: d.before ? (d.pnl / d.before) * 100 : 0,
+      pct: d.before ? (d.pnl / d.before) * 100 : null,
       label: parseDate(d.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
       long: parseDate(d.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" }),
     }));
@@ -201,7 +201,7 @@ function derive(ledger, readAt) {
     BENCH = bench.length > 1
       ? { D: (at(bench.length - 1) / at(bench.length - 2) - 1) * 100, W: ledger.periods.W.benchmarkPct,
           M: ledger.periods.M.benchmarkPct, ALL: (at(bench.length - 1) / at(0) - 1) * 100 }
-      : { D: 0, W: ledger.periods.W.benchmarkPct, M: ledger.periods.M.benchmarkPct, ALL: 0 };
+      : { D: null, W: ledger.periods.W.benchmarkPct, M: ledger.periods.M.benchmarkPct, ALL: bench.length && at(0) ? 0 : null };
 
     const [ly, lm, lday] = dparts(LAST_SESSION.date);
     LATEST = { y: ly, m: lm - 1, day: lday };
@@ -587,9 +587,10 @@ const chart = {
 let geo = null, chartPointer = null;
 
 function presetWindow(range) {
-  if (range === "D") return { series: INTRADAY, i0: 0, i1: INTRADAY.length - 1 };
+  if (range === "D") return { series: INTRADAY, i0: 0, i1: Math.max(1, INTRADAY.length - 1) };
   const n = DAILY.length;
-  return { series: DAILY, i0: LEDGER.periods[range]?.equityIndex ?? 0, i1: n - 1 };
+  const i0 = LEDGER.periods[range]?.equityIndex ?? 0;
+  return { series: DAILY, i0, i1: Math.max(i0 + 1, n - 1) };
 }
 
 function setRange(range) {
@@ -659,7 +660,8 @@ function chartWindow() {
   const s = chart.series;
   if (!s || !s.length) return null;
   const [lo, hi] = indexBounds(chart.i0, chart.i1, s.length);
-  const baseline = s[lo].before;
+  const period = !chart.custom && LEDGER.periods[chart.preset];
+  const baseline = period?.base != null ? period.base - s.equityBase : s[lo].before;
   const visible = [];
   for (let i = lo; i <= hi; i++) visible.push({ i, p: s[i], y: s[i].value - baseline });
   return { s, lo, hi, baseline, visible, last: visible[visible.length - 1] };
@@ -938,8 +940,9 @@ function wirePanZoom(options) {
 function clampChartWindow() {
   const N = chart.series.length;
   if (!N) return;
-  const span = Math.min(Math.max(chart.i1 - chart.i0, 3), N - 1);
-  chart.i0 = clamp(chart.i0, 0, N - 1 - span);
+  const end = Math.max(1, N - 1);
+  const span = Math.min(Math.max(chart.i1 - chart.i0, 3), end);
+  chart.i0 = clamp(chart.i0, 0, end - span);
   chart.i1 = chart.i0 + span;
 }
 
@@ -984,7 +987,7 @@ function initChartInteraction() {
     view: chart,
     geometry: () => geo,
     spanMin: 3,
-    spanMax: () => chart.series.length - 1,
+    spanMax: () => Math.max(1, chart.series.length - 1),
     scaleMin: 1e-3,
     clampWindow: clampChartWindow,
     redraw: () => { markCustom(); queueChart(); },
@@ -1986,7 +1989,7 @@ function applyPulse(pulsed, readAt) {
   ACCOUNT.unrealized_pnl = pulsed.unrealized_pnl;
   ACCOUNT.buyingPower = pulsed.buyingPower;
   ACCOUNT.totalReturn = Math.round((ACCOUNT.portfolio - ACCOUNT.invested) * 100) / 100;
-  ACCOUNT.rateOfReturn = ACCOUNT.invested ? (ACCOUNT.totalReturn / ACCOUNT.invested) * 100 : 0;
+  ACCOUNT.rateOfReturn = ACCOUNT.invested ? (ACCOUNT.totalReturn / ACCOUNT.invested) * 100 : null;
   ACCOUNT.exposurePct = ACCOUNT.portfolio ? (ACCOUNT.deployed / ACCOUNT.portfolio) * 100 : 0;
 
   if (ACCOUNT.dayOpening) ACCOUNT.dayLowEquity = ratchetLow(SESSION_LOW.date, pulsed.equity);
@@ -2006,6 +2009,8 @@ function applyPulse(pulsed, readAt) {
 
 function paintPulse() {
   renderAccount();
+  renderStrategies(stratRange);
+  if (viewReady.strategies) paintConfig();
   if (currentView === "dashboard") {
     queueChart();
     if (todayTab === "open") renderToday();

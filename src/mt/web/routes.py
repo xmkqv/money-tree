@@ -106,7 +106,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
     chart_ttl = dashboard_section.chart_ttl_seconds
     chart_cache_max = dashboard_section.chart_cache_max
     bar_cache = Cache[tuple[datetime, dict[str, Any]]](chart_ttl, chart_cache_max)
-    levels_cache = Cache[Levels](chart_ttl, chart_cache_max)
+    levels_cache = Cache[tuple[datetime, Levels]](chart_ttl, chart_cache_max)
     caches = (ledger_cache, account_cache, bar_cache, levels_cache)
 
     def trading(request: Request) -> TradingClientAlpaca:
@@ -224,11 +224,11 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
         except ValueError:
             return error_response("The open date is invalid", 422)
 
-        async def build() -> Levels:
+        async def build() -> tuple[datetime, Levels]:
             direction: Direction = 1 if side == "long" else -1
             payload = Levels(strategy_key=strategy_key)
             if instrument.asset_type != AssetType.STOCK:
-                return payload
+                return datetime.now(UTC), payload
             bounds = session_bounds(opened_at)
             found_class = STRATEGIES_BY_KEY[strategy_key] if is_strategy_key(strategy_key) else None
             if found_class is not None and issubclass(found_class, Breakout) and bounds:
@@ -267,11 +267,11 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
                     distance = found_class.stop_atr_multiple * average_range
                     payload["stop"] = round(entry - direction * distance, 4)
                     payload["atr"] = round(average_range, 4)
-            return payload
+            return datetime.now(UTC), payload
 
         key = repr(("levels", instrument, strategy_key, side, entry, opened))
-        payload = await levels_cache.get_or_build(key, build)
-        return read_response(payload, dashboard_section.levels_max_age_seconds)
+        read_at, payload = await levels_cache.get_or_build(key, build)
+        return read_response(payload, dashboard_section.levels_max_age_seconds, read_at)
 
     @router.get("/api/strategies")
     async def strategies(request: Request) -> JSONResponse:
