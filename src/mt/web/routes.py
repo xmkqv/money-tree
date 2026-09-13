@@ -84,7 +84,6 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
     ledger_cache = Cache[tuple[datetime, Ledger]](dashboard_section.ledger_ttl_seconds)
     account_cache = Cache[AccountRead](dashboard_section.snapshot_ttl_seconds)
     match_history = lru_cache(maxsize=dashboard_section.history_cache_max)(match_trades)
-    benchmark_symbol = settings.benchmark_symbol
     chart_ttl = dashboard_section.chart_ttl_seconds
     chart_cache_max = dashboard_section.chart_cache_max
     bar_cache = Cache[tuple[datetime, dict[str, Any]]](chart_ttl, chart_cache_max)
@@ -124,48 +123,34 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
         request: Request,
         symbol: Annotated[Symbol, Query()],
         timeframe: Annotated[ChartTimeframe, Query()],
-        opened: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
-        closed: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
+        opened: Annotated[date, Query()],
+        closed: Annotated[date, Query()],
     ) -> JSONResponse:
         try:
             instrument = _query_asset(symbol)
         except ValueError:
             return error_response("The asset is invalid", 422)
-        try:
-            opened_at = date.fromisoformat(opened)
-            closed_at = date.fromisoformat(closed)
-        except ValueError:
-            return error_response("The dates are invalid", 422)
-        if closed_at < opened_at:
+        if closed < opened:
             return error_response("The close cannot precede the open", 422)
 
         spans = dashboard_section.chart_timeframes[timeframe]
-        start, display, end = chart_window(spans, opened_at, closed_at)
+        start, display, end = chart_window(spans, opened, closed)
 
         async def build() -> tuple[datetime, dict[str, Any]]:
             if timeframe == "1Hour" and instrument.asset_type == AssetType.STOCK:
-                half = (
-                    await bars_client(request).bars(
-                        [instrument],
-                        dashboard_section.session_source,
-                        start,
-                        end,
-                        limit=dashboard_section.session_source_bars_max,
-                        pages_max=dashboard_section.session_source_pages_max,
-                    )
-                )[instrument]
+                half = await bars_client(request).series(
+                    instrument,
+                    dashboard_section.session_source,
+                    start,
+                    end,
+                    limit=dashboard_section.session_source_bars_max,
+                    pages_max=dashboard_section.session_source_pages_max,
+                )
                 rows = session_hour_bars(half)
             else:
-                rows = (
-                    await bars_client(request).bars(
-                        [instrument],
-                        timeframe,
-                        start,
-                        end,
-                        limit=dashboard_section.bars_max,
-                        pages_max=1,
-                    )
-                )[instrument]
+                rows = await bars_client(request).series(
+                    instrument, timeframe, start, end, limit=dashboard_section.bars_max, pages_max=1
+                )
                 if timeframe == "5Min" and instrument.asset_type == AssetType.STOCK:
                     rows = session_bars(rows)
             read_at = datetime.now(UTC)
@@ -188,56 +173,48 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
         strategy_key: Annotated[StrategyKey | Unattributed, Query()],
         side: Annotated[Literal["long", "short"], Query()],
         entry: Annotated[float, Query(gt=0)],
-        opened: Annotated[str, Query(pattern=r"^\d{4}-\d{2}-\d{2}$")],
+        opened: Annotated[date, Query()],
     ) -> JSONResponse:
         try:
             instrument = _query_asset(symbol)
         except ValueError:
             return error_response("The asset is invalid", 422)
-        try:
-            opened_at = date.fromisoformat(opened)
-        except ValueError:
-            return error_response("The open date is invalid", 422)
 
         async def build() -> tuple[datetime, Levels]:
             direction: Direction = 1 if side == "long" else -1
             payload = Levels(strategy_key=strategy_key)
             if instrument.asset_type != AssetType.STOCK:
                 return datetime.now(UTC), payload
-            bounds = session_bounds(opened_at)
+            bounds = session_bounds(opened)
             found_class = STRATEGIES_BY_KEY[strategy_key] if is_strategy_key(strategy_key) else None
             if found_class is not None and issubclass(found_class, Breakout) and bounds:
                 opens = bounds[0]
                 minutes = found_class.opening_minutes
                 span = dashboard_section.levels_range_multiple * minutes
-                opening_bars = (
-                    await bars_client(request).bars(
-                        [instrument],
-                        dashboard_section.levels_source,
-                        opens,
-                        opens + timedelta(minutes=span),
-                        limit=dashboard_section.levels_source_bars_max,
-                        pages_max=1,
-                    )
-                )[instrument]
+                opening_bars = await bars_client(request).series(
+                    instrument,
+                    dashboard_section.levels_source,
+                    opens,
+                    opens + timedelta(minutes=span),
+                    limit=dashboard_section.levels_source_bars_max,
+                    pages_max=1,
+                )
                 found = opening_range(opening_bars, opens, minutes)
                 if found is not None:
                     add_breakout_levels(payload, found_class, direction, entry, *found)
             elif found_class is not None and issubclass(found_class, Daily):
-                historical_bars = (
-                    await bars_client(request).bars(
-                        [instrument],
-                        "1Day",
-                        datetime.combine(
-                            opened_at - timedelta(days=dashboard_section.levels_lookback_days),
-                            dtime(0, 0),
-                            TRADING_ZONE,
-                        ),
-                        datetime.combine(opened_at, dtime(0, 0), TRADING_ZONE),
-                        limit=dashboard_section.levels_lookback_days,
-                        pages_max=1,
-                    )
-                )[instrument]
+                historical_bars = await bars_client(request).series(
+                    instrument,
+                    "1Day",
+                    datetime.combine(
+                        opened - timedelta(days=dashboard_section.levels_lookback_days),
+                        dtime(0, 0),
+                        TRADING_ZONE,
+                    ),
+                    datetime.combine(opened, dtime(0, 0), TRADING_ZONE),
+                    limit=dashboard_section.levels_lookback_days,
+                    pages_max=1,
+                )
                 average_range = bars_atr(historical_bars)
                 if average_range is not None:
                     distance = found_class.stop_atr_multiple * average_range
@@ -269,7 +246,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
                 account,
                 trading(request),
                 bars_client(request),
-                benchmark_symbol,
+                settings.benchmark_symbol,
                 dashboard_section,
                 match_history,
             )

@@ -26,11 +26,11 @@ from .strategies import StrategyLabel, strategy_labels
 
 
 class FillRow(TypedDict):
-    d: str
-    m: int
-    p: float
+    date: str
+    minute: int
+    price: float
     quantity: float
-    s: str
+    side: str
 
 
 class Trade(TypedDict):
@@ -171,11 +171,11 @@ def match_trades(
         entering = (signed > 0) == (trade.direction > 0)
         trade.fills.append(
             FillRow(
-                d=when.date().isoformat(),
-                m=_clock_minute(when),
-                p=round(price, 4),
+                date=when.date().isoformat(),
+                minute=_clock_minute(when),
+                price=round(price, 4),
                 quantity=round(quantity, 4),
-                s="in" if entering else "out",
+                side="in" if entering else "out",
             )
         )
         if entering:
@@ -308,16 +308,13 @@ async def build_ledger(
     rows = _position_rows(snapshot["positions"], open_trades)
     benchmark_start = funded or today
 
-    asset = Asset.from_symbol(benchmark)
-    bars = (
-        await bars_client.bars(
-            [asset],
-            "1Day",
-            datetime.fromisoformat(benchmark_start),
-            limit=dashboard.bars_max,
-            pages_max=1,
-        )
-    )[asset]
+    bars = await bars_client.series(
+        Asset.from_symbol(benchmark),
+        "1Day",
+        datetime.fromisoformat(benchmark_start),
+        limit=dashboard.bars_max,
+        pages_max=1,
+    )
 
     benchmark_closes = [BenchmarkClose(date=bar.opened_at[:10], close=bar.close) for bar in bars]
     return {

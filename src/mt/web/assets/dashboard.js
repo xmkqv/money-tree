@@ -49,6 +49,34 @@ function meterBar(fill, extraClass = "", hue) {
 const clockLabel = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
 const dparts = d => d.split("-").map(Number);
 const parseDate = d => { const [y, m, day] = dparts(d); return new Date(y, m - 1, day); };
+const isoDay = (y, m, day) => y + "-" + String(m + 1).padStart(2, "0") + "-" + String(day).padStart(2, "0");
+const enGB = options => date => date.toLocaleDateString("en-GB", options);
+const shortDay = enGB({ day: "numeric", month: "short" });
+const longDay = enGB({ weekday: "short", day: "numeric", month: "short" });
+const longDate = enGB({ weekday: "short", day: "numeric", month: "short", year: "numeric" });
+const eastern = (locale, options) => new Intl.DateTimeFormat(locale, { timeZone: "America/New_York", ...options });
+const clockFormat = eastern("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+const dateFormat = eastern("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" });
+const monthFormat = eastern("en-GB", { month: "short", year: "numeric" });
+const weekdayFormat = eastern("en-GB", { weekday: "short" });
+const dayFormat = eastern("en-GB", { day: "numeric", month: "short" });
+const stampFormat = eastern("en-CA", {
+  year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false,
+});
+const partOf = parts => type => parts.find(p => p.type === type).value;
+const minutesOf = parts => { const at = partOf(parts); return Number(at("hour")) * 60 + Number(at("minute")); };
+const clockOf = iso => clockFormat.format(new Date(iso));
+const dateOf = iso => dateFormat.format(new Date(iso));
+const monthOf = iso => monthFormat.format(new Date(iso));
+const weekdayOf = iso => weekdayFormat.format(new Date(iso));
+const dayOf = iso => dayFormat.formatToParts(new Date(iso)).filter(p => p.type !== "literal").map(p => p.value).join(" ");
+const tradingMinutes = () => minutesOf(clockFormat.formatToParts(new Date()));
+const stampOf = (dateISO, minute) => Date.parse(dateISO + "T00:00:00Z") / 60000 + minute;
+function barStamp(iso) {
+  const parts = stampFormat.formatToParts(new Date(iso));
+  const get = partOf(parts);
+  return stampOf(`${get("year")}-${get("month")}-${get("day")}`, minutesOf(parts));
+}
 const weekStart = d => {
   const at = parseDate(d);
   at.setDate(at.getDate() - ((at.getDay() + 6) % 7));
@@ -99,8 +127,8 @@ function monthData(y, m) {
   if (monthCache.has(key)) return monthCache.get(key);
 
   const daysInMonth = new Date(y, m + 1, 0).getDate();
-  const start = y + "-" + String(m + 1).padStart(2, "0") + "-01";
-  const end = y + "-" + String(m + 1).padStart(2, "0") + "-" + daysInMonth;
+  const start = isoDay(y, m, 1);
+  const end = isoDay(y, m, daysInMonth);
   const opening = (LEDGER.equityDaily.findLast(row => row.date < start)
     ?? LEDGER.equityDaily.find(row => row.date >= start && row.date <= end))?.equity ?? null;
   const days = [];
@@ -108,7 +136,7 @@ function monthData(y, m) {
 
   for (let d = 1; d <= daysInMonth; d++) {
     const weekday = new Date(y, m, d).getDay();
-    const iso = y + "-" + String(m + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+    const iso = isoDay(y, m, d);
     const hit = LEDGER.days.find(x => x.date === iso);
     const entry = {
       day: d, weekday, weekend: weekday === 0 || weekday === 6,
@@ -196,8 +224,8 @@ function derive(ledger, readAt) {
     SESSIONS = ledger.days.map(d => ({
       ...d,
       pct: d.before ? (d.pnl / d.before) * 100 : null,
-      label: parseDate(d.date).toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
-      long: parseDate(d.date).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" }),
+      label: shortDay(parseDate(d.date)),
+      long: longDate(parseDate(d.date)),
     }));
 
     LAST_SESSION = SESSIONS[SESSIONS.length - 1] || { date: ledger.equityDaily.at(-1).date, pnl: 0, before: ledger.equity, pct: 0, trades: 0, wins: 0 };
@@ -239,8 +267,8 @@ function derive(ledger, readAt) {
       const series = rows.map((r, i) => {
         const date = parseDate(intraday ? ledger.intradayDate : r.date);
         return {
-          label: intraday ? r.t : date.toLocaleDateString("en-GB", { day: "numeric", month: "short" }),
-          long: date.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) + (intraday ? ", " + r.t : ""),
+          label: intraday ? r.t : shortDay(date),
+          long: longDay(date) + (intraday ? ", " + r.t : ""),
           value: Math.round((r.equity - ledger.invested) * 100) / 100,
           before: Math.round(((i ? rows[i - 1].equity : intraday ? r.equity : ledger.invested) - ledger.invested) * 100) / 100,
         };
@@ -288,7 +316,7 @@ function renderToday() {
   const trades = tradesFor(cell);
   const weekday = new Date(todaySel.y, todaySel.m, todaySel.day).getDay();
 
-  const iso = todaySel.y + "-" + String(todaySel.m + 1).padStart(2, "0") + "-" + String(todaySel.day).padStart(2, "0");
+  const iso = isoDay(todaySel.y, todaySel.m, todaySel.day);
   document.getElementById("today-heading").textContent =
     iso === LEDGER.today ? "Today" : isLatest() ? "Last session" : "Session";
   document.getElementById("today-date").textContent =
@@ -492,14 +520,6 @@ function botNote() {
   return Number.isFinite(since)
     ? "Bot last reported " + (since < 1 ? "under a minute" : Math.round(since) + " min") + " ago"
     : "Bot has stopped reporting";
-}
-
-function tradingMinutes() {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false,
-  }).formatToParts(new Date());
-  const at = type => Number(parts.find(p => p.type === type).value);
-  return at("hour") * 60 + at("minute");
 }
 
 function toMinutes(clock) {
@@ -1274,54 +1294,6 @@ function selectTradeState(timeframe) {
   paintRail();
 }
 
-function clockOf(iso) {
-  const at = new Date(iso);
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false,
-  }).format(at);
-}
-
-function dateOf(iso) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
-  }).format(new Date(iso));
-}
-
-function monthOf(iso) {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "America/New_York", month: "short", year: "numeric",
-  }).format(new Date(iso));
-}
-
-function weekdayOf(iso) {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "America/New_York", weekday: "short",
-  }).format(new Date(iso));
-}
-
-function dayOf(iso) {
-  const at = new Date(iso);
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "America/New_York", day: "numeric", month: "short",
-  }).formatToParts(at);
-  return parts.filter(p => p.type !== "literal").map(p => p.value).join(" ");
-}
-
-function stampOf(dateISO, minute) {
-  return Date.parse(dateISO + "T00:00:00Z") / 60000 + minute;
-}
-
-function barStamp(iso) {
-  const at = new Date(iso);
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  }).formatToParts(at);
-  const get = t => parts.find(p => p.type === t).value;
-  return stampOf(`${get("year")}-${get("month")}-${get("day")}`,
-    Number(get("hour")) * 60 + Number(get("minute")));
-}
-
 function positionTrade(position) {
   if (!position.entered_at) return null;
   return {
@@ -1358,19 +1330,23 @@ async function openTradeChart(trade, from) {
   await loadTradeBars();
 }
 
+async function readData(path, query) {
+  const response = await fetch(path + (query ? "?" + new URLSearchParams(query) : ""), { headers: { Accept: "application/json" } });
+  if (response.status === 401) location.replace("/login");
+  if (!response.ok) throw new Error("HTTP " + response.status);
+  return (await response.json()).data;
+}
+
 async function loadTradeLevels() {
   const state = TC_STATE;
   const t = TRADE;
   if (t.strategy_key === "unattributed") { TC_LEVELS = {}; paintRail(); return; }
-  const query = new URLSearchParams({
-    symbol: t.symbol, strategy_key: t.strategy_key, side: t.side, entry: String(t.entry), opened: dateOf(t.entered_at),
-  });
   try {
-    const response = await fetch("/api/levels?" + query, { headers: { Accept: "application/json" } });
-    if (!response.ok) throw new Error("HTTP " + response.status);
-    const payload = await response.json();
+    const data = await readData("/api/levels", {
+      symbol: t.symbol, strategy_key: t.strategy_key, side: t.side, entry: String(t.entry), opened: dateOf(t.entered_at),
+    });
     if (TC_STATE !== state) return;
-    TC_LEVELS = payload.data;
+    TC_LEVELS = data;
   } catch {
     if (TC_STATE !== state) return;
     TC_LEVELS = {};
@@ -1474,19 +1450,14 @@ async function loadTradeBars() {
   const state = TC_STATE;
   const t = TRADE;
   tcState("Loading " + document.querySelector("#tc-range [aria-pressed=true]").textContent.trim().toLowerCase() + " bars…");
-  const query = new URLSearchParams({
-    symbol: t.symbol, timeframe: TC_STATE.timeframe, opened: dateOf(t.entered_at), closed: t.date,
-  });
   try {
-    const response = await fetch("/api/bars?" + query, { headers: { Accept: "application/json" } });
+    const data = await readData("/api/bars", {
+      symbol: t.symbol, timeframe: TC_STATE.timeframe, opened: dateOf(t.entered_at), closed: t.date,
+    });
     if (TC_STATE !== state) return;
-    if (response.status === 401) { location.replace("/login"); return; }
-    if (!response.ok) throw new Error("HTTP " + response.status);
-    const payload = await response.json();
-    if (TC_STATE !== state) return;
-    TC_STATE.averages = payload.data.averages;
-    TC_STATE.bars = payload.data.bars.map(b => ({ ...b, x: barStamp(b.t) }));
-    const from = barStamp(payload.data.displayFrom);
+    TC_STATE.averages = data.averages;
+    TC_STATE.bars = data.bars.map(b => ({ ...b, x: barStamp(b.t) }));
+    const from = barStamp(data.displayFrom);
     TC_STATE.first = Math.max(0, TC_STATE.bars.findIndex(b => b.x >= from));
   } catch {
     if (TC_STATE !== state) return;
@@ -1749,9 +1720,9 @@ function drawTradeChart() {
     '<circle class="exit-mark fill-' + outcome + '" cx="' + x2.toFixed(2) + '" cy="' + y2.toFixed(2) + '" r="6"/>';
 
   const fillMarks = (t.fills || []).map(f => {
-    const i = nearest(stampOf(f.d, f.m));
-    const x = px(i), y = py(f.p);
-    return '<rect class="' + (f.s === "in" ? "fill-in" : "fill-out fill-" + outcome) +
+    const i = nearest(stampOf(f.date, f.minute));
+    const x = px(i), y = py(f.price);
+    return '<rect class="' + (f.side === "in" ? "fill-in" : "fill-out fill-" + outcome) +
       '" x="' + (x - 3.5).toFixed(2) + '" y="' + (y - 3.5).toFixed(2) +
       '" width="7" height="7" rx="1.5" transform="rotate(45 ' + x.toFixed(2) + " " + y.toFixed(2) + ')"/>';
   }).join("");
@@ -1960,9 +1931,7 @@ function paintConfig() {
 async function renderConfig() {
   if (CONFIG) { paintConfig(); return; }
   try {
-    const response = await fetch("/api/strategies", { credentials: "same-origin" });
-    if (!response.ok) throw new Error("HTTP " + response.status);
-    CONFIG = (await response.json()).data;
+    CONFIG = await readData("/api/strategies");
   } catch {
     document.getElementById("rules-cards").textContent =
       "The configuration could not be loaded. Reload the page to try again.";
@@ -2108,9 +2077,7 @@ async function refreshLedger() {
 
     const historyChanged = derive(payload.data, Date.parse(payload.read_at));
 
-    if (first || !keepSelection || !tradesByDate.has(
-      keepSelection.y + "-" + String(keepSelection.m + 1).padStart(2, "0") + "-" + String(keepSelection.day).padStart(2, "0")
-    )) {
+    if (first || !keepSelection || !tradesByDate.has(isoDay(keepSelection.y, keepSelection.m, keepSelection.day))) {
       todaySel = { ...LATEST };
       calY = LATEST.y;
       calM = LATEST.m;
@@ -2139,10 +2106,7 @@ document.querySelector(".tabs").addEventListener("click", ev => {
   if (btn && btn.dataset.view) switchView(btn.dataset.view);
 });
 
-document.getElementById("chart-range").addEventListener("click", ev => {
-  const btn = ev.target.closest("button");
-  if (btn) setRange(btn.dataset.range);
-});
+wireGroup("chart-range", "range", setRange);
 
 wireGroup("strat-range", "range", value => { stratRange = value; renderStrategies(value); });
 
