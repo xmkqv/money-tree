@@ -13,7 +13,7 @@ from mt.strategies.order_tag import ORDER_TAG_PREFIX
 from mt.strategies.registry import STRATEGIES
 
 
-KINDS = {"breakout": "Intraday breakout", "daily": "Daily trend"}
+FAMILIES = {"breakout": "Intraday breakout", "daily": "Daily trend"}
 ACRONYMS = {"atr": "ATR", "adx": "ADX", "rsi": "RSI", "sma": "SMA", "tfb": "TFB"}
 BOUNDS = {"max": "≤", "min": "≥"}
 UNITS = {
@@ -35,7 +35,7 @@ STATE_FIELDS = {"is_paused"}
 MARKET_CARD = "Market"
 
 
-class ConfigRow(TypedDict):
+class RuleRow(TypedDict):
     label: str
     bound: str
     value: str
@@ -46,10 +46,10 @@ class ConfigCard(TypedDict):
     key: str
     name: str
     namespace: str
-    rows: list[ConfigRow]
+    rows: list[RuleRow]
 
 
-class StrategyConfig(TypedDict):
+class StrategyRules(TypedDict):
     cards: list[ConfigCard]
     configured: bool
 
@@ -72,7 +72,7 @@ def entry_windows(rules: RuleSettings) -> dict[StrategyKey, EntryWindow]:
 
 def strategy_labels() -> list[StrategyLabel]:
     labels = [
-        StrategyLabel(key=cls.key, short=cls.name(), label=f"{cls.name()} · {KINDS[cls.family]}")
+        StrategyLabel(key=cls.key, short=cls.name(), label=f"{cls.name()} · {FAMILIES[cls.family]}")
         for cls in STRATEGIES
     ]
     labels.append(
@@ -83,7 +83,7 @@ def strategy_labels() -> list[StrategyLabel]:
     return labels
 
 
-def strategy_config(rules: RuleSettings, *, configured: bool) -> StrategyConfig:
+def strategy_rules(rules: RuleSettings, *, configured: bool) -> StrategyRules:
     scalars = [
         _row("", name, info, getattr(rules, name))
         for name, info in RuleSettings.model_fields.items()
@@ -95,7 +95,7 @@ def strategy_config(rules: RuleSettings, *, configured: bool) -> StrategyConfig:
         if _is_section(info)
     ]
     market = ConfigCard(key="", name=MARKET_CARD, namespace="", rows=scalars)
-    return StrategyConfig(cards=[market, *sections], configured=configured)
+    return StrategyRules(cards=[market, *sections], configured=configured)
 
 
 def _is_section(info: FieldInfo) -> bool:
@@ -120,12 +120,12 @@ def _card_name(key: str) -> str:
     named = {cls.key: cls.name() for cls in STRATEGIES}
     if key in named:
         return named[key]
-    if key in KINDS:
+    if key in FAMILIES:
         return f"{key.capitalize()} family"
     return key.capitalize()
 
 
-def _row(namespace: str, name: str, info: FieldInfo, value: object) -> ConfigRow:
+def _row(namespace: str, name: str, info: FieldInfo, value: object) -> RuleRow:
     words = name.split("_")
     if words[0] in {"is", "does"}:
         words = words[1:]
@@ -136,7 +136,7 @@ def _row(namespace: str, name: str, info: FieldInfo, value: object) -> ConfigRow
     words = [word for word in words if word not in UNITS]
     money = "usd" in words
     words = [word for word in words if word != "usd"]
-    return ConfigRow(
+    return RuleRow(
         label=" ".join(ACRONYMS.get(word, word) for word in words),
         bound="" if value is None else bound,
         value=_value(info, value, unit=unit, money=money),

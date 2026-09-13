@@ -65,7 +65,7 @@ class Daily(Strategy):
     def does_clear(cls, frame: DataFrame) -> bool:
         return True
 
-    def begin(self, day: date) -> None:
+    def begin(self, session_on: date) -> None:
         self._candidates = []
         self._scanned_at = None
 

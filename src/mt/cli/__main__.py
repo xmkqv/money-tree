@@ -70,8 +70,8 @@ def run_report(
     start: Annotated[datetime | None, typer.Option()] = None,
     end: Annotated[datetime | None, typer.Option()] = None,
 ) -> None:
-    from mt.config.bot import settings as bot_settings
-    from mt.config.shared import settings
+    from mt.rules.bot import settings as bot_settings
+    from mt.rules.shared import settings
 
     strategy = bot_settings.strategies[0] if strategy is None else strategy
     symbols = settings.benchmark_symbol if symbols is None else symbols
@@ -91,7 +91,7 @@ def run_trade(
     strategies: Annotated[str | None, typer.Option()] = None,
 ) -> None:
     from mt.bot.trade import trade
-    from mt.config.bot import settings as bot_settings
+    from mt.rules.bot import settings as bot_settings
 
     strategies = ",".join(bot_settings.strategies) if strategies is None else strategies
     trade(_parse_strategies(strategies))

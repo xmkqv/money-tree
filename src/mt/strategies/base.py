@@ -128,7 +128,7 @@ class Strategy(ABC):
     @abstractmethod
     def manage(self, holding: Holding, session: Session) -> None: ...
 
-    def begin(self, day: date) -> None:
+    def begin(self, session_on: date) -> None:
         return None
 
     def ladder(self, holding: Holding, quantity: float) -> Ladder | None:

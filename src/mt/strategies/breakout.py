@@ -129,7 +129,7 @@ class Breakout(Strategy):
             entry + direction * stop_distance * third,
         )
 
-    def begin(self, day: date) -> None:
+    def begin(self, session_on: date) -> None:
         self._scanned.clear()
 
     def ladder(self, holding: Holding, quantity: float) -> Ladder | None:

@@ -100,7 +100,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
     heartbeat_timeout = timedelta(seconds=configuration.web.heartbeat_timeout_seconds)
 
     ledger_cache = Cache[tuple[datetime, Ledger]](dashboard_section.ledger_ttl_seconds)
-    account_cache = Cache[AccountObservation](dashboard_section.snapshot_ttl_seconds)
+    account_cache = Cache[AccountRead](dashboard_section.snapshot_ttl_seconds)
     match_history = lru_cache(maxsize=dashboard_section.history_cache_max)(match_trades)
     benchmark_symbol = settings.benchmark_symbol
     chart_ttl = dashboard_section.chart_ttl_seconds
@@ -112,8 +112,8 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
     def trading(request: Request) -> TradingClientAlpaca:
         return request.state.trading
 
-    async def observation(request: Request) -> AccountObservation:
-        return await account_cache.get_or_build(LEDGER_KEY, trading(request).observation)
+    async def account_read(request: Request) -> AccountRead:
+        return await account_cache.get_or_build(LEDGER_KEY, trading(request).read)
 
     def bars_client(request: Request) -> BarsClientAlpaca:
         return request.state.bars
@@ -281,7 +281,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
         reported = state is not None
         rules = state.rules if state else settings
         return read_response(
-            strategy_config(rules, configured=reported),
+            strategy_rules(rules, configured=reported),
             dashboard_section.strategies_max_age_seconds,
         )
 
@@ -290,7 +290,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
         state = await read_state(request.state.state)
 
         async def build() -> tuple[datetime, Ledger]:
-            account = await observation(request)
+            account = await account_read(request)
             result = await build_ledger(
                 account,
                 trading(request),
@@ -318,7 +318,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
 
     @router.get("/api/snapshot")
     async def snapshot(request: Request) -> JSONResponse:
-        account = await observation(request)
+        account = await account_read(request)
         cached = build_snapshot(account)
         held = ledger_cache.fresh(LEDGER_KEY)
         if held is not None and {row.symbol for row in held[1]["positions"]} != {

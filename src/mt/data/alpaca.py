@@ -34,15 +34,15 @@ class Position(Payload):
     unrealized_pnl_fraction: float = Field(validation_alias="unrealized_plpc")
 
 
-class AccountObservation(Payload):
+class AccountRead(Payload):
     account: Account
     positions: list[Position]
     orders: list[Order]
-    observed_at: tuple[datetime, datetime, datetime]
+    taken_at: tuple[datetime, datetime, datetime]
 
     @property
     def read_at(self) -> datetime:
-        return min(self.observed_at)
+        return min(self.taken_at)
 
 
 class Clock(Payload):
@@ -111,7 +111,7 @@ class TradingClientAlpaca:
         self._daily: tuple[date, list[EquityPoint]] | None = None
         self._daily_lock = asyncio.Lock()
 
-    async def observation(self) -> AccountObservation:
+    async def read(self) -> AccountRead:
         async def observe[Value](read: Awaitable[Value]) -> tuple[Value, datetime]:
             return await read, datetime.now(UTC)
 
@@ -119,11 +119,11 @@ class TradingClientAlpaca:
             account = reads.create_task(observe(self.account()))
             positions = reads.create_task(observe(self.positions()))
             orders = reads.create_task(observe(self.open_orders()))
-        return AccountObservation(
+        return AccountRead(
             account=account.result()[0],
             positions=positions.result()[0],
             orders=orders.result()[0],
-            observed_at=(account.result()[1], positions.result()[1], orders.result()[1]),
+            taken_at=(account.result()[1], positions.result()[1], orders.result()[1]),
         )
 
     async def history(self) -> History:

@@ -42,14 +42,14 @@ class Snapshot(TypedDict):
     positions: Sequence[SnapshotPosition]
 
 
-def build_snapshot(observation: AccountObservation) -> Snapshot:
-    account = observation.account
-    positions = observation.positions
+def build_snapshot(read: AccountRead) -> Snapshot:
+    account = read.account
+    positions = read.positions
     equity = round(account.equity, 2)
     held = snapshot_positions(positions, equity)
     return Snapshot(
-        orders=observation.orders,
-        asOf=observation.read_at.astimezone(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
+        orders=read.orders,
+        asOf=read.read_at.astimezone(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
         equity=equity,
         cash=round(account.cash, 2),
         buyingPower=round(account.buying_power, 2),

@@ -7,7 +7,7 @@ from datetime import date, datetime, timedelta
 from typing import TypedDict
 
 from mt.data.alpaca import (
-    AccountObservation,
+    AccountRead,
     ClosedOrder,
     EquityPoint,
     Fill,
@@ -94,7 +94,7 @@ class BenchmarkClose(TypedDict):
 
 class Period(TypedDict):
     start: str
-    base: float | None
+    baseline: float | None
     benchmarkPct: float | None
     equityIndex: int
 
@@ -262,7 +262,7 @@ def _clock_minute(when: datetime) -> int:
 
 
 async def build_ledger(
-    observation: AccountObservation,
+    read: AccountRead,
     trading: TradingClientAlpaca,
     bars_client: BarsClientAlpaca,
     benchmark: Symbol,
@@ -280,8 +280,8 @@ async def build_ledger(
         )
         clock_read = reads.create_task(trading.clock())
 
-    account = observation.account
-    snapshot = build_snapshot(observation)
+    account = read.account
+    snapshot = build_snapshot(read)
     clock = clock_read.result()
 
     trades, open_trades = match_history(
@@ -290,13 +290,13 @@ async def build_ledger(
     equity_daily = _equity_series(daily_read.result())
     intraday_points, intraday_date = _intraday_series(intraday_read.result())
 
-    funding_index = next(
+    funded_index = next(
         (index for index, row in enumerate(equity_daily) if row["equity"]), len(equity_daily)
     )
-    equity_daily = equity_daily[funding_index:]
-    funding = equity_daily[0] if equity_daily else None
-    invested = funding["equity"] if funding is not None else account.equity
-    funded = funding["date"] if funding is not None else ""
+    equity_daily = equity_daily[funded_index:]
+    first_funded = equity_daily[0] if equity_daily else None
+    invested = first_funded["equity"] if first_funded is not None else account.equity
+    funded = first_funded["date"] if first_funded is not None else ""
     equity = round(account.equity, 2)
     closes = {row["date"]: row["equity"] for row in equity_daily}
 
@@ -348,21 +348,23 @@ async def build_ledger(
 def calendar_periods(
     today: date, equity: list[EquityDay], benchmark: list[BenchmarkClose]
 ) -> dict[str, Period]:
-    boundaries = {"W": today - timedelta(days=today.weekday()), "M": today.replace(day=1)}
+    opened_on = {"W": today - timedelta(days=today.weekday()), "M": today.replace(day=1)}
     equity_dates = [row["date"] for row in equity]
     benchmark_dates = [row["date"] for row in benchmark]
     periods: dict[str, Period] = {}
-    for key, boundary in boundaries.items():
-        start = boundary.isoformat()
+    for key, opened in opened_on.items():
+        start = opened.isoformat()
         index = max(0, bisect_left(equity_dates, start) - 1)
-        base = equity[index]["equity"] if equity else None
+        baseline = equity[index]["equity"] if equity else None
         bench_index = max(0, bisect_left(benchmark_dates, start) - 1)
-        bench_base = benchmark[bench_index]["close"] if benchmark else None
+        benchmark_baseline = benchmark[bench_index]["close"] if benchmark else None
         periods[key] = Period(
             start=start,
-            base=base,
+            baseline=baseline,
             equityIndex=index,
-            benchmarkPct=(benchmark[-1]["close"] / bench_base - 1) * 100 if bench_base else None,
+            benchmarkPct=(benchmark[-1]["close"] / benchmark_baseline - 1) * 100
+            if benchmark_baseline
+            else None,
         )
     return periods
 

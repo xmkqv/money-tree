@@ -256,7 +256,7 @@ class Portfolio(LumibotStrategy):
             f"Intraday bars come from the broker's {settings.bars.intraday_feed} feed",
         )
         for strategy in self._strategies.values():
-            strategy.begin(day)
+            strategy.begin(session_on=day)
 
     def _check_daily_loss(self, day: date) -> None:
         if self._locked_at != day:

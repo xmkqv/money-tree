@@ -86,12 +86,12 @@ function statsFor(trades, summary) {
   };
 }
 
-function periodFromTrades(key, base, trades) {
+function periodFromTrades(key, baseline, trades) {
   const rows = Object.fromEntries(STRATEGIES.map(st => [st.key, [0, 0]]));
   for (const [strategy_key, group] of Map.groupBy(trades, t => t.strategy_key)) {
     rows[strategy_key] = [group.length, Math.round(group.reduce((sum, t) => sum + t.pnl, 0) * 100) / 100];
   }
-  STRATEGY_PERIODS[key] = { base, rows };
+  STRATEGY_PERIODS[key] = { baseline, rows };
 }
 
 function monthData(y, m) {
@@ -205,7 +205,7 @@ function derive(ledger, readAt) {
     periodFromTrades("D", LAST_SESSION.before, tradesByDate.get(LAST_SESSION.date) || []);
     for (const key of ["W", "M"]) {
       const period = ledger.periods[key];
-      periodFromTrades(key, period.base, ledger.trades.filter(t => t.date >= period.start && t.date <= ledger.today));
+      periodFromTrades(key, period.baseline, ledger.trades.filter(t => t.date >= period.start && t.date <= ledger.today));
     }
     periodFromTrades("ALL", ledger.invested, ledger.trades);
 
@@ -434,7 +434,7 @@ function renderAccountValues(view) {
     ["Buying power", "pf-risk", money(ACCOUNT.buyingPower)], cap,
   ] : [
     ["Total return", "v-tr", html`${signedMoney(ACCOUNT.totalReturn)}<span class="u">${signedPct(ACCOUNT.rateOfReturn)}</span>`, "v " + tone(ACCOUNT.totalReturn)],
-    ["Last session", "v-d24", html`${signedMoney(LAST_SESSION.pnl)}<span class="u">${signedPct(LAST_SESSION.pnl / STRATEGY_PERIODS.D.base * 100)}</span>`, "v " + tone(LAST_SESSION.pnl)],
+    ["Last session", "v-d24", html`${signedMoney(LAST_SESSION.pnl)}<span class="u">${signedPct(LAST_SESSION.pnl / STRATEGY_PERIODS.D.baseline * 100)}</span>`, "v " + tone(LAST_SESSION.pnl)],
     ["Open positions", "v-open", OPEN_POSITIONS.length],
     ["Exposure", "v-exposure", ACCOUNT.exposurePct.toFixed(1) + "%"],
     ["Daily loss limit", "v-dll", limit(ACCOUNT.dayDrawdownPct, ACCOUNT.dailyLossLimitPct, 2), "lim", "m-dll",
@@ -456,7 +456,7 @@ function renderPeriodReturns() {
   render([['Session', 'D'], ['Week', 'W'], ['Month', 'M'], ['Inception', 'ALL']].map(([label, key]) => {
     const period = STRATEGY_PERIODS[key];
     const pnl = Object.values(period.rows).reduce((sum, row) => sum + row[1], 0);
-    const pct = period.base ? pnl / period.base * 100 : null;
+    const pct = period.baseline ? pnl / period.baseline * 100 : null;
     return html`<div class="period-cell"><span class="k">${label}</span>
       <span class=${"v " + tone(pct)}>${unit === "pct" ? signedPct(pct) : signedMoney(pnl)}</span>
       <span class="bench">${BENCH_SYMBOL} ${signedPct(BENCH[key])}</span></div>`;
@@ -541,7 +541,7 @@ function renderStrategies(period) {
       ${strategy.key === "unattributed" ? nothing : stateBadges(strategy.key)}
     </div></td><td class=${"r num" + (trades ? "" : " flat")}>${trades ? plainNum(trades) : "—"}</td>
     <td class="r pnl-cell"><span class=${"num " + tone(pnl)}>${trades ? signedMoney(pnl) : "—"}</span>
-      <span class="sub">${trades ? signedPct(selected.base ? pnl / selected.base * 100 : null) : ""}</span>
+      <span class="sub">${trades ? signedPct(selected.baseline ? pnl / selected.baseline * 100 : null) : ""}</span>
     </td></tr>`;
   }), document.getElementById("strat-body"));
 }
@@ -675,7 +675,7 @@ function chartWindow() {
   if (!s || !s.length) return null;
   const [lo, hi] = indexBounds(chart.i0, chart.i1, s.length);
   const period = !chart.custom && LEDGER.periods[chart.preset];
-  const baseline = period?.base != null ? period.base - s.equityBase : s[lo].before;
+  const baseline = period?.baseline != null ? period.baseline - s.equityBase : s[lo].before;
   const visible = [];
   for (let i = lo; i <= hi; i++) visible.push({ i, p: s[i], y: s[i].value - baseline });
   return { s, lo, hi, baseline, visible, last: visible[visible.length - 1] };
@@ -2017,7 +2017,7 @@ function applySnapshot(snapshot, readAt) {
 
   if (ACCOUNT.dayOpening) ACCOUNT.dayLowEquity = ratchetLow(SESSION_LOW.date, snapshot.equity);
   ACCOUNT.dayDrawdownPct = drawdownPct();
-  if (!SESSIONS.length) STRATEGY_PERIODS.D.base = LAST_SESSION.before = snapshot.equity;
+  if (!SESSIONS.length) STRATEGY_PERIODS.D.baseline = LAST_SESSION.before = snapshot.equity;
 
   const aligned = mergePositions(snapshot.positions);
   ACCOUNT.largestPositionPct = OPEN_POSITIONS.length
