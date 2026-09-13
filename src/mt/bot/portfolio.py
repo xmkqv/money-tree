@@ -435,11 +435,6 @@ class Portfolio(LumibotStrategy):
                 f"Short entry skipped for {asset}: security is not shortable",
             )
             return False
-        equity = self._equity()
-        gross = sum(
-            abs(float(engine_position.quantity) * float(self.get_last_price(engine_position.asset)))
-            for engine_position in positions.values()
-        ) + sum(pending.notional for pending in self._pending.values())
         if len(owned) >= settings.risk.positions_max:
             self.record(
                 strategy,
@@ -448,6 +443,11 @@ class Portfolio(LumibotStrategy):
                 f"{asset} entry skipped: portfolio holding capacity reached",
             )
             return False
+        equity = self._equity()
+        gross = sum(
+            abs(float(engine_position.quantity) * float(self.get_last_price(engine_position.asset)))
+            for engine_position in positions.values()
+        ) + sum(pending.notional for pending in self._pending.values())
         quantity = entry_quantity(equity, price, abs(price - stop), direction)
         notional = float(quantity) * price
         if quantity <= 0 or gross + notional > equity:
