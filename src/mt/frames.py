@@ -38,7 +38,7 @@ def regular_session(frame: DataFrame) -> DataFrame:
 
 
 def _time_index(frame: DataFrame) -> Any:
-    return cast(Any, cast(DatetimeIndex, frame.index))
+    return cast(Any, frame.index)
 
 
 def last_close(frame: DataFrame) -> float:

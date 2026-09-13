@@ -108,7 +108,6 @@
     --text-xl:  calc(clamp(1.092rem, 1.092rem + 0.245vi, 1.3125rem)  * var(--type-density));
     --text-2xl: calc(clamp(1.246rem, 1.246rem + 0.490vi, 1.6875rem)  * var(--type-density));
 
-    --width-normal: 100%;
     --width-narrow: 88%;
     --width-tight:  76%;
 
@@ -118,7 +117,7 @@
     --track-eyebrow: 0.1em;
 
     --duration-fast: 160ms;
-    --duration-quick: 120ms;
+    --duration-snap: 120ms;
     --ease-snap: cubic-bezier(0.2, 0, 0.3, 1);
 
     --font-ui: "Archivo", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
@@ -892,7 +891,7 @@
     padding: var(--space-sm) var(--space-md);
     min-inline-size: 8rem;
     box-shadow: var(--shadow-pop);
-    transition: opacity var(--duration-quick) var(--ease-snap);
+    transition: opacity var(--duration-snap) var(--ease-snap);
   }
 
   .tooltip.on { opacity: 1; }
