@@ -1,7 +1,5 @@
 # tests
 
-- cases are never regression tests
-
 ```text
 tests/
   world/
@@ -39,13 +37,16 @@ interface Case {
 
 ## setup
 
-- on batch start, run setup
-- on batch end, run teardown
-- tests do not run before setup is complete
+```any:private
+batch(cases)
+  setup()
+  try
+    cases.each(world.check)
+  finally
+    teardown()
+```
 
 ## world
-
-- state preparation is part of the case check
 
 ```any:surface
 check(case Case)
@@ -54,6 +55,7 @@ check(case Case)
     case.check(init())
   catch
     log fault
+    throw fault
 ```
 
 ```any:private
@@ -62,14 +64,13 @@ init() World
 
 ## exp
 
-- exps are behavioral intent over layers
-- exps import world, i.e. exps do not import fixtures or other exps
-- exps are distinct, i.e. exps are not duplicate or redundant
+- exps import world, never fixtures or other exps
+- exps are distinct
 - cases are distinct
-- a case claim is a testable assertion, e.g. a check on state
-- a case sketch follows skills.mk.sketch
+- a case claim is a testable assertion
+- a case sketch follows skills.mk.sketch()
 
 ```any:private
-cases ≔ …
+cases = …
 cases.each(world.check)
 ```

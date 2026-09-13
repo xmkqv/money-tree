@@ -28,18 +28,10 @@ def normalize [] { str trim | str lowercase }
 ### row pipeline
 
 ```nushell
-open library.db | get book | where shelved | sort-by added_at | select id title
+shelved library.db | sort-by added_at | select id title
 ```
 
 [working with tables](https://www.nushell.sh/book/working_with_tables.html)
-
-### native sqlite traversal
-
-```nushell
-open library.db | get loan | where state == "open"
-```
-
-[loading data](https://www.nushell.sh/book/loading_data.html#sqlite)
 
 ### bound query
 

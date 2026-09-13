@@ -58,30 +58,16 @@ class Clock(Protocol):
 ### exhaustive state
 
 ```py
-from dataclasses import dataclass
 from typing import assert_never
 
 
-@dataclass(frozen=True, slots=True)
-class StandardLoan:
-    pass
-
-
-@dataclass(frozen=True, slots=True)
-class ShortLoan:
-    pass
-
-
-type Loan = StandardLoan | ShortLoan
-
-
-def loan_days(loan: Loan) -> int:
-    match loan:
-        case StandardLoan():
+def loan_days(mode: LoanMode) -> int:
+    match mode:
+        case LoanMode.STANDARD:
             return 21
-        case ShortLoan():
+        case LoanMode.SHORT:
             return 7
-    assert_never(loan)
+    assert_never(mode)
 ```
 
 ## collections

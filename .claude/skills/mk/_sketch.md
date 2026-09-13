@@ -5,7 +5,7 @@
 - label.words ⊆ context.words
 - sketch.w ≤ 72
 - sketch.h ≤ 2 * sketch.w
-- whitespace ∈ tab, newline
+- whitespace ∈ { space, newline }
 - strokes are never broken or misaligned
 
 ## architecture
@@ -14,14 +14,13 @@
 - a relationship renders as one arrow from source to target
 
 ```sketch:form:architecture
-┌─────────┐   ┌─────────┐
-│ {layer} ├──→│ {layer} │
-└────┬────┘   └─────────┘
-     │
-     ↓
-┌─────────┐
-│ {layer} │
-└─────────┘
+┌───────┐   ┌───────┐
+│{layer}├──→│{layer}│
+└───┬───┘   └───────┘
+    ↓
+┌───────┐
+│{layer}│
+└───────┘
 ```
 
 ## protocol
@@ -33,11 +32,30 @@
 - count(actors) ≤ 3
 
 ```sketch:form:protocol
-{actor}       {actor}       {actor}
-   │             │             │
-   ├──{msg}─────→│             │
-   │             ├──{msg}─────→│
-   │             │←──{msg}─────┤
-   │←──{msg}─────┤             │
-   │             │             │
+{actor}         {actor}         {actor}
+│               │               │
+├──{msg}───────→│               │
+│               ├──{msg}───────→│
+│               │←──{msg}───────┤
+│←──{msg}───────┤               │
+│               │               │
+```
+
+## tree
+
+- refs are entity tkeys as inline markdown references, i.e. `[{tkey}]`, to entities outside an entities fov
+- a node is an entity
+- code tree → dir, files, and stubs
+  - a stub is a single spec line, e.g. the signature of a function
+- spec tree → layers and entities
+
+```md:form:tree
+{entity} {deps?}
+├── {entity} {deps?}
+│   ├ {entity} {deps?}
+│   └ {entity} {deps?}
+└── {entity} {deps?}
+    └── {entity} {deps?}
+        ├ {entity} {deps?}
+        …
 ```

@@ -3,35 +3,47 @@ name: guides
 description: only-if-asked
 ---
 
-guides(paths=infer())
-  load ./{path}.md for each path
+guides: spec,code
 
-[glyphs](./glyphs.md)
-[forms](./forms.md)
-[spec](./spec.md)
-[code](./code/index.md)
+router(keys=infer())
+  keys.each(skills.guides.{key})
 
-# rules
+- skill references use `skills.{dotpath}`, including sections, e.g. `skills.guides.names`
+- resolve Markdown prose line-length violations by rephrasing; keep checklist items on one line
 
-- rules are atomic, i.e. exactly one claim
-- rules are lowercase
-- rules are predicative
-- count(rules) ≤ 7
-- obvious conventions are considered soft rules
-- rules refer to architectural roles; a naming rule may cite the token it prescribes
+# names
 
-```md:form:rules
-- {rule}
-- …
-…
+- tkey (token-key) = an indivisible and composable reference, e.g. when formulating code tokens
+
+```sql:types
+banned_names = [ … familial names for graph and tree concepts ]
+
+re_tkey = "^[a-z]+$"
+re_name = "^[a-z][a-z0-9]+$"
+re_line = "^\S[\S ]+$"
+
+domain name = text check(re_name.test and name ∉ banned_names)
+domain line = text check(re_line.test and count(words) ≤ 20)
+domain tkey = text check(re_tkey.test)
+
+entity(
+    tkey pk tkey check(tkey is derived from name)
+    name nn uq name
+    idea nn uq line check(name ∉ idea)
+)
+
+tkeys() → set(entity.tkey)
 ```
 
-# refs
+# forms
 
-- uris: `[…](uri)`
-- footer: `[…][key]` where `[key]: …` is declared in a `{hashes} refs` section at the doc foot
+```sql:types
+enum lang { md, ts, py, … }
 
-# nits
-
-- graph and tree terms are "list", "first", "last", "sub{name}s", "co{name}s", "container", etc, not familial terms
-- {name}_of(…) is not a function name
+form(
+    name nn → entity.name
+    lang nn lang
+    glob nn text
+    pk(lang, name)
+)
+```

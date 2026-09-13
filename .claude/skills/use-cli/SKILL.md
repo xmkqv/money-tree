@@ -60,7 +60,7 @@ switch (cmd.action) {
 …
 ```
 
-cli(name, install?, completions?)
+use-cli(name, install?, completions?)
   log clispec`{infer(context or AskUserQuestion())}`
   bun init {name} && cd {name} && bun add @optique/core @optique/run
   implement the design

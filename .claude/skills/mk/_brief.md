@@ -11,5 +11,5 @@
 
 # sketches
 
-{skills.mk(sketch)}
+{skills.mk.sketch()}
 ```

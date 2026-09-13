@@ -1,133 +1,111 @@
 # spec
 
-[ex1](./spec.ex1.md)
-
-- vendor layers, e.g. domain services, are denoted vendor[{name}] e.g. `vendor[mesh].send(…)`
-- external layers, e.g. workspace packages, are denoted ${name} e.g. `$db.rpc(…)`
-
-```md:form:frame
-{frontmatter?}
-
-{root?}
-
-{layers?}
-```
-
-## economy
-
-- elementary relationships are expressed in ordinary domain language
-- pseudocode is reserved for behavior whose alternatives change an outcome
-- code identifiers are retained only where their exact spelling is contractual
-- each requirement appears once in its owning layer
-- data shapes include only fields needed to state a contract
-- formatting follows the information rather than a fixed content ratio
-- reduction revisions decrease both non-whitespace lines and characters
+- specs may imply valid conventions beyond those provided by this guide
+- specs elide trivial implementation details
+- specs elide inferrable logic
+- md:form:vendor`vendor[{name}]`
+- md:form:service`${name}`
 
 ## frontmatter
 
-- `name:` names the spec
-- `vendors:` maps each role alias to its vendor, e.g. `mesh: iroh`
+```sql:types
+frontmatter(
+    name pk → entity.name
+    refs array<ref>
+    vendors array<vendor>
+    elide array<line>
+    defer array<line>
+)
+```
 
 ## layers
 
-- layers are hierarchical, i.e. specificity(layer) > specificity(context(layer))
-- layers are balanced, i.e. specificity(layer) ≈ specificity(co-layers(layer))
-- layers are distinct, i.e. non-overlapping
-- count(rules) ≤ 7
+- exps are behavioral intent over layers
+- sub-layers refine their container
+- co-layers are balanced
+- co-layers are distinct
+- blocks are balanced
 
-```md:form:blocks
-{types?}
+```sql:types
+is_declarative(text)
+is_design_register(text)
+    → text ∌ code tokens composed from tkeys()
+is_pseudomath(text)
+is_pseudocode(text)
+    → is functional style and idiomatic to the language
+is_atomic(text)
 
-{surface?}
+domain rule = line check(is_declarative)
+domain exp = rule check(is_design_register)
+domain inv = rule check(is_pseudomath and is_atomic)
 
-{private?}
+layer(
+    name pk → entity.name
+    container → layer.name
+    rules array<exp | inv>
+    check(count(exps) ≤ 7 and count(invs) ≤ 7)
+)
+
+enum block_type { types, surface, private }
+
+block(
+    name pk → entity.name
+    type nn block_type
+    layer nn → layer.name
+    content nn text check(is_pseudocode)
+)
+
+context(layer) layer[]
+    → walk layer.container
 ```
 
-### root
+## glyphs
 
-- exps are broad declarative design register claims about consumer experience
-- exps are similarly weighted, i.e. similarly leveled in importance and complexity
-- count(exps) ≤ 7
+Glyphs follow language and local conventions; forms define patterns, and undeclared notation remains inferable.
 
-```md:form:root
-{exps}
-
-{blocks}
-
-{invs?}
-```
-
-## names
-
-- names converge over time, i.e. state is optimal iff each thing has 1 name
-- names are canonical (i.e. well-known) or conventional (i.e. in spec)
-- `nn` = not null
+- binding and comparison: `=` binds or compares; `≠ ≡ ≈ < ≤ > ≥`
+- sets and logic: `∈ ∉ ∋ ∌ ⊆ ⊇ ∪ ∩ ∖ ∅ ¬ ∃`
+- flow, references, and implication: `→`; `↛` does not imply
+- arithmetic and change: `+ - * / ± Δ`
+- forms: `{name}` slot; `{name?}` optional; `{a|b}` choice; `{name,sep=;}` expansion
+- elision: `…`
+- prose: `—` aside or style separator; `§` section; `·` separator
 
 ## pseudocode
-
-- pseudocode is lang idiomatic and functional style
-- specs may introduce simple conventions that are not described in pseudocode forms
 
 Examples:
 
 ```{lang}:form:types
 {type}
+…
 ```
 
-```{lang}:form:{surface|private}
+```{lang}:form:surface|private
 {state}
 …
 
 {signature}
     {logic}
-
-<!-- e.g. logic -->
-
-{signature}
-    set {name}[{predicate}] {field} = {value}
-    ${layer}.{name}({args})
-    vendor[{alias}].{name}({args})
-    … wait for {event}
-    …
 …
 ```
 
-### rules and logic
-
-- pseudocode logic prefers short simple semantic expressions over correct code syntax
-- rules refer to architectural roles, protocols, and occasionally code tokens
-- permitted code name tokens:
-  - essential and non-elementary objects, e.g. private functions
-  - self-explanatory code tokens, e.g. “{name}” is equivalent to the semantic {name}
-- forbidden code name tokens:
-  - elementary expressions, e.g. well-known primitives
-  - overly and unnecessarily prescriptive names, e.g. "{unconventional-name}.{module-assignment}"
-  - highly driftable names, i.e. that are likely to change over time
+- mutation: `set {name}[{predicate}] {field} = {value}`
+- service: `${name}.{method}({args})`
+- wait: `wait for {…}`
+- vendor: `vendor[{alias}].{method}({args})`, `vendor[{alias}].{property}`
 
 ### http
 
-- server api surfaces use http request blocks
-- request lines retain methods, paths and contractual query parameters
-- `#` lines are spec annotations outside the wire format
-- response annotations state result meaning and outcome-changing conditions
-- shared authentication and response conventions appear once before the block
-- headers and bodies appear only when needed to state the contract
-
 ```http:form:surface
-{METHOD} /{path}?{parameter}={value}
-# {response meaning}
-# {condition} → {outcome}
+{METHOD} /{path}?{parameter}={value} → {out}
+# {logic}
 
 {METHOD} /{path}
 {Header}: {value}
-
-{body}
-# {response meaning}
+…
 ```
 
 ### sql
-
-- selected field mutation is `set {name}[{predicate}] {field} = {value}`
 
 ```sql:form:types
 enum {enum} { … }
@@ -165,12 +143,12 @@ policy on {tables} [{alias}] to {roles}
 
 ### ts/tsx
 
-- selectors are , e.g. `{Name}`, `{Name} > {Name}`, etc
+- selector rules are named elements or structural relations between named elements, e.g. `{Name}` or `{Name} > {Name}`
 - styles are semantic config, e.g. `{attribute} = {value}`, `like {exemplar}`, etc
 
 ```ts:form:css
 {selector} — {style}
-...
+…
 ```
 
 ```ts:form:types
@@ -231,3 +209,8 @@ use{Name} = () → useContext({Name}Ctx) ?? panic("{message}")
         {case} → ...{props}
         …
 ```
+
+## refs
+
+- uris: `[…](uri)`
+- footer: `[…][key]` where `[key]: …` is declared in a `{hashes} refs` section at the doc foot

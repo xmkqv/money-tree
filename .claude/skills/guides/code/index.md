@@ -1,42 +1,33 @@
 # code
 
-- code is self-explanatory
-- code is human-readable
-- code prefers a functional style
-- code names align with spec naming conventions
-- code has no comments
-- code fails fast, i.e. if an error handling branch is not declared in spec then branch panics instead of inventing a handler
-- each code line reads like a sentence
+- code = ( src, tests )
+- code reads naturally and has no comments
+- code is written in a functional style
+- code fails fast through early checks
+- src ∌ functions used only by tests
 
-general:
-  [env](./env.md)
-  [tests](./tests.md)
-  [cheatsheets](../../use-cheatsheet/SKILL.md)
-[css](./css.md)
-[nu](./nu.md)
-[py](./py.md)
-[rs](./rs.md)
-[ts](./ts.md)
+guides: env,tests,css,nu,py,rs,ts
+
+router(keys=infer())
+  keys.each(skills.guides.code.{key})
 
 ## code volume
 
-- code volume change is the change in non-whitespace chars and non-whitespace lines
+- Δ code volume = (Δ count(non-whitespace chars), Δ count(non-whitespace lines))
 
 ## packages
 
-- use the widest and latest version ranges
-
-## invariants
-
-- code uses early checks to narrow possible states, e.g. if predicate → panic
+- widest and latest version ranges
 
 ## modules
 
 - generally, order module concerns: imports, types, constants, surface, private
-- generally, imports of a co-module or a lower-module are relative; every other import is absolute
-- code never contains functions that are exclusively used by tests
+- imports are relative when no upward traversal is needed; otherwise absolute
 
 ## names
+
+- code names are monotonic over asd-ste100 and spec
+- code identifiers compose entity tkeys with idiomatic casing and separators
 
 ### nouns
 
@@ -46,7 +37,7 @@ general:
   - primary keys are bare, foreign keys are qualified
 - value names expose their meaning
   - booleans are predicates
-  - instants and dates end with `_at`
+  - instants end with `_at`; dates end with `_on`
   - quantities end with a unit suffix, e.g. `*_ms`
   - bounded constants end with their bounds
 
@@ -56,7 +47,7 @@ general:
   - `get` retrieves by key
   - `find` searches
   - mutations and transitions use explicit verbs
-- related operations share one lexical stem
+- related operations preserve the same entity tkeys
   - fallible operations prefix `try`
   - lazy collections prefix `iter`
 - factories lead with their type
@@ -75,5 +66,4 @@ general:
 ## bugs
 
 - bugs are reported as failing tests
-- iff code is faithful to spec, no failing tests ≡ no bugs
-- a green suite whose code is not faithful to spec may as well be toilet paper
+- passing(tests) ↛ faithful(code, spec)

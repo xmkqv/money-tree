@@ -1,59 +1,55 @@
 # env
 
-- the environment is the sole declaration of variables
-- the env mode determines the environment projection, i.e. loaded variables
-- env mode ∈ { development, production }
-- in mise, env mode depends on mise env via --env flag
-- shared config is declared in mise.toml whereas mode-specific config is declared in config files
-
 ```invs
-config ← mise.toml + mise.{mode}.toml
-secrets ← .env.{mode}
+environment ⊇ declarations(variables)
+mode ∈ { development, production }
+loaded variables = environment[mode]
+mise.toml + mise.{mode}.toml → config
+.env.{mode} → secrets
 ```
 
 ```sh:command
-mise --env production run ...
+mise --env production run …
 ```
 
 ## tools
 
 ```toml:root:example
-min_version = ...
-monorepo_root = ...
+min_version = …
+monorepo_root = …
 
 [monorepo]
 config_roots = ["lib/db", "lib/e2e"]
 
 [tools]
-bun = ...
-"npm:wrangler" = ...
-...
+bun = …
+"npm:wrangler" = …
+…
 ```
 
 ## config
 
-- any variable is assigned exactly once
+- ∀ variable: count(assignments(variable)) ≤ 1
 - variables can be namespaced like {NAMESPACE}__{NAME}
 
 ```mise.toml/mise.{mode}.toml
 [env]
-{NAME} = ...
-...
+{NAME} = …
+…
 
-{NAME} = '' # empty value declares an unassigned variable, i.e. like a .env.example declaration
+{NAME} = '' # unassigned
 
-_.file = { path = ".env.{ENV_MODE}", redact = true } # env mode dependent secret loading
+_.file = { path = ".env.{ENV_MODE}", redact = true }
 ```
 
 ## tasks
 
 - a module declares its own tasks
 - task name ∈ { setup, build, serve, stop, check, test, deploy }
-- the root declares `test` as its sole validation task
 - local and continuous runners invoke the root test
 - omit descriptions
-- there is no separate 'mise-tasks' directory, runners are inlined to the task file always
-- runners delegate environment checks to consumers, i.e. runners do not check environment
+- runners are inlined in task declarations
+- runners delegate environment checks to consumers
 
 ```toml:root
 [tasks.test]
@@ -69,8 +65,8 @@ depends = ["//lib/db:build", ":build"]
 run = "bun run test"
 ```
 
-# refs
+## refs
 
-[file tasks]: https://mise.jdx.dev/tasks/file-tasks.html
-[secrets]: https://mise.jdx.dev/environments/secrets/
-[environments]: https://mise.jdx.dev/configuration/environments.html
+- [file tasks](https://mise.jdx.dev/tasks/file-tasks.html)
+- [secrets](https://mise.jdx.dev/environments/secrets/)
+- [environments](https://mise.jdx.dev/configuration/environments.html)

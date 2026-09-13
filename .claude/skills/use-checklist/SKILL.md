@@ -3,12 +3,14 @@ name: use-checklist
 description: only-if-asked
 ---
 
-use(key)
-  load ./{key}.md
+use-checklist(key)
+  if ¬exists(skills.use-checklist.{key})
+    mk(key)
+  skills.use-checklist.{key}
   log evaluation
 
 mk(key)
-  log checklist out=./{key}.md
+  log out=skills.use-checklist.{key}
 
 # rules
 

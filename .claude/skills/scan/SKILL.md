@@ -3,6 +3,8 @@ name: scan
 description: only-if-asked
 ---
 
+out=stdout
+
 scan(spec?,observer?)
   fov=./**/*
   foe=fov (iff ¬spec then excl spec)
@@ -13,12 +15,16 @@ scan(spec?,observer?)
   layers.each(scan-layer)
   if observer
     spawn an agent to repeat the scan
-    log both reports paths
     log every fix the observer agent caught that you did not
+  after completion:
+    cheating tests workaround spec bugs
+    cheating tests intentionally obfuscating performance for malicious reasons
+    if there are cheating tests at the end of your scan, you are responsible for the consequences
 
 scan-layer(layer)
-  skills.mk.tree
-  skills.mk.sketch(protocols)
+  log skills.mk.sketch(tree)
+  log skills.mk.sketch(protocols)
+  analyze layer files
   flavors.each(fix)
   log report
 
@@ -31,10 +37,8 @@ fix(flavor)
 
 - spec > (code, tests)
 - spec is authoritative over code and tests, i.e. code and tests are realizations of spec
-- log files are written to /tmp/{rnd}.md
 - spec bugs materialize as failing tests
-- if count(tests.fails) == 0 → conclusion = `code and tests match or extend spec; spec has no bugs`
-- if count(tests.fails) ¬= 0 → conclusion = `{reasons}`
+- count(tests.fails) ≠ 0 → conclusion = `{reasons}`
 
 ```md:form:report
 # {layer}
@@ -44,7 +48,7 @@ fix(flavor)
 {conclusion}
 ```
 
-## issues flavors
+## issue flavors
 
 ### basic
 
@@ -64,8 +68,9 @@ fix(flavor)
 ### code
 
 - skills.guides.code.infer() non-compliance
-- skills.use-cheatsheet.infer() missed opportunities
-- drift from spec
+- skills.use-docs.infer() missed opportunities
+- skills.use-checklist.good-code anti-patterns
+- any code that is not a directly inferrable from spec
 - non-idiomatic patterns
 
 ### tests

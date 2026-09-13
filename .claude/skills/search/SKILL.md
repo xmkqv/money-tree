@@ -1,16 +1,15 @@
 ---
 name: search
 description: only-if-asked
-argument-hint: "[deep?] [recent?] [libs?] [docs?]"
+argument-hint: "[query] [deep?] [recent?] [repos?]"
 ---
 
-search(deep?, recent?, libs?, docs?)
+search(query=infer(), deep?, recent?, repos?)
   if deep, spawn 3 agents and design explorative queries
+  use web search
   if recent, filter results from the last 6 months
-  if docs, use mintlify-index, then context7
-  else use web search
-  log search results
-  if libs, log libs table
+  log results
+  if repos, log repos as table
 
 ```md:form:search-result
 [{idx}] {claim}
@@ -20,9 +19,14 @@ search(deep?, recent?, libs?, docs?)
 {refs}
 ```
 
-```md:form:libs
-| link | last active | stars | developer experience | feature tags |
-|------|-------------|-------|----------------------|--------------|
+```sql:types
+repo(
+  link pk
+  last_active nn datetime
+  stars nn integer
+  dx nn integer
+  features nn array<text>
+)
 ```
 
 # rules
@@ -30,5 +34,5 @@ search(deep?, recent?, libs?, docs?)
 ## details
 
 - prose is declarative
-- prose lines are short (< 100 chars) bulleted items
 - for code, focuses on advanced exemplars
+- logs to stdout if not specified

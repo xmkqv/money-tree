@@ -51,7 +51,7 @@ verify-public-surface(fov)
 - stop before push, visibility changes, release, credential rotation, or account changes
 - missing license authority is a blocker
 - legal terms are neither invented nor changed
-- code cleanup beyond the approved report is out of scope, i.e. run skills.scan separately
+- code cleanup beyond the approved report is out of scope
 
 ## secrets
 
@@ -61,7 +61,7 @@ verify-public-surface(fov)
 ## surface
 
 - a dead file has no runtime, build, check, doc, legal, operational, or publication role
-- name normalization preserves one canonical name per concept across the full public surface
+- name normalization preserves each entity's canonical name and derived tkey across the full public surface
 - approved attribution and legal notices remain intact
 - a security policy names a private report channel
 - metadata is complete when the description, topics, and social preview describe the current project

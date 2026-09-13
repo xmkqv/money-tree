@@ -18,7 +18,8 @@ cooltool
 …
 ```
 
-command()
+use-command()
   log intent
-  skills.search(deep, recent) for modern tools, bash commands, and terminal patterns
+  query = modern tools, bash commands, and terminal patterns
+  skills.search(query, deep=true, recent=true)
   log 5 tight exemplars

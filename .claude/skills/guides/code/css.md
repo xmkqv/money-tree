@@ -1,16 +1,8 @@
 # css
 
-- guidance prefix and suffix patterns
-  - *-sm
-  - *-md
-  - *-lg
-  - *-{semantic}
-  - *-dim
-  - *-fast
-  - *-slow
-  - *-snap
-  - size-* -- aspect-ratio 1:1
-  - ...
+- preferred suffixes: `*-{sm|md|lg}`, `*-dim`, …
+- preferred duration suffixes: `*-{snap|fast|slow}`
+- `size-*` implies aspect-ratio 1:1
 
 ## form
 
@@ -363,8 +355,6 @@ details[open]::details-content { opacity: 1; }
 [match-element](https://www.bram.us/2026/06/19/view-transition-name-attr-or-match-element/)
 
 ### scroll driven
-
-- firefox ships it behind a flag
 
 ```css
 .reveal {

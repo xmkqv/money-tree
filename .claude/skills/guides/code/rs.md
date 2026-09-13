@@ -60,15 +60,15 @@ pub trait Clock {
 pub struct Loans(tokio::sync::mpsc::Sender<LoanMessage>);
 
 impl Loans {
-    pub async fn renew(&self, id: BookId) -> Result<(), LoansClosed> {
-        self.0.send(LoanMessage::Renew(id)).await.map_err(|_| LoansClosed)
+    pub async fn renew(&self, id: BookId) -> Result<(), SendLoanMessageError> {
+        self.0.send(LoanMessage::Renew(id)).await.map_err(|_| SendLoanMessageError)
     }
 }
 
 async fn serve_loans(mut inbox: tokio::sync::mpsc::Receiver<LoanMessage>) {
     let mut open = std::collections::HashSet::new();
-    while let Some(LoanMessage::Renew(id)) = inbox.recv().await {
-        open.insert(id);
+    while let Some(message) = inbox.recv().await {
+        handle(message, &mut open);
     }
 }
 ```
@@ -82,10 +82,10 @@ pub enum LoanMessage {
 }
 
 impl Loans {
-    pub async fn due(&self, id: BookId) -> Result<Option<Date>, LoansClosed> {
+    pub async fn due(&self, id: BookId) -> Result<Option<Date>, SendLoanMessageError> {
         let (reply, response) = tokio::sync::oneshot::channel();
-        self.0.send(LoanMessage::Due(id, reply)).await.map_err(|_| LoansClosed)?;
-        response.await.map_err(|_| LoansClosed)
+        self.0.send(LoanMessage::Due(id, reply)).await.map_err(|_| SendLoanMessageError)?;
+        response.await.map_err(|_| SendLoanMessageError)
     }
 }
 ```
@@ -109,14 +109,6 @@ impl Settings {
 ### lagged fanout
 
 ```rs
-pub struct Returns(tokio::sync::broadcast::Sender<ReturnEvent>);
-
-impl Returns {
-    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<ReturnEvent> {
-        self.0.subscribe()
-    }
-}
-
 async fn follow(mut events: tokio::sync::broadcast::Receiver<ReturnEvent>) {
     loop {
         match events.recv().await {

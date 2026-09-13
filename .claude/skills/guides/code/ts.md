@@ -1,21 +1,14 @@
 # ts
 
-## form
-
-- ts:form:code`*`
-- tsx:form:code`*`
-
 ## exports
 
-- a module has one primary export
+- count(module.primary_exports) = 1
 
 ### fns module
 
 - a `fns` module holds one operation as its default export
-- a fns module must be named clearly
-- a fns module name must be immediately understandable in isolation
-- a fns module does not have side-effects on program state (though it may, for example, generate decoupled files)
-- a fns module may import libs
+- a fns module name is understandable in isolation
+- fns modules have no side effects on program state; decoupled file generation is allowed
 
 Example: `getEnvKey.ts`
 
@@ -23,21 +16,10 @@ Example: `getEnvKey.ts`
 export default (key: string) => typia.assert<string>(process.env[key]);
 ```
 
-Example: `normalizeText.ts`
+Example: `panicIf.ts`
 
 ```ts
-export default (params?: ...) => {
-  ...
-  return ...
-};
-```
-
-Example: `panicIf.ts` (may be useful to declare as a function, e.g. for return casting)
-
-```ts
-function panicIf(condition: boolean, msg: string) {
-  if (condition) throw new Error(`**panic**\n${msg}`);
-}
+function panicIf(condition: boolean, message: string) { … }
 
 export default panicIf;
 ```
@@ -56,16 +38,7 @@ export default {
 
 ## imports
 
-- an import that leaves the module's subtree uses the package subpath alias
-- an import of a co-module or a module below it is relative
-- relative paths point down; `../` does not occur
-
 ```ts
 import shelf from "./shelf";
-
-type ShelfApi = typeof shelf;
-```
-
-```ts
 import getThing from "~/fns/getThing";
 ```
