@@ -5,10 +5,10 @@ from alpaca.common.enums import BaseURL
 from pandas import DataFrame, DatetimeIndex
 from pydantic import Field
 
-from mt.config.sections import BarsSection
-from mt.config.values import Timeframe
 from mt.exchange import TRADING_ZONE, trading_time
 from mt.frames import normalize_ohlcv
+from mt.rules.sections import BarsSection
+from mt.rules.values import Timeframe
 
 from .asset import Asset, AssetType
 from .http import Payload, get_json

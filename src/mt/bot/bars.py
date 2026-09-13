@@ -7,12 +7,12 @@ import httpx
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 from pandas import DataFrame
 
-from mt.config.shared import settings
-from mt.config.values import Timeframe
 from mt.data.alpaca import credential_headers
 from mt.data.asset import Asset
 from mt.data.bars import BarsClientAlpaca, bar_frame, bars_api_url
 from mt.data.http import http_timeout
+from mt.rules.shared import settings
+from mt.rules.values import Timeframe
 
 
 class Bars:

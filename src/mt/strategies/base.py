@@ -6,9 +6,9 @@ from typing import ClassVar, Protocol
 
 from pandas import DataFrame
 
-from mt.config.shared import settings
-from mt.config.values import STRATEGY_KEYS, SettingsSection, StrategyKey
 from mt.data.asset import Asset
+from mt.rules.shared import settings
+from mt.rules.values import STRATEGY_KEYS, SettingsSection, StrategyKey
 from mt.sizing import Direction
 from mt.state import EventLevel
 

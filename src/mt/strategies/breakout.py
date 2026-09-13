@@ -6,12 +6,12 @@ from typing import Any, ClassVar, cast
 
 from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
-from mt.config.shared import settings
-from mt.config.values import StrategyKey
 from mt.data.asset import Asset
 from mt.exchange import TRADING_ZONE
 from mt.frames import frame_between, frame_since, frame_until, regular_session
 from mt.indicators import latest_atr, latest_turnover_usd
+from mt.rules.shared import settings
+from mt.rules.values import StrategyKey
 from mt.sizing import Direction, next_stop, round_quantity
 
 from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, family_keys, ranked

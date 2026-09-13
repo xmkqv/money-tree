@@ -4,8 +4,8 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from redis import Redis
 from redis.asyncio import Redis as AsyncRedis
 
-from .config.settings import RuleSettings
-from .config.values import STRATEGY_KEYS, StrategyKey
+from .rules.settings import RuleSettings
+from .rules.values import STRATEGY_KEYS, StrategyKey
 
 
 type EventLevel = Literal["info", "warning", "error"]

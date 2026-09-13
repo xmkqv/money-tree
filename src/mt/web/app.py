@@ -13,8 +13,6 @@ from redis.asyncio import Redis as AsyncRedis
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from mt.config.settings import LoginSettings, WebSettings
-from mt.config.shared import settings
 from mt.data.alpaca import (
     TradingClientAlpaca,
     credential_headers,
@@ -23,6 +21,8 @@ from mt.data.alpaca import (
 from mt.data.bars import BarsClientAlpaca, bars_api_url
 from mt.data.http import RequestTransport, http_timeout
 from mt.data.railway import RailwayOAuthClient
+from mt.rules.settings import LoginSettings, WebSettings
+from mt.rules.shared import settings
 
 from .routes import NO_STORE, dashboard_router, error_response
 

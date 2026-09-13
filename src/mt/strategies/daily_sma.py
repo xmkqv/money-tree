@@ -3,8 +3,8 @@ from typing import ClassVar
 from pandas import DataFrame, Series
 from pandas_ta_classic.utils import cross as ta_cross
 
-from mt.config.shared import settings
 from mt.indicators import finite_row, finite_value
+from mt.rules.shared import settings
 
 from .daily import Daily
 

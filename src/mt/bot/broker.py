@@ -1,4 +1,4 @@
-from mt.config.shared import settings
+from mt.rules.shared import settings
 
 
 def broker_credentials(*, paper: bool) -> dict[str, str | bool]:

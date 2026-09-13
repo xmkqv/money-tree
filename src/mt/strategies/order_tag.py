@@ -1,8 +1,8 @@
 from typing import Literal, get_args
 from uuid import uuid4
 
-from mt.config.shared import settings
-from mt.config.values import StrategyKey
+from mt.rules.shared import settings
+from mt.rules.values import StrategyKey
 
 from .registry import STRATEGIES_BY_CODE, STRATEGIES_BY_KEY
 

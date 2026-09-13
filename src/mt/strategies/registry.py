@@ -1,4 +1,4 @@
-from mt.config.values import STRATEGY_KEYS, StrategyKey
+from mt.rules.values import STRATEGY_KEYS, StrategyKey
 
 from .base import Strategy
 from .breakout import Breakout5m, Breakout10m

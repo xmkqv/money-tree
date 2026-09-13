@@ -1,8 +1,8 @@
 from datetime import date, timedelta
 from functools import lru_cache
 
-from mt.config.shared import settings
 from mt.exchange import XNYS
+from mt.rules.shared import settings
 
 from .asset import Asset, AssetType
 from .finnhub import earnings_dates

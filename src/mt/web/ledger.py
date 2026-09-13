@@ -6,8 +6,6 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import TypedDict
 
-from mt.config.sections import DashboardSection
-from mt.config.values import UNATTRIBUTED, StrategyKey, Symbol, Unattributed
 from mt.data.alpaca import (
     AccountObservation,
     ClosedOrder,
@@ -18,6 +16,8 @@ from mt.data.alpaca import (
 from mt.data.asset import Asset
 from mt.data.bars import BarsClientAlpaca
 from mt.exchange import TRADING_ZONE, trading_time
+from mt.rules.sections import DashboardSection
+from mt.rules.values import UNATTRIBUTED, StrategyKey, Symbol, Unattributed
 from mt.sizing import Direction
 from mt.strategies.order_tag import find_order_strategy_key
 

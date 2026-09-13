@@ -5,9 +5,9 @@ from typing import Literal, TypedDict
 from alpaca.trading.models import Order
 from pydantic import computed_field
 
-from mt.config.values import StrategyKey
-from mt.data.alpaca import AccountObservation, Position
+from mt.data.alpaca import AccountRead, Position
 from mt.exchange import TRADING_ZONE
+from mt.rules.values import StrategyKey
 from mt.state import RunStatus, State, StateEvent
 
 

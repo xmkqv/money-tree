@@ -1,10 +1,10 @@
 from datetime import datetime
 from pathlib import Path
 
-from mt.config.bot import settings as bot_settings
-from mt.config.shared import settings
-from mt.config.values import StrategyKey
 from mt.data.asset import Asset, AssetType
+from mt.rules.bot import settings as bot_settings
+from mt.rules.shared import settings
+from mt.rules.values import StrategyKey
 from mt.strategies.breakout import Breakout
 from mt.strategies.registry import STRATEGIES_BY_KEY
 

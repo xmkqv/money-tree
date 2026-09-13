@@ -1,8 +1,8 @@
 import signal
 
-from mt.config.settings import RuleSettings
-from mt.config.shared import settings
-from mt.config.values import StrategyKey
+from mt.rules.settings import RuleSettings
+from mt.rules.shared import settings
+from mt.rules.values import StrategyKey
 from mt.strategies.registry import STRATEGIES_BY_KEY
 
 from .bars import bars_client

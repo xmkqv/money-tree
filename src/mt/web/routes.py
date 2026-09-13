@@ -13,13 +13,13 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from starlette.responses import FileResponse
 
-from mt.config.settings import WebSettings
-from mt.config.shared import settings
-from mt.config.values import ChartTimeframe, StrategyKey, Symbol, Unattributed, is_strategy_key
-from mt.data.alpaca import AccountObservation, TradingClientAlpaca
+from mt.data.alpaca import AccountRead, TradingClientAlpaca
 from mt.data.asset import Asset, AssetType
 from mt.data.bars import BarsClientAlpaca, check_supported_asset
 from mt.exchange import TRADING_ZONE, session_bounds
+from mt.rules.settings import WebSettings
+from mt.rules.shared import settings
+from mt.rules.values import ChartTimeframe, StrategyKey, Symbol, Unattributed, is_strategy_key
 from mt.sizing import Direction
 from mt.state import read_state
 from mt.strategies.breakout import Breakout
@@ -31,7 +31,7 @@ from .cache import Cache
 from .ledger import Ledger, build_ledger, match_trades
 from .levels import Levels, add_breakout_levels, opening_range
 from .snapshot import bot_state, build_snapshot
-from .strategies import entry_windows, strategy_config
+from .strategies import entry_windows, strategy_rules
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")

@@ -8,8 +8,8 @@ from alpaca.common.enums import BaseURL
 from alpaca.trading.models import Order
 from pydantic import Field, TypeAdapter
 
-from mt.config.sections import BrokerSection, DashboardSection
 from mt.exchange import TRADING_ZONE, upcoming_session_bounds
+from mt.rules.sections import BrokerSection, DashboardSection
 
 from .http import Payload, get_json
 

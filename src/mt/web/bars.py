@@ -6,12 +6,12 @@ from typing import Any, TypedDict, cast
 from pandas import DatetimeIndex, Series, Timedelta, Timestamp
 from pandas_ta_classic.overlap.sma import sma
 
-from mt.config.sections import ChartTimeframeSection
-from mt.config.shared import settings
 from mt.data.bars import Bar, bar_frame
 from mt.exchange import TRADING_ZONE, session_starts
 from mt.frames import regular_session
 from mt.indicators import latest_atr
+from mt.rules.sections import ChartTimeframeSection
+from mt.rules.shared import settings
 
 
 def session_bars(bars: list[Bar]) -> list[Bar]:

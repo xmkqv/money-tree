@@ -1,10 +1,10 @@
 from datetime import datetime, timedelta
 from typing import NotRequired, TypedDict
 
-from mt.config.shared import settings
-from mt.config.values import StrategyKey, Unattributed
 from mt.data.bars import Bar
 from mt.exchange import trading_time
+from mt.rules.shared import settings
+from mt.rules.values import StrategyKey, Unattributed
 from mt.sizing import Direction
 from mt.strategies.breakout import Breakout, range_level, range_stop
 

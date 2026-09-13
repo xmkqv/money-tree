@@ -6,8 +6,8 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 from pydantic import ValidationError
 
-from mt.config.services import SERVICE_SETTINGS, ServiceName, service_secrets
-from mt.config.values import STRATEGY_KEYS, StrategyKey, strategy_selection_adapter
+from mt.rules.services import SERVICE_SETTINGS, ServiceName, service_secrets
+from mt.rules.values import STRATEGY_KEYS, StrategyKey, strategy_selection_adapter
 
 
 if TYPE_CHECKING:

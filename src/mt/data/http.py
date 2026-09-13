@@ -13,7 +13,7 @@ from limits.aio.storage import MemoryStorage
 from limits.aio.strategies import MovingWindowRateLimiter
 from pydantic import BaseModel, ConfigDict
 
-from mt.config.sections import TimeoutSection
+from mt.rules.sections import TimeoutSection
 
 
 logger = logging.getLogger(__name__)

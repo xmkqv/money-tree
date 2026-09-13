@@ -5,11 +5,11 @@ from typing import Any, ClassVar, cast
 
 from pandas import DataFrame
 
-from mt.config.shared import settings
 from mt.data.asset import Asset
 from mt.exchange import TRADING_ZONE
 from mt.frames import frame_since, last_close
 from mt.indicators import finite_row, finite_value, latest_atr, latest_turnover_usd
+from mt.rules.shared import settings
 
 from .base import Candidate, Holding, Portfolio, Session, Strategy, ranked
 

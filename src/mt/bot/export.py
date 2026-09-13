@@ -8,10 +8,10 @@ from typing import Literal
 from redis import Redis
 from redis.exceptions import RedisError
 
-from mt.config.bot import settings as bot_settings
-from mt.config.settings import RuleSettings
-from mt.config.shared import settings
-from mt.config.values import StrategyKey
+from mt.rules.bot import settings as bot_settings
+from mt.rules.settings import RuleSettings
+from mt.rules.shared import settings
+from mt.rules.values import StrategyKey
 from mt.state import EventLevel, RunStatus, State, StateEvent, publish_state
 
 

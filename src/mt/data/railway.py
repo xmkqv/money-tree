@@ -6,7 +6,7 @@ from authlib.common.security import generate_token
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from pydantic import TypeAdapter
 
-from mt.config.sections import LoginSection
+from mt.rules.sections import LoginSection
 
 from .http import http_timeout
 

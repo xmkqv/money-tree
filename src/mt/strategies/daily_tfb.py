@@ -2,8 +2,8 @@ from typing import ClassVar
 
 from pandas import DataFrame
 
-from mt.config.shared import settings
 from mt.indicators import average_turnover_usd, finite_row, finite_value
+from mt.rules.shared import settings
 
 from .daily import Daily
 

@@ -8,8 +8,8 @@ from alpaca.trading.models import Order
 from alpaca.trading.models import Position as BrokerPosition
 from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest
 
-from mt.config.bot import settings as bot_settings
-from mt.config.shared import settings
+from mt.rules.bot import settings as bot_settings
+from mt.rules.shared import settings
 
 from .asset import Asset
 

@@ -6,9 +6,6 @@ from uuid import uuid4
 from lumibot.strategies import Strategy as LumibotStrategy
 from pandas import DataFrame, DatetimeIndex
 
-from mt.config.bot import settings as bot_settings
-from mt.config.shared import settings
-from mt.config.values import StrategyKey, is_strategy_key
 from mt.data.asset import Asset, AssetType
 from mt.data.broker import Broker, BrokerAlpaca, BrokerAsset, BrokerEngine
 from mt.data.earnings import is_earnings_blocked, is_earnings_exit_due
@@ -16,6 +13,9 @@ from mt.data.finnhub import stocks
 from mt.exchange import TRADING_ZONE, session_bounds
 from mt.frames import last_close, normalize_ohlcv
 from mt.indicators import average_turnover_usd, daily_indicators
+from mt.rules.bot import settings as bot_settings
+from mt.rules.shared import settings
+from mt.rules.values import StrategyKey, is_strategy_key
 from mt.sizing import entry_quantity, round_quantity, round_stop
 from mt.state import EventLevel
 from mt.strategies.base import Candidate, Holding, Session, Strategy, ranked
