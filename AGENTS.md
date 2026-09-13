@@ -1,1 +1,0 @@
-/Users/m/qxotk/repos/money-tree/CLAUDE.md
