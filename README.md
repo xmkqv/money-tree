@@ -1,13 +1,10 @@
 # money-tree
 
-Four US-equity trading strategies, written down first and then run: backtesting,
-multi-strategy portfolio composition, and Alpaca execution.
+Four US-equity trading strategies, written down first and then run:
+backtesting, multi-strategy portfolio composition, and Alpaca execution.
 
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python: 3.13+](https://img.shields.io/badge/python-3.13%2B-blue.svg)](pyproject.toml)
-
-> This is a personal project. It carries no performance record, no returns, and no
-> track record of any kind. Nothing here is financial advice. Trading loses money.
 
 [spec](spec.md)
 
