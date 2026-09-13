@@ -34,7 +34,7 @@ from .strategies import entry_windows, strategy_rules
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
-DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.html").read_bytes()
+DASHBOARD_HTML = Path(__file__).with_name("dashboard.html").read_bytes()
 NO_STORE = {"Cache-Control": "no-store"}
 DASHBOARD_HEADERS = {
     "Cache-Control": "private, no-cache",
