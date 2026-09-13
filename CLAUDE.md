@@ -1,7 +1,7 @@
 @mise.toml
 @./.claude/AGENTS.md
 do not write tests
-read when needed: /use-cheatsheets limits,pydantic,pydantic-settings,redis,reflex
+read when needed: /use-docs limits,pydantic,pydantic-settings,redis,reflex
 
 # voice
 
