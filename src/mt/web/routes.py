@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
@@ -11,7 +10,7 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
-from starlette.responses import FileResponse
+from starlette.staticfiles import StaticFiles
 
 from mt.data.alpaca import AccountRead, TradingClientAlpaca
 from mt.data.asset import Asset, AssetType
@@ -35,24 +34,8 @@ from .strategies import entry_windows, strategy_rules
 
 
 ASSET_DIRECTORY = Path(__file__).with_name("assets")
-ASSET_PATHS = sorted(
-    path for path in ASSET_DIRECTORY.iterdir() if path.is_file() and path.name != "dashboard.html"
-)
-ASSET_FINGERPRINTS = {
-    path: f"{path.stem}.{hashlib.sha256(path.read_bytes()).hexdigest()[:12]}{path.suffix}"
-    for path in ASSET_PATHS
-}
-ASSET_ROUTES = {served: path for path, served in ASSET_FINGERPRINTS.items()} | {
-    path.name: path for path in ASSET_PATHS
-}
-ASSET_REWRITES = {
-    f"/assets/{path.name}".encode(): f"/assets/{served}".encode()
-    for path, served in ASSET_FINGERPRINTS.items()
-    if path.suffix != ".woff2"
-}
 DASHBOARD_HTML = (ASSET_DIRECTORY / "dashboard.html").read_bytes()
 NO_STORE = {"Cache-Control": "no-store"}
-IMMUTABLE = {"Cache-Control": "public, max-age=31536000, immutable"}
 DASHBOARD_HEADERS = {
     "Cache-Control": "private, no-cache",
     "Content-Security-Policy": (
@@ -94,8 +77,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
     router = APIRouter(lifespan=lifespan)
     mode = settings.broker.mode.upper().encode()
     dashboard_html = DASHBOARD_HTML.replace(b"{{ BROKER_MODE }}", mode)
-    for plain, fingerprinted in ASSET_REWRITES.items():
-        dashboard_html = dashboard_html.replace(plain, fingerprinted)
+    router.mount("/assets", StaticFiles(directory=ASSET_DIRECTORY), name="assets")
     dashboard_section = configuration.dashboard
     heartbeat_timeout = timedelta(seconds=configuration.web.heartbeat_timeout_seconds)
 
@@ -121,15 +103,6 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
     @router.get("/")
     async def dashboard() -> Response:
         return Response(dashboard_html, media_type="text/html", headers=DASHBOARD_HEADERS)
-
-    @router.get("/assets/{filename}")
-    async def asset(filename: str) -> Response:
-        path = ASSET_ROUTES.get(filename)
-        if path is None:
-            return error_response("Asset was not found", 404)
-        return FileResponse(
-            path, headers=IMMUTABLE if filename in ASSET_FINGERPRINTS.values() else NO_STORE
-        )
 
     @router.get("/api/session")
     async def session(request: Request) -> JSONResponse:
