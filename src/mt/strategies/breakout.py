@@ -111,6 +111,10 @@ class Breakout(Strategy):
         return family_keys(cls.family)
 
     @classmethod
+    def cap_label(cls) -> str:
+        return cls.family.capitalize()
+
+    @classmethod
     def entry_window(cls, opens: datetime, closes: datetime) -> tuple[datetime, datetime]:
         return (
             opens + timedelta(minutes=cls.opening_minutes),
@@ -141,14 +145,7 @@ class Breakout(Strategy):
         opening_end, scan_end = self.entry_window(session.opens, session.closes)
         if now.minute % self.opening_minutes or not opening_end <= now <= scan_end:
             return
-        if self.is_capped():
-            self.portfolio.record(
-                self,
-                f"entries.capped.{now.date()}",
-                "info",
-                f"{self.family.capitalize()} entries paused: "
-                f"{self.holdings_max} holdings already open",
-            )
+        if self.is_capped(now):
             return
         assets = self._unscanned(now.date())
         if not assets:
@@ -176,7 +173,7 @@ class Breakout(Strategy):
                 continue
             if not self.is_confirmed(frame_until(frame, found.signal_at), now):
                 continue
-            price = self._price(found)
+            price = self.price(found.asset)
             if self.is_overextended(found, price):
                 self.portfolio.record(
                     self,
@@ -225,27 +222,23 @@ class Breakout(Strategy):
             return
         if ladder.stage == 0:
             return
-        holding.stop = next_stop(holding.direction, holding.stop, holding.entry)
+        holding.stop = next_stop(holding.direction, holding.stop, self._trailed_stop(holding, now))
         self.portfolio.protect(holding)
+
+    def _trailed_stop(self, holding: Holding, now: datetime) -> float:
         recent = self.portfolio.minute_frames(
             [holding.asset],
             now - timedelta(days=settings.breakout.trail_lookback_days),
             now,
             self.opening_minutes,
         ).get(holding.asset)
-        if recent is None:
-            return
-        frame = regular_session(recent)
-        if len(frame) < settings.breakout.trail_bars_min:
-            return
+        frame = None if recent is None else regular_session(recent)
+        if frame is None or len(frame) < settings.breakout.trail_bars_min:
+            return holding.entry
         trail = settings.breakout.trail_atr_multiple * latest_atr(frame, settings.indicators.period)
-        candidate = (
-            max(holding.entry, holding.highest - trail)
-            if holding.direction == 1
-            else min(holding.entry, holding.lowest + trail)
-        )
-        holding.stop = next_stop(holding.direction, holding.stop, candidate)
-        self.portfolio.protect(holding)
+        if holding.direction == 1:
+            return max(holding.entry, holding.highest - trail)
+        return min(holding.entry, holding.lowest + trail)
 
     def is_confirmed(self, frame: DataFrame, now: datetime) -> bool:
         if frame.empty:
@@ -273,12 +266,6 @@ class Breakout(Strategy):
     def _turnover(self, asset: Asset) -> float:
         frame = self.portfolio.daily_frame(asset)
         return 0.0 if frame is None else latest_turnover_usd(frame)
-
-    def _price(self, found: Signal) -> float:
-        price = self.portfolio.last_price(found.asset)
-        if not isfinite(price) or price <= 0:
-            raise ValueError(f"current price for {found.asset} must be finite and positive")
-        return price
 
     def _signals(
         self, frames: dict[Asset, DataFrame], session: Session, opening_end: datetime

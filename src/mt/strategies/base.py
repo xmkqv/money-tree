@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
+from math import isfinite
 from typing import ClassVar, Protocol
 
 from pandas import DataFrame
@@ -62,10 +63,6 @@ class Portfolio(Protocol):
 
     def last_price(self, asset: Asset) -> float: ...
 
-    def is_earnings_blocked(self, asset: Asset, day: date) -> bool: ...
-
-    def is_earnings_exit_due(self, asset: Asset, day: date) -> bool: ...
-
     def holding_count(self, keys: frozenset[StrategyKey]) -> int: ...
 
     def is_taken(self, strategy: "Strategy", asset: Asset, day: date) -> bool: ...
@@ -119,6 +116,10 @@ class Strategy(ABC):
         return frozenset({cls.key})
 
     @classmethod
+    def cap_label(cls) -> str:
+        return cls.name()
+
+    @classmethod
     @abstractmethod
     def entry_window(cls, opens: datetime, closes: datetime) -> tuple[datetime, datetime]: ...
 
@@ -134,8 +135,23 @@ class Strategy(ABC):
     def ladder(self, holding: Holding, quantity: float) -> Ladder | None:
         return None
 
-    def is_capped(self) -> bool:
-        return self.portfolio.holding_count(self.cap_keys()) >= self.holdings_max
+    def is_capped(self, now: datetime | None = None) -> bool:
+        if self.portfolio.holding_count(self.cap_keys()) < self.holdings_max:
+            return False
+        if now is not None:
+            self.portfolio.record(
+                self,
+                f"entries.capped.{now.date()}",
+                "info",
+                f"{self.cap_label()} entries paused: {self.holdings_max} holdings already open",
+            )
+        return True
+
+    def price(self, asset: Asset) -> float:
+        price = self.portfolio.last_price(asset)
+        if not isfinite(price) or price <= 0:
+            raise ValueError(f"current price for {asset} must be finite and positive")
+        return price
 
 
 def family_keys(family: str) -> frozenset[StrategyKey]:

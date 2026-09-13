@@ -21,7 +21,9 @@ def daily_indicators(frame: DataFrame, lengths: Collection[int], period: int) ->
         frame["high"], frame["low"], close, length=period, talib=False
     )
     directional = ta_adx(frame["high"], frame["low"], frame["close"], length=period, talib=False)
-    columns[f"ADX_{period}"] = indicator_column(directional, f"ADX_{period}", 1)
+    columns[f"ADX_{period}"] = (
+        directional[f"ADX_{period}"] if isinstance(directional, DataFrame) else nan
+    )
     prepared: dict[str, Any] = {
         name: value if isinstance(value, Series) else nan for name, value in columns.items()
     }
@@ -35,8 +37,7 @@ def latest_atr(frame: DataFrame, period: int) -> float:
         if name in frame.columns
         else ta_atr(frame["high"], frame["low"], frame["close"], length=period, talib=False)
     )
-    indicator = indicator_series(values, name, 1)
-    latest = None if indicator is None else finite_value(indicator)
+    latest = finite_value(values) if isinstance(values, Series) else None
     if latest is None:
         raise ValueError(f"ATR requires at least {period} price bars")
     return latest
@@ -70,19 +71,3 @@ def finite_value(values: "Series[Any]", offset: int = -1) -> float | None:
 
 def finite_row(values: Sequence[float | None]) -> list[float] | None:
     return None if any(value is None for value in values) else cast(list[float], list(values))
-
-
-def indicator_series(values: object, name: str, non_null_min: int) -> "Series[Any] | None":
-    if not isinstance(values, Series):
-        return None
-    series = cast("Series[Any]", values)
-    if series.name != name or series.count() < non_null_min:
-        return None
-    return series
-
-
-def indicator_column(values: object, name: str, non_null_min: int) -> "Series[Any] | None":
-    if not isinstance(values, DataFrame) or name not in values.columns:
-        return None
-    column = values[name]
-    return column if column.count() >= non_null_min else None
