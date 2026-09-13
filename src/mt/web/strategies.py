@@ -51,7 +51,7 @@ class ConfigCard(TypedDict):
 
 class StrategyRules(TypedDict):
     cards: list[ConfigCard]
-    configured: bool
+    reported: bool
 
 
 class StrategyLabel(TypedDict):
@@ -83,7 +83,7 @@ def strategy_labels() -> list[StrategyLabel]:
     return labels
 
 
-def strategy_rules(rules: RuleSettings, *, configured: bool) -> StrategyRules:
+def strategy_rules(rules: RuleSettings, *, reported: bool) -> StrategyRules:
     scalars = [
         _row("", name, info, getattr(rules, name))
         for name, info in RuleSettings.model_fields.items()
@@ -95,7 +95,7 @@ def strategy_rules(rules: RuleSettings, *, configured: bool) -> StrategyRules:
         if _is_section(info)
     ]
     market = ConfigCard(key="", name=MARKET_CARD, namespace="", rows=scalars)
-    return StrategyRules(cards=[market, *sections], configured=configured)
+    return StrategyRules(cards=[market, *sections], reported=reported)
 
 
 def _is_section(info: FieldInfo) -> bool:

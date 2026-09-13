@@ -401,53 +401,53 @@ function renderAccount() {
   const note = botNote();
   if (note) bar.dataset.bot = "stale";
   else delete bar.dataset.bot;
-  render(html`<span class="dot"></span><span class="word" id="st-word">${LEDGER.marketOpen ? "Market open" : "Market closed"}</span>
-    <span class="sep"></span><span id="st-session">${LEDGER.marketOpen ? "closes " + LEDGER.nextClose : "opens " + LEDGER.nextOpen}</span>
-    <span class="sep"></span><span id="st-strats">Account ${LEDGER.accountNumber} · ${OPEN_POSITIONS.length} positions</span>
+  render(html`<span class="dot"></span><span class="word">${LEDGER.marketOpen ? "Market open" : "Market closed"}</span>
+    <span class="sep"></span><span>${LEDGER.marketOpen ? "closes " + LEDGER.nextClose : "opens " + LEDGER.nextOpen}</span>
+    <span class="sep"></span><span>Account ${LEDGER.accountNumber} · ${OPEN_POSITIONS.length} positions</span>
     <span class="sep"></span><span class="asof" id="st-asof"></span>
-    <span class="sep"></span><span class="bot-note" id="st-bot">${note}</span>`, bar);
+    <span class="sep"></span><span class="bot-note">${note}</span>`, bar);
   markFeed();
   document.getElementById("chart-funded").textContent =
     "Funded " + money(ACCOUNT.invested) + " · " + LEDGER.funded;
   renderAccountValues("dashboard");
   render(html`<div class="winrate-top"><span class="k">Win rate</span>
-    <span class="v" id="v-winrate">${TOTALS.winRate.toFixed(1)}%</span></div>
-    <div class="winrate-bar" id="winrate-bar" role="img"
+    <span class="v">${TOTALS.winRate.toFixed(1)}%</span></div>
+    <div class="winrate-bar" role="img"
       aria-label=${"Win rate " + TOTALS.winRate.toFixed(1) + " percent: " + TOTALS.wins + " wins and " +
         TOTALS.losses + " losses across " + TOTALS.n + " closed trades"}>
-      <span class="w" id="bar-w" ${ref(element => { if (element) element.style.flex = TOTALS.wins; })}></span>
-      <span class="l" id="bar-l" ${ref(element => { if (element) element.style.flex = TOTALS.losses; })}></span></div>
-    <div class="winrate-legend"><span id="lg-w">${TOTALS.wins} wins</span><span id="lg-l">${TOTALS.losses} losses</span></div>`,
+      <span class="w" ${ref(element => { if (element) element.style.flex = TOTALS.wins; })}></span>
+      <span class="l" ${ref(element => { if (element) element.style.flex = TOTALS.losses; })}></span></div>
+    <div class="winrate-legend"><span>${TOTALS.wins} wins</span><span>${TOTALS.losses} losses</span></div>`,
     document.getElementById("performance"));
 }
 
 function renderAccountValues(view) {
   const portfolio = view === "portfolio";
   const limit = (value, maximum, digits) => html`<b>${value.toFixed(digits)}%</b> of ${maximum.toFixed(digits)}%`;
-  const cap = ["Position cap", portfolio ? "pf-cap" : "v-cap", limit(ACCOUNT.largestPositionPct, ACCOUNT.positionCapPct, 1), "lim",
-    portfolio ? "pf-cap-meter" : "m-cap", clamp(ACCOUNT.largestPositionPct / ACCOUNT.positionCapPct, 0, 1)];
+  const cap = ["Position cap", limit(ACCOUNT.largestPositionPct, ACCOUNT.positionCapPct, 1), "lim",
+    clamp(ACCOUNT.largestPositionPct / ACCOUNT.positionCapPct, 0, 1)];
   const stats = portfolio ? [
-    ["Unrealized", "pf-unrealized-pnl", signedMoney(ACCOUNT.unrealized_pnl), "v " + tone(ACCOUNT.unrealized_pnl)],
-    ["Positions", "pf-count", OPEN_POSITIONS.length],
-    ["Exposure", "pf-exposure", ACCOUNT.exposurePct.toFixed(1) + "%"],
-    ["Largest", "pf-largest", ACCOUNT.largestPositionPct.toFixed(1) + "%"],
-    ["Buying power", "pf-risk", money(ACCOUNT.buyingPower)], cap,
+    ["Unrealized", signedMoney(ACCOUNT.unrealized_pnl), "v " + tone(ACCOUNT.unrealized_pnl)],
+    ["Positions", OPEN_POSITIONS.length],
+    ["Exposure", ACCOUNT.exposurePct.toFixed(1) + "%"],
+    ["Largest", ACCOUNT.largestPositionPct.toFixed(1) + "%"],
+    ["Buying power", money(ACCOUNT.buyingPower)], cap,
   ] : [
-    ["Total return", "v-tr", html`${signedMoney(ACCOUNT.totalReturn)}<span class="u">${signedPct(ACCOUNT.rateOfReturn)}</span>`, "v " + tone(ACCOUNT.totalReturn)],
-    ["Last session", "v-d24", html`${signedMoney(LAST_SESSION.pnl)}<span class="u">${signedPct(LAST_SESSION.pnl / STRATEGY_PERIODS.D.baseline * 100)}</span>`, "v " + tone(LAST_SESSION.pnl)],
-    ["Open positions", "v-open", OPEN_POSITIONS.length],
-    ["Exposure", "v-exposure", ACCOUNT.exposurePct.toFixed(1) + "%"],
-    ["Daily loss limit", "v-dll", limit(ACCOUNT.dayDrawdownPct, ACCOUNT.dailyLossLimitPct, 2), "lim", "m-dll",
-      Math.max(clamp(ACCOUNT.dayDrawdownPct / ACCOUNT.dailyLossLimitPct, 0, 1), .015)], cap,
+    ["Total return", html`${signedMoney(ACCOUNT.totalReturn)}<span class="u">${signedPct(ACCOUNT.rateOfReturn)}</span>`, "v " + tone(ACCOUNT.totalReturn)],
+    ["Last session", html`${signedMoney(LAST_SESSION.pnl)}<span class="u">${signedPct(LAST_SESSION.pnl / STRATEGY_PERIODS.D.baseline * 100)}</span>`, "v " + tone(LAST_SESSION.pnl)],
+    ["Open positions", OPEN_POSITIONS.length],
+    ["Exposure", ACCOUNT.exposurePct.toFixed(1) + "%"],
+    ["Daily loss limit", limit(ACCOUNT.dayDrawdownPct, ACCOUNT.dailyLossLimitPct, 2), "lim",
+      Math.max(clamp(ACCOUNT.dayDrawdownPct / ACCOUNT.dailyLossLimitPct, 0, 1), .015), true], cap,
   ];
   render(html`<div class="value-row"><span class="label">${portfolio ? "Market value" : "Portfolio"}</span>
-    <span class="figure" id=${portfolio ? "pf-value" : "v-portfolio"}>${money(portfolio ? ACCOUNT.deployed : ACCOUNT.portfolio)}</span></div>
+    <span class="figure">${money(portfolio ? ACCOUNT.deployed : ACCOUNT.portfolio)}</span></div>
     <div class="value-row secondary"><span class="label">Cash</span>
-      <span class="figure" id=${portfolio ? "pf-cash" : "v-cash"}>${money(ACCOUNT.cash)}</span></div>
-    <div class="stat-grid">${stats.map(([label, id, value, cls, meter, fill]) => html`
-      <div class="stat"><span class="k">${label}</span><span class=${cls || "v"} id=${id}>${value}</span>
-        ${meter ? html`<div class=${"meter" + (meter === "m-dll" ? " loss" : "")}>
-          <i id=${meter} ${ref(element => { if (element) element.style.setProperty("--meter-fill", fill); })}></i></div>` : nothing}</div>`)}</div>`,
+      <span class="figure">${money(ACCOUNT.cash)}</span></div>
+    <div class="stat-grid">${stats.map(([label, value, cls, fill, isLoss]) => html`
+      <div class="stat"><span class="k">${label}</span><span class=${cls || "v"}>${value}</span>
+        ${fill === undefined ? nothing : html`<div class=${"meter" + (isLoss ? " loss" : "")}>
+          <i ${ref(element => { if (element) element.style.setProperty("--meter-fill", fill); })}></i></div>`}</div>`)}</div>`,
     document.querySelector("#view-" + view + " .rail .panel-body"));
 }
 
@@ -1488,7 +1488,7 @@ async function loadTradeBars() {
     TC_STATE.bars = payload.data.bars.map(b => ({ ...b, x: barStamp(b.t) }));
     const from = barStamp(payload.data.displayFrom);
     TC_STATE.first = Math.max(0, TC_STATE.bars.findIndex(b => b.x >= from));
-  } catch (error) {
+  } catch {
     if (TC_STATE !== state) return;
     TC_STATE.bars = null;
     tcState("Historical bars could not be read. Try again in a moment.");
@@ -1950,7 +1950,7 @@ function configCard(card) {
 
 function paintConfig() {
   if (!CONFIG) return;
-  document.getElementById("rules-config").textContent = CONFIG.configured
+  document.getElementById("rules-config").textContent = CONFIG.reported
     ? "Reported by the bot"
     : "From the mode environment";
   render(repeat(CONFIG.cards, card => card.name, configCard),
@@ -1963,7 +1963,7 @@ async function renderConfig() {
     const response = await fetch("/api/strategies", { credentials: "same-origin" });
     if (!response.ok) throw new Error("HTTP " + response.status);
     CONFIG = (await response.json()).data;
-  } catch (error) {
+  } catch {
     document.getElementById("rules-cards").textContent =
       "The configuration could not be loaded. Reload the page to try again.";
     return;
@@ -2073,7 +2073,7 @@ async function readSnapshot() {
     paintSnapshot();
     markFeed();
     if (!aligned) void refresh();
-  } catch (error) {
+  } catch {
     markFeed("error");
   } finally {
     snapshotting = false;
@@ -2128,7 +2128,7 @@ async function refreshLedger() {
 
     booted = true;
     markFeed();
-  } catch (error) {
+  } catch {
     markFeed("error");
   }
 }

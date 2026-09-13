@@ -204,7 +204,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
                 "bars": rows,
             }
 
-        key = repr((instrument, timeframe, start, display, end, settings.bars, dashboard_section))
+        key = repr((instrument, timeframe, start, display, end))
         read_at, payload = await bar_cache.get_or_build(key, build)
         return read_response(payload, dashboard_section.chart_max_age_seconds, read_at)
 
@@ -258,6 +258,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
                         datetime.combine(
                             opened_at - timedelta(days=dashboard_section.levels_lookback_days),
                             dtime(0, 0),
+                            TRADING_ZONE,
                         ),
                         datetime.combine(opened_at, dtime(0, 0), TRADING_ZONE),
                         limit=dashboard_section.levels_lookback_days,
@@ -271,7 +272,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
                     payload["atr"] = round(average_range, 4)
             return datetime.now(UTC), payload
 
-        key = repr(("levels", instrument, strategy_key, side, entry, opened))
+        key = repr((instrument, strategy_key, side, entry, opened))
         read_at, payload = await levels_cache.get_or_build(key, build)
         return read_response(payload, dashboard_section.levels_max_age_seconds, read_at)
 
@@ -281,7 +282,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
         reported = state is not None
         rules = state.rules if state else settings
         return read_response(
-            strategy_rules(rules, configured=reported),
+            strategy_rules(rules, reported=reported),
             dashboard_section.strategies_max_age_seconds,
         )
 
