@@ -1,6 +1,6 @@
 from collections.abc import Iterator
 from tomllib import loads
-from typing import Literal
+from typing import Literal, TypeIs
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
@@ -14,6 +14,10 @@ SERVICE_SETTINGS: dict[ServiceName, tuple[type[BaseSettings], ...]] = {
     "web": (SharedSettings, WebSettings, LoginSettings),
     "bot": (SharedSettings, BotSettings),
 }
+
+
+def is_service_name(value: str) -> TypeIs[ServiceName]:
+    return value in SERVICE_SETTINGS
 
 
 def secret_keys() -> set[str]:

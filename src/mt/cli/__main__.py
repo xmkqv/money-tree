@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 from pydantic import ValidationError
 
-from mt.rules.services import SERVICE_SETTINGS, ServiceName, service_secrets
+from mt.rules.services import SERVICE_SETTINGS, ServiceName, is_service_name, service_secrets
 from mt.rules.values import STRATEGY_KEYS, StrategyKey, strategy_selection_adapter
 
 
@@ -26,9 +26,8 @@ def list_environment(service: Annotated[str, typer.Option()]) -> None:
 
 
 def _parse_service(value: str) -> ServiceName:
-    for name in SERVICE_SETTINGS:
-        if value == name:
-            return name
+    if is_service_name(value):
+        return value
     names = ", ".join(sorted(SERVICE_SETTINGS))
     raise typer.BadParameter(f"service must be one of: {names}")
 
