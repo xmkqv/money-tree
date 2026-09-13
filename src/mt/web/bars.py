@@ -50,14 +50,14 @@ def session_hour_bars(bars: list[Bar]) -> list[Bar]:
 
 
 def chart_window(
-    rules: ChartTimeframeSection, opened: date, closed: date
+    spans: ChartTimeframeSection, opened: date, closed: date
 ) -> tuple[datetime, datetime, datetime]:
-    pad = timedelta(days=rules.pad_days)
+    pad = timedelta(days=spans.pad_days)
     display = opened - pad
     end = closed + pad
-    if (end - display).days > rules.span_max:
-        display = end - timedelta(days=rules.span_max)
-    data = display - timedelta(days=rules.warm_up_days)
+    if (end - display).days > spans.span_max:
+        display = end - timedelta(days=spans.span_max)
+    data = display - timedelta(days=spans.warm_up_days)
     return (
         datetime.combine(data, dtime(0, 0), TRADING_ZONE),
         datetime.combine(display, dtime(0, 0), TRADING_ZONE),

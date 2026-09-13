@@ -94,7 +94,7 @@ class Daily(Strategy):
                     self,
                     f"entries.capped.{now.date()}",
                     "info",
-                    f"{self.name()} entries paused: {self.holdings_max} holdings already open",
+                    f"{self.name()} entries paused: {self.positions_max} holdings already open",
                 )
                 return
             if self.portfolio.is_taken(self, candidate.asset, now.date()):

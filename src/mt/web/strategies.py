@@ -165,7 +165,7 @@ def _figure(annotation: object, *, money: bool) -> Callable[[tuple[object, ...]]
         return _joined(str)
     if names & FLAGS:
         return _joined(_flag)
-    raise ValueError(f"{names} has no configuration card figure")
+    raise ValueError(f"{names} has no config card figure")
 
 
 def _joined(figure: Callable[[object], str]) -> Callable[[tuple[object, ...]], str]:

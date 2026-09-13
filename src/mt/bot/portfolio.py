@@ -96,7 +96,7 @@ class Portfolio(LumibotStrategy):
         session = Session(now, opens, closes)
         self._begin_day(now.date())
         self._reconcile(now)
-        self._emergency_exit(now.date())
+        self._check_daily_loss(now.date())
         if self._locked_at == now.date():
             return
         self._prepare(now)
@@ -258,7 +258,7 @@ class Portfolio(LumibotStrategy):
         for strategy in self._strategies.values():
             strategy.begin(day)
 
-    def _emergency_exit(self, day: date) -> None:
+    def _check_daily_loss(self, day: date) -> None:
         if self._locked_at != day:
             if self._equity() > self._session_baseline * (1.0 - settings.risk.per_day_max):
                 return

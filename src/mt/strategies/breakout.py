@@ -147,7 +147,7 @@ class Breakout(Strategy):
                 f"entries.capped.{now.date()}",
                 "info",
                 f"{self.family.capitalize()} entries paused: "
-                f"{self.holdings_max} holdings already open",
+                f"{self.positions_max} holdings already open",
             )
             return
         assets = self._unscanned(now.date())

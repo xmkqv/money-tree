@@ -135,7 +135,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
     async def session(request: Request) -> JSONResponse:
         token = request.session.get("csrf_token")
         if not isinstance(token, str):
-            return error_response("Session is invalid", 401)
+            return error_response("Login is invalid", 401)
         return JSONResponse(
             {
                 "csrf_token": token,
@@ -166,8 +166,8 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
         if closed_at < opened_at:
             return error_response("The close cannot precede the open", 422)
 
-        rules = dashboard_section.chart_timeframes[timeframe]
-        start, display, end = chart_window(rules, opened_at, closed_at)
+        spans = dashboard_section.chart_timeframes[timeframe]
+        start, display, end = chart_window(spans, opened_at, closed_at)
 
         async def build() -> tuple[datetime, dict[str, Any]]:
             if timeframe == "1Hour" and instrument.asset_type == AssetType.STOCK:
