@@ -86,8 +86,7 @@ class Strategy(ABC):
     variation: ClassVar[str]
     is_paused: ClassVar[bool] = False
     is_stop_resting: ClassVar[bool] = False
-    positions_max: ClassVar[int] = settings.risk.positions_max
-    equity_risk_fraction_max: ClassVar[float | None] = None
+    positions_max: ClassVar[int] = settings.risk.strategy_positions_max
 
     def __init_subclass__(cls) -> None:
         if "key" not in cls.__dict__:

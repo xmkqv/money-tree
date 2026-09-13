@@ -439,18 +439,7 @@ class Portfolio(LumibotStrategy):
                 f"{asset} entry skipped: portfolio position capacity reached",
             )
             return False
-        equity_risk_fraction = strategy.equity_risk_fraction_max
-        if equity_risk_fraction is None:
-            equity_risk_fraction = settings.risk.per_trade_max
-        quantity = entry_quantity(
-            equity,
-            price,
-            abs(price - stop),
-            settings.risk.position_fraction_max,
-            equity_risk_fraction,
-            settings.risk.notional_usd_min,
-            direction,
-        )
+        quantity = entry_quantity(equity, price, abs(price - stop), direction)
         notional = float(quantity) * price
         if quantity <= 0 or gross + notional > equity:
             self.record(

@@ -12,24 +12,22 @@ def entry_quantity(
     equity: float,
     price: float,
     stop_distance: float,
-    position_fraction_max: float,
-    equity_risk_fraction_max: float,
-    notional_usd_min: float,
     direction: Direction = 1,
 ) -> Decimal:
-    capital, last, distance, allocation, equity_risk_fraction, minimum = map(
+    risk = settings.risk
+    capital, last, distance, allocation, per_trade, minimum = map(
         lambda value: Decimal(str(value)),
         (
             equity,
             price,
             stop_distance,
-            position_fraction_max,
-            equity_risk_fraction_max,
-            notional_usd_min,
+            risk.position_fraction_max,
+            risk.per_trade_max,
+            risk.notional_usd_min,
         ),
     )
     quantity = round_quantity(
-        min(capital * allocation / last, capital * equity_risk_fraction / distance),
+        min(capital * allocation / last, capital * per_trade / distance),
         whole=direction == -1,
     )
     return quantity if quantity * last >= minimum else Decimal(0)

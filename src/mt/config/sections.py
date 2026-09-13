@@ -62,16 +62,26 @@ class BarsSection(SettingsSection):
 
 class RiskSection(SettingsSection):
     per_day_max: Fraction
-    per_trade_max: Fraction
-    position_fraction_max: Fraction
     positions_max: Count
     notional_usd_min: Amount
     quantity_decimal_places: Count
 
+    @property
+    def per_trade_max(self) -> float:
+        return self.per_day_max / self.positions_max
+
+    @property
+    def position_fraction_max(self) -> float:
+        return 1.0 / self.positions_max
+
+    @property
+    def strategy_positions_max(self) -> int:
+        return self.positions_max // 2
+
     @model_validator(mode="after")
     def check_limits(self) -> Self:
-        if self.per_trade_max > self.per_day_max:
-            raise ValueError("risk per trade must not exceed risk per day")
+        if self.positions_max < 2:
+            raise ValueError("the book must hold at least two positions")
         return self
 
 
@@ -131,7 +141,6 @@ class BreakoutSection(SettingsSection):
     short_stop_fraction: Fraction
     stop_fraction_min: Fraction
     stop_fraction_max: Fraction
-    positions_max: Count
     target_fractions: tuple[Fraction, Fraction, Fraction]
     lookback_sessions: Count
     signal_bars_max: Count
@@ -148,7 +157,6 @@ class OrderTagSection(SettingsSection):
 
 
 class StrategySection(SettingsSection):
-    equity_risk_fraction_max: OptionalFraction
     is_paused: bool
 
 
@@ -169,7 +177,6 @@ class DailyVariationSection(StrategySection):
     adx_min: Amount
     stop_atr_multiple: Amount
     does_heed_earnings: bool
-    positions_max: Count
 
 
 class DailySmaSection(DailyVariationSection):

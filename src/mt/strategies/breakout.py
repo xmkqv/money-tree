@@ -96,7 +96,6 @@ def relative_volume(frame: DataFrame, day: date, clock: time) -> float | None:
 
 class Breakout(Strategy):
     is_stop_resting = True
-    positions_max = settings.breakout.positions_max
     opening_minutes: ClassVar[int]
     volume_multiple: ClassVar[float]
     target_multiples: ClassVar[tuple[float, float, float]]
