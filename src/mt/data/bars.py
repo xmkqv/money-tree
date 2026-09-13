@@ -28,8 +28,15 @@ class _BarsPage(Payload):
     next_page_token: str | None = None
 
 
+BAR_PATHS: dict[AssetType, str] = {
+    AssetType.STOCK: "/v2/stocks/bars",
+    AssetType.CRYPTO: "/v1beta3/crypto/us/bars",
+    AssetType.OPTION: "/v1beta1/options/bars",
+}
+
+
 def check_supported_asset(asset: Asset) -> None:
-    if asset.asset_type not in (AssetType.STOCK, AssetType.CRYPTO, AssetType.OPTION):
+    if asset.asset_type not in BAR_PATHS:
         raise ValueError(f"historical bars do not support {asset.asset_type}")
 
 
@@ -86,29 +93,23 @@ class BarsClientAlpaca:
                 "sort": "asc",
             }
             until = end
+            path = BAR_PATHS[asset_type]
             batch_size = self._configuration.symbols_per_request
-            match asset_type:
-                case AssetType.STOCK:
-                    path = "/v2/stocks/bars"
-                    feed = (
-                        self._configuration.daily_feed
-                        if timeframe.endswith("Day")
-                        else self._configuration.intraday_feed
+            if asset_type == AssetType.STOCK:
+                feed = (
+                    self._configuration.daily_feed
+                    if timeframe.endswith("Day")
+                    else self._configuration.intraday_feed
+                )
+                params.update(feed=feed, adjustment="all")
+                if feed == "sip" and until is not None:
+                    until = min(
+                        until,
+                        datetime.now(UTC)
+                        - timedelta(minutes=self._configuration.sip_delay_minutes),
                     )
-                    params.update(feed=feed, adjustment="all")
-                    if feed == "sip" and until is not None:
-                        until = min(
-                            until,
-                            datetime.now(UTC)
-                            - timedelta(minutes=self._configuration.sip_delay_minutes),
-                        )
-                case AssetType.CRYPTO:
-                    path = "/v1beta3/crypto/us/bars"
-                case AssetType.OPTION:
-                    path = "/v1beta1/options/bars"
-                    batch_size = min(batch_size, self._configuration.options_per_request)
-                case _:
-                    raise ValueError(f"historical bars do not support {asset_type}")
+            elif asset_type == AssetType.OPTION:
+                batch_size = min(batch_size, self._configuration.options_per_request)
             if until is not None:
                 if until < start:
                     continue
@@ -133,6 +134,19 @@ class BarsClientAlpaca:
                         raise httpx.HTTPError("Bars exceed the configured page limit")
                     query["page_token"] = page.next_page_token
         return rows
+
+    async def series(
+        self,
+        asset: Asset,
+        timeframe: Timeframe,
+        start: datetime,
+        end: datetime | None = None,
+        *,
+        limit: int,
+        pages_max: int | None = None,
+    ) -> list[Bar]:
+        rows = await self.bars([asset], timeframe, start, end, limit=limit, pages_max=pages_max)
+        return rows[asset]
 
 
 def _utc(value: datetime) -> datetime:
