@@ -1,5 +1,7 @@
 ---
 name: money-tree
+refs:
+  - strategies = spec.strategies.md
 vendors:
   - broker = alpaca
   - calendar = finnhub
@@ -11,22 +13,14 @@ elide:
   - frame shaping and indicator arithmetic
   - logging
 defer:
-  - trading restarts and recovery
+  - bot restarts and recovery
 ---
 
 - the bot trades selected US-equity strategies on one broker account
 - one daily loss limit ends the day for every strategy
 - one risk budget sizes every entry
-- fractional positions are supported
-- the whole account reads on one display without scrolling
-- the dashboard says when it does not know
-- every number leads to the trade or rule behind it
-
-```sh:surface
-mt trade --strategies KEY,…
-mt report --strategy KEY --symbols SYM,… --start DATE --end DATE
-mt env list --service {web|bot}
-```
+- the dashboard fits one display and says when it does not know
+- every dashboard number leads to the trade behind it
 
 # entities
 
@@ -35,45 +29,52 @@ mt env list --service {web|bot}
 | asset | an instrument identified the same way across providers and ownership |
 | bar | one open, high, low, close and volume over one span |
 | feed | the source that supplies bars to a run |
+| quote | the last price the broker reports for an asset |
+| read | one vendor response and the instant it was taken |
+| run | one bot process from start to finish |
+| iteration | one pass of the portfolio loop |
 | session | one exchange trading day from open to close |
+| period | a span of sessions bounded in exchange time |
+| baseline | the equity a period measures from |
 | universe | the assets that pass price and turnover selection |
 | signal | the condition that makes a strategy act |
 | candidate | a proposed entry with price, stop and direction |
 | order | one instruction sent to the broker |
+| code | the frozen tag that attributes an order to its strategy |
 | fill | the part of an order the broker completed |
+| exposure | the notional a position or holding places in the market |
 | position | the exposure the broker reports |
 | holding | the exposure a strategy manages, with stop and staged exits |
 | ladder | the staged exits that reduce a holding |
+| cap | the holding limit a strategy shares with the keys it counts |
 | trade | one round trip from flat to flat |
 | equity | the account value at one moment |
 | snapshot | the realtime account, positions and open orders |
 | ledger | trades, fills and profit over a period |
-| levels | the marks a chart draws for entry and averages |
+| levels | the prices a chart draws for entry and averages |
 | state | the record the bot publishes for the dashboard |
 | event | one dated note inside the published state |
 | heartbeat | the time of the last publication |
 | login | an authenticated web visitor |
-| rules | the trading settings the bot and the web share |
+| rules | the trading limits and strategy fields the bot and the web share |
 | strategy | one named way to enter and manage holdings |
 | family | strategies that share entry logic |
 | variation | one configured member of a family |
 | benchmark | the symbol every comparison uses |
 | report | one backtest run and its artifacts |
 
-# config
+# rules
 
-- the bot and the web share validated rules
-- service settings own credentials, hosts and runtime limits
-- unknown nested fields fail validation
+- the bot and the web share rules; unknown fields fail validation
+- each service owns its credentials, hosts and runtime limits
+- keys are section, then field, joined by a double underscore
+- timeout sections carry connect, read, write and pool seconds
+- lookback days count calendar days; lookback sessions count exchange sessions
 - published rules omit secrets
-- every layer reads config
 - deployment sends each service only the keys it needs
 
-```sh:types
-{SECTION}__{FIELD}          # one section per concern
-{SECTION}__TIMEOUT__{FIELD} # connect, read, write and pool seconds
-{PREFIX}LOOKBACK_DAYS       # a window of calendar days
-{PREFIX}LOOKBACK_SESSIONS   # a window of exchange sessions
+```sh:surface
+mt env list --service {web|bot}
 ```
 
 # data
@@ -83,13 +84,13 @@ mt env list --service {web|bot}
 - vendor[calendar] supplies common stocks and scheduled earnings
 - an earnings event date differs from its announcement date
 - asset identity is immutable across providers and ownership
-- crypto identity includes base and quote
-- option identity includes underlying, expiration, strike and right
+- crypto adds base and quote; option adds underlying, expiry, strike and right
+- a run reads bars through one feed, ending at the engine clock
 
 ```py:surface
 bars(assets, timeframe, start, end?) → {asset: [bar]}
     type outside stock | crypto | option → error before requesting
-    observations are time-ordered
+    bars are time-ordered
     missing → []
     incomplete retrieval → error
     stock: configured daily or intraday feed, adjustment = all
@@ -100,16 +101,38 @@ earnings(asset, date)
     non-stock → False without consulting the calendar
 ```
 
-A run reads bars through one feed. Historical observations end at the engine clock.
+# trade
+
+- a trade spans flat to flat
+- partial exits accumulate into their trade
+- a reversal starts a new trade
+- missing entry history → the entry time is unavailable
+- periods use exchange time: monday-to-date and month-to-date
+- strategy totals, benchmark comparisons and equity selection share one period
+- baseline = the last equity before the period
+- equity first funded inside the period → baseline = that equity
+- baseline ∈ {0, absent} → percentage unavailable
 
 # bot
+
+- vendor[engine] supplies lifecycle callbacks, order submission and fills
+- paper and live both run through vendor[broker]
+- the daily loss limit and the per-trade risk budget are one rule
+- fractional positions are supported
+
+```sh:surface
+mt trade --strategies KEY,…
+```
 
 ## portfolio
 
 - portfolio owns the universe, sizing, exposure, ownership and execution
-- strategies reach observations and actions only through portfolio
-- one risk budget divides into every per-trade limit
-- a strategy holds at most half the book
+- strategies reach bars, quotes and actions only through portfolio
+- a resting stop is an order at the broker; otherwise portfolio watches the stop
+- resting-stop holdings exit before the session close
+- Σ risk(open holdings) ≤ risk.per_day_max * equity
+- count(holdings per cap) ≤ risk.positions_max / 2
+- holding.stop never widens
 
 ```py:surface
 universe
@@ -128,10 +151,10 @@ enter(strategy, candidate, session)
     non-stock, paused strategy, held asset or quote through stop → skip
     short without broker shortable permission → skip
     positions including pending ≥ risk.positions_max → skip
-    gross exposure including pending and the new entry ≤ equity
+    gross exposure including pending and the new entry > equity → skip
 
 protect(holding)
-    resting stop through last price → exit at market
+    resting stop through quote → exit at market
 
 iteration
     reconcile positions; check the daily loss; manage holdings; run strategies
@@ -140,29 +163,45 @@ iteration
         retry liquidation on later iterations
 ```
 
-```
-Σ risk(open holdings) ≤ risk.per_day_max * equity
-count(holdings per strategy) ≤ risk.positions_max / 2
-holding.stop never widens
-```
-
-## strategy → [strategies]
+## strategy
 
 - a strategy owns its signals and its holding management
-- strategies reach observations and actions only through portfolio
+- the strategy code attributes every order to its strategy
+- the web shows each strategy's entry window from the shared rules
+- variations are specified in [strategies]
 
-## execution
+```py:surface
+strategy
+    key
+    code
+    family
+    variation
+    is_paused
+    is_stop_resting
+    cap → {own | family} keys
 
-- vendor[engine] supplies lifecycle callbacks, order submission and fills
-- paper and live both run through vendor[broker]
-- a report simulates execution under the same portfolio and strategy contracts
+    entry_window(opens, closes) → (start, end)
+    begin(session)
+    run(session)
+        candidates → portfolio.enter
+    manage(holding, session)
+        exits → portfolio.exit; stops → portfolio.protect
+    ladder(holding, quantity) → ladder | none
+```
+
+# report
+
+- a report runs the same portfolio, strategy and trade contracts as the bot
 - a report starts with an empty account funded by backtest.budget_usd
 - asset defaults are simulation assumptions, not historical eligibility
 - empty or non-stock assets fail before any artifact is written
 - a report returns statistics, trades and plots against the benchmark
+- a breakout report includes warm-up
+- a daily report uses engine daily bars and does not establish fill fidelity
 
-Breakout reports include warm-up. A daily report uses engine daily bars; it does
-not establish minute-level fill fidelity.
+```sh:surface
+mt report --strategy KEY --symbols SYM,… --start DATE --end DATE
+```
 
 # state
 
@@ -170,22 +209,12 @@ not establish minute-level fill fidelity.
   bounded events
 - status ∈ starting | running | stopped | failed
 - unknown fields fail validation
-- one bot writer replaces validated JSON at `mt:state` every export interval
-- state has no expiry
-- a vendor[store] publication failure warns and trading continues
-- shutdown publication is best effort with a bounded wait
-
-A read returns absent or validated state. Read failures stay errors. The web
-keeps the last state across its own restarts and across a stale heartbeat.
-
-```protocol
-bot             store           web
-│               │               │
-├──state───────→│               │
-│               │←──read────────┤
-│               ├──state───────→│
-│               │               │
-```
+- one bot writer replaces validated JSON at `mt:state` every export interval,
+  without expiry
+- a vendor[store] publication failure warns and trading continues; shutdown
+  publication is best effort with a bounded wait
+- a state read returns absent state or validated state; a failure stays an error
+- the web keeps the last state across its own restarts and a stale heartbeat
 
 # web
 
@@ -221,13 +250,21 @@ POST /logout
 
 ## dashboard
 
+- account, positions, orders and events fit one viewport; only the chart scrolls
+- absent, stale and unavailable values render as such, never as zero
+- a stale bot shows its last report and says so
+- a trade links to its chart
+- every response carries the read_at of its source
+- snapshot and ledger share one account read
+- an older response never replaces a newer account value
+
 ```http:surface
 GET /api/strategies
 # reported rules, otherwise configured rules
 # selection: online | paused | unselected | unknown
 
 GET /api/ledger
-# orders, fills, profit and bot state
+# orders, fills, profit, bot state, entry windows and limits
 # gross loss is a positive magnitude
 # stale when state is absent or the heartbeat is overdue
 
@@ -239,27 +276,5 @@ GET /api/bars?symbol={symbol}&timeframe={timeframe}&opened={date}&closed={date}
 # stock hours follow exchange sessions; crypto and options use native hours
 
 GET /api/levels?symbol={symbol}&strategy_key={key}&side={side}&entry={price}&opened={date}
-# entry marks and averages; non-stock → no equity strategy levels
+# entry, stop and averages; non-stock → no equity strategy levels
 ```
-
-Snapshot and ledger share one account observation. Every response carries the
-read_at of its source. An older response never replaces a newer account value.
-
-## trades
-
-- a trade spans flat to flat
-- partial exits accumulate into their trade
-- a reversal starts a new trade
-- missing entry history → the entry time is unavailable
-- calendar periods use exchange time: monday-to-date and month-to-date
-- strategy totals, benchmark comparisons and equity selection share boundaries
-
-```
-baseline = the last observation before the boundary
-baseline = the first observation when funding began inside the period
-baseline ∈ {0, absent} → percentage unavailable
-```
-
-# refs
-
-[strategies]: spec.strategies.md
