@@ -31,7 +31,7 @@ class State(_StrictModel):
         default_factory=list[StrategyKey], max_length=len(STRATEGY_KEYS)
     )
     heartbeat_at: AwareDatetime
-    configuration: RuleSettings
+    rules: RuleSettings
     events: list[StateEvent]
 
 

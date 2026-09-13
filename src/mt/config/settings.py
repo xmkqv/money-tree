@@ -24,7 +24,7 @@ from .sections import (
     RedisSection,
     RequestSection,
     RiskSection,
-    ScreenSection,
+    UniverseSection,
     WebSection,
 )
 from .values import Mode, StrategySelection, Symbol
@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 class RuleSettings(Settings):
     benchmark_symbol: Symbol
     risk: RiskSection
-    screen: ScreenSection
+    universe: UniverseSection
     earnings: EarningsSection
     indicators: IndicatorsSection
     breakout: BreakoutSection

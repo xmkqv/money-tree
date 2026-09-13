@@ -23,14 +23,14 @@ class StateExporter:
         self,
         strategies: list[StrategyKey],
         paused: list[StrategyKey],
-        configuration: RuleSettings,
+        rules: RuleSettings,
     ) -> None:
         self._state = State(
             status="starting",
             strategies=list(strategies),
             paused=list(paused),
             heartbeat_at=datetime.now(UTC),
-            configuration=configuration,
+            rules=rules,
             events=[],
         )
         self.pending: queue.Queue[State] = queue.Queue(maxsize=1)
@@ -143,6 +143,6 @@ def _build_state(
         strategies=list(previous.strategies),
         paused=list(previous.paused),
         heartbeat_at=heartbeat_at,
-        configuration=previous.configuration,
+        rules=previous.rules,
         events=events[-events_max:],
     )

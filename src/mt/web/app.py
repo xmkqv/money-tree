@@ -31,7 +31,7 @@ PUBLIC_PATHS = frozenset({"/healthz", "/login", "/auth/callback"})
 SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
-class SessionGuardMiddleware:
+class LoginGuardMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
 
@@ -61,7 +61,7 @@ class SessionGuardMiddleware:
         await self._app(scope, receive, send)
 
 
-def _start_session(request: Request, subject: str) -> None:
+def _start_login(request: Request, subject: str) -> None:
     request.session.clear()
     request.session["user_sub"] = subject
     request.session["csrf_token"] = secrets.token_urlsafe(32)
@@ -112,12 +112,12 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="Money Tree", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
     )
-    app.add_middleware(SessionGuardMiddleware)
+    app.add_middleware(LoginGuardMiddleware)
     app.add_middleware(
         SessionMiddleware,
-        secret_key=configuration.web.session_secret.get_secret_value(),
-        session_cookie="money_tree_session",
-        max_age=configuration.web.session_ttl_seconds,
+        secret_key=configuration.web.login_secret.get_secret_value(),
+        session_cookie="money_tree_login",
+        max_age=configuration.web.login_ttl_seconds,
         same_site="lax",
         https_only=configuration.mode == "production",
     )
@@ -163,7 +163,7 @@ def create_app() -> FastAPI:
 
             @app.get("/login")
             async def login_locally(request: Request) -> RedirectResponse:
-                _start_session(request, configuration.mode)
+                _start_login(request, configuration.mode)
                 return RedirectResponse("/", status_code=303, headers=NO_STORE)
 
         case "production":
@@ -203,7 +203,7 @@ def create_app() -> FastAPI:
                 identity = await oauth_client.identify(code, verifier)
                 if identity.email.strip().casefold() not in oauth.allowed_emails:
                     return error_response("Railway user is not allowed", 403)
-                _start_session(request, identity.subject)
+                _start_login(request, identity.subject)
                 return RedirectResponse("/", status_code=303, headers=NO_STORE)
 
         case _:

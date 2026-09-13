@@ -5,7 +5,7 @@ from mt.config.shared import settings
 from mt.config.values import StrategyKey, Unattributed
 from mt.data.bars import Bar
 from mt.exchange import trading_time
-from mt.position import Direction
+from mt.sizing import Direction
 from mt.strategies.breakout import Breakout, range_level, range_stop
 
 

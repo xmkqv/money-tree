@@ -20,7 +20,7 @@ from mt.data.alpaca import AccountObservation, TradingClientAlpaca
 from mt.data.asset import Asset, AssetType
 from mt.data.bars import BarsClientAlpaca, check_supported_asset
 from mt.exchange import TRADING_ZONE, session_bounds
-from mt.position import Direction
+from mt.sizing import Direction
 from mt.state import read_state
 from mt.strategies.breakout import Breakout
 from mt.strategies.daily import Daily
@@ -30,7 +30,7 @@ from .bars import bar_averages, bars_atr, chart_window, session_bars, session_ho
 from .cache import Cache
 from .ledger import Ledger, build_ledger, match_trades
 from .levels import Levels, add_breakout_levels, opening_range
-from .pulse import bot_state, build_pulse
+from .snapshot import bot_state, build_snapshot
 from .strategies import entry_windows, strategy_config
 
 
@@ -100,7 +100,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
     heartbeat_timeout = timedelta(seconds=configuration.web.heartbeat_timeout_seconds)
 
     ledger_cache = Cache[tuple[datetime, Ledger]](dashboard_section.ledger_ttl_seconds)
-    account_cache = Cache[AccountObservation](dashboard_section.pulse_ttl_seconds)
+    account_cache = Cache[AccountObservation](dashboard_section.snapshot_ttl_seconds)
     match_history = lru_cache(maxsize=dashboard_section.history_cache_max)(match_trades)
     benchmark_symbol = settings.benchmark_symbol
     chart_ttl = dashboard_section.chart_ttl_seconds
@@ -140,7 +140,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
             {
                 "csrf_token": token,
                 "refresh_seconds": dashboard_section.refresh_poll_seconds,
-                "pulse_seconds": dashboard_section.pulse_poll_seconds,
+                "snapshot_seconds": dashboard_section.snapshot_poll_seconds,
                 "sma_colors": dashboard_section.sma_colors,
             },
             headers=NO_STORE,
@@ -279,9 +279,9 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
     async def strategies(request: Request) -> JSONResponse:
         state = await read_state(request.state.state)
         reported = state is not None
-        active_configuration = state.configuration if state else settings
+        rules = state.rules if state else settings
         return read_response(
-            strategy_config(active_configuration, configured=reported),
+            strategy_config(rules, configured=reported),
             dashboard_section.strategies_max_age_seconds,
         )
 
@@ -302,24 +302,24 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
             return account.read_at, result
 
         read_at, cached = await ledger_cache.get_or_build(LEDGER_KEY, build)
-        reported_configuration = state.configuration if state else settings
-        risk = reported_configuration.risk
+        rules = state.rules if state else settings
+        risk = rules.risk
         return read_response(
             {
                 **cached,
                 "bot": bot_state(state, heartbeat_timeout),
-                "windows": entry_windows(reported_configuration),
-                "positionCapPct": round(100 * risk.position_fraction_max, 2),
+                "windows": entry_windows(rules),
+                "positionCapPct": round(100 * risk.allocation, 2),
                 "dailyLossLimitPct": round(100 * risk.per_day_max, 2),
             },
             dashboard_section.ledger_max_age_seconds,
             read_at,
         )
 
-    @router.get("/api/pulse")
-    async def pulse(request: Request) -> JSONResponse:
+    @router.get("/api/snapshot")
+    async def snapshot(request: Request) -> JSONResponse:
         account = await observation(request)
-        cached = build_pulse(account)
+        cached = build_snapshot(account)
         held = ledger_cache.fresh(LEDGER_KEY)
         if held is not None and {row.symbol for row in held[1]["positions"]} != {
             row.symbol for row in cached["positions"]

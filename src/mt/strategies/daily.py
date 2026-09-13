@@ -11,7 +11,7 @@ from mt.exchange import TRADING_ZONE
 from mt.frames import frame_since, last_close
 from mt.indicators import finite_row, finite_value, latest_atr, latest_turnover_usd
 
-from .base import Candidate, Portfolio, Position, Session, Strategy, ranked
+from .base import Candidate, Holding, Portfolio, Session, Strategy, ranked
 
 
 def is_market_favorable(frame: DataFrame) -> bool:
@@ -94,7 +94,7 @@ class Daily(Strategy):
                     self,
                     f"entries.capped.{now.date()}",
                     "info",
-                    f"{self.name()} entries paused: {self.positions_max} positions already open",
+                    f"{self.name()} entries paused: {self.holdings_max} holdings already open",
                 )
                 return
             if self.portfolio.is_taken(self, candidate.asset, now.date()):
@@ -124,30 +124,30 @@ class Daily(Strategy):
                 self,
                 f"scan.emptied.{now.date()}",
                 "info",
-                f"{self.name()} found no candidate: no asset passed its screen and setup",
+                f"{self.name()} found no candidate: no asset passed the universe and setup",
             )
         return candidates
 
-    def manage(self, position: Position, session: Session) -> None:
+    def manage(self, holding: Holding, session: Session) -> None:
         now = session.now
         if (
             self.does_heed_earnings
             and session.opens <= now < session.closes
-            and self.portfolio.is_earnings_exit_due(position.asset, now.date())
+            and self.portfolio.is_earnings_exit_due(holding.asset, now.date())
         ):
-            self.portfolio.exit(position)
+            self.portfolio.exit(holding)
             return
-        frame = self.portfolio.daily_frame(position.asset)
+        frame = self.portfolio.daily_frame(holding.asset)
         if frame is None or len(frame) < settings.daily.average_sessions:
             return
-        since = frame_since(frame, position.entered_at.astimezone(TRADING_ZONE))
+        since = frame_since(frame, holding.entered_at.astimezone(TRADING_ZONE))
         last = last_close(frame)
         if len(since):
-            position.highest = max(position.highest, float(cast(Any, since["close"]).max()))
+            holding.highest = max(holding.highest, float(cast(Any, since["close"]).max()))
         distance = self.stop_atr_multiple * latest_atr(frame, settings.indicators.period)
-        position.stop = max(position.stop, position.highest - distance)
-        if last < position.stop or does_signal_exit(frame):
-            self.portfolio.exit(position)
+        holding.stop = max(holding.stop, holding.highest - distance)
+        if last < holding.stop or does_signal_exit(frame):
+            self.portfolio.exit(holding)
 
     def _ranked(self) -> list[tuple[Asset, DataFrame]]:
         rows = [

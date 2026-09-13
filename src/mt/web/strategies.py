@@ -63,11 +63,10 @@ class StrategyLabel(TypedDict):
 EntryWindow = TypedDict("EntryWindow", {"from": str, "to": str})
 
 
-def entry_windows(configuration: RuleSettings) -> dict[StrategyKey, EntryWindow]:
+def entry_windows(rules: RuleSettings) -> dict[StrategyKey, EntryWindow]:
     opens, closes = upcoming_session_bounds(datetime.now(TRADING_ZONE).date())
     return {
-        cls.key: _window(*_described(cls, configuration).entry_window(opens, closes))
-        for cls in STRATEGIES
+        cls.key: _window(*_described(cls, rules).entry_window(opens, closes)) for cls in STRATEGIES
     }
 
 
@@ -84,14 +83,14 @@ def strategy_labels() -> list[StrategyLabel]:
     return labels
 
 
-def strategy_config(configuration: RuleSettings, *, configured: bool) -> StrategyConfig:
+def strategy_config(rules: RuleSettings, *, configured: bool) -> StrategyConfig:
     scalars = [
-        _row("", name, info, getattr(configuration, name))
+        _row("", name, info, getattr(rules, name))
         for name, info in RuleSettings.model_fields.items()
         if not _is_section(info)
     ]
     sections = [
-        _card(name, getattr(configuration, name))
+        _card(name, getattr(rules, name))
         for name, info in RuleSettings.model_fields.items()
         if _is_section(info)
     ]
@@ -190,11 +189,11 @@ def _money(value: object) -> str:
     return f"${figure / 1_000_000:g}M" if figure >= 1_000_000 else f"${figure:g}"
 
 
-def _described(cls: type[Strategy], configuration: RuleSettings) -> type[Strategy]:
+def _described(cls: type[Strategy], rules: RuleSettings) -> type[Strategy]:
     described = cast(type[Strategy], type(cls.__name__, (cls,), {}))
-    described.bind(getattr(configuration, cls.key))
+    described.bind(getattr(rules, cls.key))
     if issubclass(described, Breakout):
-        described.bind(configuration.breakout)
+        described.bind(rules.breakout)
     return described
 
 

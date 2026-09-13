@@ -56,7 +56,7 @@ const weekStart = d => {
 };
 
 let LEDGER, ACCOUNT, STRATEGIES, STRAT_BY_KEY, OPEN_POSITIONS, ALL_TRADES, tradesByDate;
-let SESSION = {}, TOTALS, SESSIONS, LAST_SESSION, BENCH, BENCH_SYMBOL, DAILY, INTRADAY, LATEST;
+let LOGIN = {}, TOTALS, SESSIONS, LAST_SESSION, BENCH, BENCH_SYMBOL, DAILY, INTRADAY, LATEST;
 let FIRST_IX, LAST_IX;
 let STRATEGY_PERIODS = {};
 let monthCache = new Map();
@@ -255,7 +255,7 @@ function derive(ledger, readAt) {
       ? ratchetLow(ledger.intradayDate, Math.min(...ledger.intraday.map(r => r.equity), ledger.equity))
       : 0;
   }
-  applyPulse(ledger, Math.max(readAt, accountReadAt));
+  applySnapshot(ledger, Math.max(readAt, accountReadAt));
   return historyChanged;
 }
 
@@ -1410,7 +1410,7 @@ function paintRail() {
 }
 
 function averageColor(index) {
-  return SESSION.sma_colors[index % SESSION.sma_colors.length];
+  return LOGIN.sma_colors[index % LOGIN.sma_colors.length];
 }
 
 function railToggle(key, label, averageIndex, enabled, why) {
@@ -1986,10 +1986,10 @@ function renderAll() {
 }
 
 
-function mergePositions(pulsed) {
+function mergePositions(snapshot) {
   const rows = new Map((OPEN_POSITIONS || []).map(pos => [pos.symbol, pos]));
-  const aligned = rows.size === pulsed.length && pulsed.every(pos => rows.has(pos.symbol));
-  OPEN_POSITIONS = pulsed.map(pos => Object.assign(rows.get(pos.symbol) || {
+  const aligned = rows.size === snapshot.length && snapshot.every(pos => rows.has(pos.symbol));
+  OPEN_POSITIONS = snapshot.map(pos => Object.assign(rows.get(pos.symbol) || {
     strategy_key: "unattributed", entered_at: null, fills: [],
   }, pos));
   return aligned;
@@ -2000,37 +2000,37 @@ function retipSeries(series, equity) {
   series[series.length - 1].value = Math.round((equity - series.equityBase) * 100) / 100;
 }
 
-function applyPulse(pulsed, readAt) {
+function applySnapshot(snapshot, readAt) {
   if (readAt < accountReadAt) return true;
   accountReadAt = readAt;
   accountObservation = Object.fromEntries(
-    ["orders", "asOf", "equity", "cash", "buyingPower", "marketValue", "unrealized_pnl", "positions"].map(key => [key, pulsed[key]])
+    ["orders", "asOf", "equity", "cash", "buyingPower", "marketValue", "unrealized_pnl", "positions"].map(key => [key, snapshot[key]])
   );
-  ACCOUNT.portfolio = pulsed.equity;
-  ACCOUNT.cash = pulsed.cash;
-  ACCOUNT.deployed = pulsed.marketValue;
-  ACCOUNT.unrealized_pnl = pulsed.unrealized_pnl;
-  ACCOUNT.buyingPower = pulsed.buyingPower;
+  ACCOUNT.portfolio = snapshot.equity;
+  ACCOUNT.cash = snapshot.cash;
+  ACCOUNT.deployed = snapshot.marketValue;
+  ACCOUNT.unrealized_pnl = snapshot.unrealized_pnl;
+  ACCOUNT.buyingPower = snapshot.buyingPower;
   ACCOUNT.totalReturn = Math.round((ACCOUNT.portfolio - ACCOUNT.invested) * 100) / 100;
   ACCOUNT.rateOfReturn = ACCOUNT.invested ? (ACCOUNT.totalReturn / ACCOUNT.invested) * 100 : null;
   ACCOUNT.exposurePct = ACCOUNT.portfolio ? (ACCOUNT.deployed / ACCOUNT.portfolio) * 100 : 0;
 
-  if (ACCOUNT.dayOpening) ACCOUNT.dayLowEquity = ratchetLow(SESSION_LOW.date, pulsed.equity);
+  if (ACCOUNT.dayOpening) ACCOUNT.dayLowEquity = ratchetLow(SESSION_LOW.date, snapshot.equity);
   ACCOUNT.dayDrawdownPct = drawdownPct();
-  if (!SESSIONS.length) STRATEGY_PERIODS.D.base = LAST_SESSION.before = pulsed.equity;
+  if (!SESSIONS.length) STRATEGY_PERIODS.D.base = LAST_SESSION.before = snapshot.equity;
 
-  const aligned = mergePositions(pulsed.positions);
+  const aligned = mergePositions(snapshot.positions);
   ACCOUNT.largestPositionPct = OPEN_POSITIONS.length
     ? Math.max(...OPEN_POSITIONS.map(p => p.weight)) : 0;
 
-  retipSeries(DAILY, pulsed.equity);
-  retipSeries(INTRADAY, pulsed.equity);
+  retipSeries(DAILY, snapshot.equity);
+  retipSeries(INTRADAY, snapshot.equity);
 
   Object.assign(LEDGER, accountObservation);
   return aligned;
 }
 
-function paintPulse() {
+function paintSnapshot() {
   renderAccount();
   renderStrategies(stratRange);
   if (viewReady.strategies) paintConfig();
@@ -2062,27 +2062,27 @@ async function readAccount(path) {
   }
 }
 
-let pulsing = false;
+let snapshotting = false;
 
-async function pulse() {
-  if (!booted || pulsing) return;
-  pulsing = true;
+async function readSnapshot() {
+  if (!booted || snapshotting) return;
+  snapshotting = true;
   try {
-    const payload = await readAccount("/api/pulse");
-    const aligned = applyPulse(payload.data, Date.parse(payload.read_at));
-    paintPulse();
+    const payload = await readAccount("/api/snapshot");
+    const aligned = applySnapshot(payload.data, Date.parse(payload.read_at));
+    paintSnapshot();
     markFeed();
     if (!aligned) void refresh();
   } catch (error) {
     markFeed("error");
   } finally {
-    pulsing = false;
+    snapshotting = false;
   }
 }
 
 function markFeed(state) {
   if (!LEDGER) render(html`<span id="st-asof"></span>`, document.getElementById("status"));
-  const stale = accountReadAt < failedAt || Date.now() - accountReadAt > SESSION.pulse_seconds * 1000;
+  const stale = accountReadAt < failedAt || Date.now() - accountReadAt > LOGIN.snapshot_seconds * 1000;
   document.getElementById("status").dataset.feed = state || (stale ? "error" : "ok");
   document.getElementById("st-asof").textContent =
     (state === "error" || stale ? "feed unavailable · " : "") + (LEDGER?.asOf || "awaiting account");
@@ -2094,7 +2094,7 @@ function refresh() {
   pendingRefresh = refreshLedger().finally(() => {
     pendingRefresh = null;
     if (!document.hidden) refreshTimer = setTimeout(refresh,
-      Math.max(SESSION.refresh_seconds * 1000, resumeAt - Date.now()));
+      Math.max(LOGIN.refresh_seconds * 1000, resumeAt - Date.now()));
   });
   return pendingRefresh;
 }
@@ -2117,7 +2117,7 @@ async function refreshLedger() {
     }
 
     if (historyChanged) renderAll();
-    else paintPulse();
+    else paintSnapshot();
 
     if (chart.custom) {
       chart.series = intraday ? INTRADAY : DAILY;
@@ -2203,7 +2203,7 @@ window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () 
 });
 
 document.getElementById("logout").addEventListener("click", async () => {
-  await fetch("/logout", { method: "POST", headers: { "X-CSRF-Token": SESSION.csrf_token || "" } });
+  await fetch("/logout", { method: "POST", headers: { "X-CSRF-Token": LOGIN.csrf_token || "" } });
   location.replace("/login");
 });
 
@@ -2230,13 +2230,13 @@ wireTradeChart();
 (async () => {
   const read = await fetch("/api/session", { cache: "no-store" });
   if (!read.ok) return;
-  SESSION = await read.json();
+  LOGIN = await read.json();
   await refresh();
-  setInterval(() => { if (!document.hidden) pulse(); }, SESSION.pulse_seconds * 1000);
+  setInterval(() => { if (!document.hidden) readSnapshot(); }, LOGIN.snapshot_seconds * 1000);
 })();
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { clearTimeout(refreshTimer); return; }
-  pulse();
+  readSnapshot();
   refresh();
 });

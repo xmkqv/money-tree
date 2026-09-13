@@ -22,7 +22,7 @@ class BotState(TypedDict):
     events: list[StateEvent]
 
 
-class PulsePosition(Position):
+class SnapshotPosition(Position):
     weight: float
 
     @computed_field
@@ -31,7 +31,7 @@ class PulsePosition(Position):
         return round(self.unrealized_pnl_fraction * 100, 2)
 
 
-class Pulse(TypedDict):
+class Snapshot(TypedDict):
     orders: list[Order]
     asOf: str
     equity: float
@@ -39,15 +39,15 @@ class Pulse(TypedDict):
     buyingPower: float
     marketValue: float
     unrealized_pnl: float
-    positions: Sequence[PulsePosition]
+    positions: Sequence[SnapshotPosition]
 
 
-def build_pulse(observation: AccountObservation) -> Pulse:
+def build_snapshot(observation: AccountObservation) -> Snapshot:
     account = observation.account
     positions = observation.positions
     equity = round(account.equity, 2)
-    held = pulse_positions(positions, equity)
-    return Pulse(
+    held = snapshot_positions(positions, equity)
+    return Snapshot(
         orders=observation.orders,
         asOf=observation.read_at.astimezone(TRADING_ZONE).strftime("%a %-d %b %Y, %H:%M:%S ET"),
         equity=equity,
@@ -77,9 +77,9 @@ def bot_state(state: State | None, heartbeat_timeout: timedelta) -> BotState:
     )
 
 
-def pulse_positions(raw: list[Position], equity: float) -> list[PulsePosition]:
+def snapshot_positions(raw: list[Position], equity: float) -> list[SnapshotPosition]:
     rows = [
-        PulsePosition(
+        SnapshotPosition(
             symbol=item.symbol,
             side="long" if item.side == "long" else "short",
             quantity=round(abs(item.quantity), 4),

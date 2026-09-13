@@ -21,8 +21,8 @@ def entry_quantity(
             equity,
             price,
             stop_distance,
-            risk.position_fraction_max,
-            risk.per_trade_max,
+            risk.allocation,
+            risk.per_trade,
             risk.notional_usd_min,
         ),
     )

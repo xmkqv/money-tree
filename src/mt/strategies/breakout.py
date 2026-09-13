@@ -12,9 +12,9 @@ from mt.data.asset import Asset
 from mt.exchange import TRADING_ZONE
 from mt.frames import frame_between, frame_since, frame_until, regular_session
 from mt.indicators import latest_atr, latest_turnover_usd
-from mt.position import Direction, next_stop, round_quantity
+from mt.sizing import Direction, next_stop, round_quantity
 
-from .base import Candidate, Ladder, Portfolio, Position, Session, Strategy, family_keys, ranked
+from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, family_keys, ranked
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,8 +132,8 @@ class Breakout(Strategy):
     def begin(self, day: date) -> None:
         self._scanned.clear()
 
-    def ladder(self, position: Position, quantity: float) -> Ladder | None:
-        targets = self.target_prices(position.entry, position.stop, position.direction)
+    def ladder(self, holding: Holding, quantity: float) -> Ladder | None:
+        targets = self.target_prices(holding.entry, holding.stop, holding.direction)
         return Ladder(quantity, targets)
 
     def run(self, session: Session) -> None:
@@ -147,7 +147,7 @@ class Breakout(Strategy):
                 f"entries.capped.{now.date()}",
                 "info",
                 f"{self.family.capitalize()} entries paused: "
-                f"{self.positions_max} positions already open",
+                f"{self.holdings_max} holdings already open",
             )
             return
         assets = self._unscanned(now.date())
@@ -192,47 +192,47 @@ class Breakout(Strategy):
                 self, Candidate(found.asset, price, stop, found.direction), session
             )
 
-    def manage(self, position: Position, session: Session) -> None:
+    def manage(self, holding: Holding, session: Session) -> None:
         now = session.now
         if now >= session.closes - timedelta(minutes=settings.breakout.close_lead_minutes):
-            self.portfolio.exit(position)
+            self.portfolio.exit(holding)
             return
-        price = self.portfolio.last_price(position.asset)
-        position.highest = max(position.highest, price)
-        position.lowest = min(position.lowest, price)
-        ladder = position.ladder
+        price = self.portfolio.last_price(holding.asset)
+        holding.highest = max(holding.highest, price)
+        holding.lowest = min(holding.lowest, price)
+        ladder = holding.ladder
         if ladder is None:
             return
         reached = (
             price >= ladder.targets[ladder.stage]
-            if position.direction == 1
+            if holding.direction == 1
             else price <= ladder.targets[ladder.stage]
         )
         if reached:
             fractions = settings.breakout.target_fractions
             if ladder.stage == len(fractions) - 1:
-                self.portfolio.exit(position)
+                self.portfolio.exit(holding)
                 return
             quantity = round_quantity(
                 Decimal(str(ladder.original_quantity)) * Decimal(str(fractions[ladder.stage])),
-                whole=position.direction == -1,
+                whole=holding.direction == -1,
             )
             ladder.stage += 1
-            position.stop = next_stop(position.direction, position.stop, position.entry)
+            holding.stop = next_stop(holding.direction, holding.stop, holding.entry)
             if quantity > 0:
-                self.portfolio.exit(position, float(quantity))
-            self.portfolio.protect(position)
+                self.portfolio.exit(holding, float(quantity))
+            self.portfolio.protect(holding)
             return
         if ladder.stage == 0:
             return
-        position.stop = next_stop(position.direction, position.stop, position.entry)
-        self.portfolio.protect(position)
+        holding.stop = next_stop(holding.direction, holding.stop, holding.entry)
+        self.portfolio.protect(holding)
         recent = self.portfolio.minute_frames(
-            [position.asset],
+            [holding.asset],
             now - timedelta(days=settings.breakout.trail_lookback_days),
             now,
             self.opening_minutes,
-        ).get(position.asset)
+        ).get(holding.asset)
         if recent is None:
             return
         frame = regular_session(recent)
@@ -240,12 +240,12 @@ class Breakout(Strategy):
             return
         trail = settings.breakout.trail_atr_multiple * latest_atr(frame, settings.indicators.period)
         candidate = (
-            max(position.entry, position.highest - trail)
-            if position.direction == 1
-            else min(position.entry, position.lowest + trail)
+            max(holding.entry, holding.highest - trail)
+            if holding.direction == 1
+            else min(holding.entry, holding.lowest + trail)
         )
-        position.stop = next_stop(position.direction, position.stop, candidate)
-        self.portfolio.protect(position)
+        holding.stop = next_stop(holding.direction, holding.stop, candidate)
+        self.portfolio.protect(holding)
 
     def is_confirmed(self, frame: DataFrame, now: datetime) -> bool:
         if frame.empty:

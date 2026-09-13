@@ -9,7 +9,7 @@ from pandas import DataFrame
 from mt.config.shared import settings
 from mt.config.values import STRATEGY_KEYS, SettingsSection, StrategyKey
 from mt.data.asset import Asset
-from mt.position import Direction
+from mt.sizing import Direction
 from mt.state import EventLevel
 
 
@@ -36,7 +36,7 @@ class Ladder:
 
 
 @dataclass(slots=True)
-class Position:
+class Holding:
     strategy: "Strategy"
     asset: Asset
     direction: Direction
@@ -66,15 +66,15 @@ class Portfolio(Protocol):
 
     def is_earnings_exit_due(self, asset: Asset, day: date) -> bool: ...
 
-    def position_count(self, keys: frozenset[StrategyKey]) -> int: ...
+    def holding_count(self, keys: frozenset[StrategyKey]) -> int: ...
 
     def is_taken(self, strategy: "Strategy", asset: Asset, day: date) -> bool: ...
 
     def enter(self, strategy: "Strategy", candidate: Candidate, session: Session) -> bool: ...
 
-    def exit(self, position: Position, quantity: float | None = None) -> None: ...
+    def exit(self, holding: Holding, quantity: float | None = None) -> None: ...
 
-    def protect(self, position: Position, quantity: float | None = None) -> None: ...
+    def protect(self, holding: Holding, quantity: float | None = None) -> None: ...
 
     def record(self, strategy: "Strategy", kind: str, level: EventLevel, message: str) -> None: ...
 
@@ -86,7 +86,7 @@ class Strategy(ABC):
     variation: ClassVar[str]
     is_paused: ClassVar[bool] = False
     is_stop_resting: ClassVar[bool] = False
-    positions_max: ClassVar[int] = settings.risk.strategy_positions_max
+    holdings_max: ClassVar[int] = settings.risk.strategy_holdings_max
 
     def __init_subclass__(cls) -> None:
         if "key" not in cls.__dict__:
@@ -126,16 +126,16 @@ class Strategy(ABC):
     def run(self, session: Session) -> None: ...
 
     @abstractmethod
-    def manage(self, position: Position, session: Session) -> None: ...
+    def manage(self, holding: Holding, session: Session) -> None: ...
 
     def begin(self, day: date) -> None:
         return None
 
-    def ladder(self, position: Position, quantity: float) -> Ladder | None:
+    def ladder(self, holding: Holding, quantity: float) -> Ladder | None:
         return None
 
     def is_capped(self) -> bool:
-        return self.portfolio.position_count(self.cap_keys()) >= self.positions_max
+        return self.portfolio.holding_count(self.cap_keys()) >= self.holdings_max
 
 
 def family_keys(family: str) -> frozenset[StrategyKey]:

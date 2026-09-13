@@ -67,15 +67,15 @@ class RiskSection(SettingsSection):
     quantity_decimal_places: Count
 
     @property
-    def per_trade_max(self) -> float:
+    def per_trade(self) -> float:
         return self.per_day_max / self.positions_max
 
     @property
-    def position_fraction_max(self) -> float:
+    def allocation(self) -> float:
         return 1.0 / self.positions_max
 
     @property
-    def strategy_positions_max(self) -> int:
+    def strategy_holdings_max(self) -> int:
         return self.positions_max // 2
 
     @model_validator(mode="after")
@@ -95,7 +95,7 @@ class ExportSection(SettingsSection):
     close_timeout_seconds: Amount
 
 
-class ScreenSection(SettingsSection):
+class UniverseSection(SettingsSection):
     price_usd_min: Amount
     turnover_usd_min: Amount
     turnover_sessions: Count
@@ -221,8 +221,8 @@ class RequestSection(SettingsSection):
 
 class WebSection(SettingsSection):
     base_url: AnyHttpUrl
-    session_secret: SigningSecret
-    session_ttl_seconds: Count
+    login_secret: SigningSecret
+    login_ttl_seconds: Count
     heartbeat_timeout_seconds: Count
 
 
@@ -236,7 +236,7 @@ class DashboardSection(SettingsSection):
     history_overlap_days: Count
     history_cache_max: Count
     ledger_ttl_seconds: Count
-    pulse_ttl_seconds: Count
+    snapshot_ttl_seconds: Count
     chart_ttl_seconds: Count
     chart_cache_max: Count
     levels_lookback_days: Count
@@ -262,7 +262,7 @@ class DashboardSection(SettingsSection):
     levels_max_age_seconds: MaxAge
     strategies_max_age_seconds: MaxAge
     refresh_poll_seconds: Count
-    pulse_poll_seconds: Count
+    snapshot_poll_seconds: Count
 
     @model_validator(mode="after")
     def check_chart_timeframes(self) -> Self:
