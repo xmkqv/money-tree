@@ -137,12 +137,11 @@ def _build_state(
     event: StateEvent | None = None,
     status: RunStatus | None = None,
 ) -> State:
-    events = [*previous.events, event] if event is not None else list(previous.events)
-    return State(
-        status=previous.status if status is None else status,
-        strategies=list(previous.strategies),
-        paused=list(previous.paused),
-        heartbeat_at=heartbeat_at,
-        rules=previous.rules,
-        events=events[-events_max:],
+    events = [*previous.events, event] if event is not None else previous.events
+    return previous.model_copy(
+        update={
+            "status": previous.status if status is None else status,
+            "heartbeat_at": heartbeat_at,
+            "events": events[-events_max:],
+        }
     )
