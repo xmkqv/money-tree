@@ -5,8 +5,7 @@ elide:
 ---
 
 - family is the first segment of the key; variation is the rest
-- a variation declares every field of its own rules section
-- a missing declaration fails at import, not at runtime
+- a variation declares every field of its rules section; a missing field fails at import
 
 # breakout
 
@@ -25,18 +24,14 @@ entry
     window = range close → min(session close, open + scan_minutes)
     signal = the first close outside the range, within signal_bars_max
     entry beyond entry_extension_max of the range, when set → skip
-    cap reached → skip
     enter at the next open
-    long stop = low + long_stop_fraction * range width
-    short stop = low + short_stop_fraction * range width
+    stop = low + {long_stop_fraction | short_stop_fraction} * range width
 
 management
     targets = target_multiples of the initial stop distance
-    each target closes its share of target_fractions
-    the last target closes the rest
+    each target closes its target_fractions share; the last closes the rest
     partial short exits round down to whole shares; zero → skip
-    the first target → stop at entry; then trail by trail_atr_multiple
-    trailing requires trail_bars_min
+    the first target → stop at entry; then trail by trail_atr_multiple after trail_bars_min
     close_lead_minutes before the session close → close the rest
 ```
 
@@ -59,15 +54,13 @@ signals
 entry
     benchmark close ≤ SMA(average_sessions) → skip
     heeded earnings within earnings.block_days → skip
-    cap reached → skip
     one entry per asset per session, between the open and the close
     enter at the next open, else the next permitted iteration
     stop = entry - stop_atr_multiple * ATR
 
 management
     stop = max(stop, highest close since entry - stop_atr_multiple * ATR)
-    close < stop or close < SMA(average_sessions) or RSI < exit_rsi_max
-        → exit at the next open
+    close < stop or close < SMA(average_sessions) or RSI < exit_rsi_max → exit at the next open
     heeded earnings → exit at the open of the last session before the event
     retry an earnings exit until it is submitted
 ```

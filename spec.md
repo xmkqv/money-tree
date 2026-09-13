@@ -65,13 +65,10 @@ defer:
 
 # rules
 
-- the bot and the web share rules; unknown fields fail validation
-- each service owns its credentials, hosts and runtime limits
-- keys are section, then field, joined by a double underscore
-- timeout sections carry connect, read, write and pool seconds
+- the bot and the web share rules; rules and state reject unknown fields
+- each service alone receives its credentials, hosts and runtime limits
 - lookback days count calendar days; lookback sessions count exchange sessions
 - published rules omit secrets
-- deployment sends each service only the keys it needs
 
 ```sh:surface
 mt env list --service {web|bot}
@@ -79,46 +76,35 @@ mt env list --service {web|bot}
 
 # data
 
-- vendor[broker] supplies account, positions, orders, fills, quotes and clock
-- broker metadata owns trading permissions
+- vendor[broker] supplies account, positions, orders, fills, quotes, clock and asset permissions
 - vendor[calendar] supplies common stocks and scheduled earnings
 - an earnings event date differs from its announcement date
-- asset identity is immutable across providers and ownership
-- crypto adds base and quote; option adds underlying, expiry, strike and right
 - a run reads bars through one feed, ending at the engine clock
 
 ```py:surface
 bars(assets, timeframe, start, end?) → {asset: [bar]}
-    type outside stock | crypto | option → error before requesting
-    bars are time-ordered
-    missing → []
-    incomplete retrieval → error
-    stock: configured daily or intraday feed, adjustment = all
-    crypto and option: native series without stock feed or adjustment
+    type ∉ {stock, crypto, option} → error before requesting
+    time-ordered; missing → []; incomplete → error
+    stock → configured daily or intraday feed, adjustment = all; otherwise native series
     explicit stock SIP end ≤ wall clock - bars.sip_delay_minutes
 
 earnings(asset, date)
-    non-stock → False without consulting the calendar
+    non-stock → False
 ```
 
 # trade
 
-- a trade spans flat to flat
-- partial exits accumulate into their trade
-- a reversal starts a new trade
+- partial exits accumulate into their trade; a reversal starts a new one
 - missing entry history → the entry time is unavailable
-- periods use exchange time: monday-to-date and month-to-date
+- periods: monday-to-date and month-to-date
 - strategy totals, benchmark comparisons and equity selection share one period
-- baseline = the last equity before the period
-- equity first funded inside the period → baseline = that equity
+- baseline = the last equity before the period, else the first equity inside it
 - baseline ∈ {0, absent} → percentage unavailable
 
 # bot
 
 - vendor[engine] supplies lifecycle callbacks, order submission and fills
 - paper and live both run through vendor[broker]
-- the daily loss limit and the per-trade risk budget are one rule
-- fractional positions are supported
 
 ```sh:surface
 mt trade --strategies KEY,…
@@ -148,10 +134,8 @@ sizing(equity, price, stop_distance, direction)
     quantity * price < risk.notional_usd_min → 0
 
 enter(strategy, candidate, session)
-    non-stock, paused strategy, held asset or quote through stop → skip
-    short without broker shortable permission → skip
-    positions including pending ≥ risk.positions_max → skip
-    gross exposure including pending and the new entry > equity → skip
+    non-stock, unshortable short, paused strategy, held asset or quote through stop → skip
+    pending included: positions ≥ risk.positions_max or gross exposure + entry > equity → skip
 
 protect(holding)
     resting stop through quote → exit at market
@@ -166,8 +150,6 @@ iteration
 ## strategy
 
 - a strategy owns its signals and its holding management
-- the strategy code attributes every order to its strategy
-- the web shows each strategy's entry window from the shared rules
 - variations are specified in [strategies]
 
 ```py:surface
@@ -183,7 +165,7 @@ strategy
     entry_window(opens, closes) → (start, end)
     begin(session)
     run(session)
-        candidates → portfolio.enter
+        capped → skip; candidates → portfolio.enter
     manage(holding, session)
         exits → portfolio.exit; stops → portfolio.protect
     ladder(holding, quantity) → ladder | none
@@ -192,11 +174,11 @@ strategy
 # report
 
 - a report runs the same portfolio, strategy and trade contracts as the bot
-- a report starts with an empty account funded by backtest.budget_usd
+- a report funds an empty account with backtest.budget_usd
 - asset defaults are simulation assumptions, not historical eligibility
 - empty or non-stock assets fail before any artifact is written
 - a report returns statistics, trades and plots against the benchmark
-- a breakout report includes warm-up
+- a breakout report includes backtest.warm_up_days
 - a daily report uses engine daily bars and does not establish fill fidelity
 
 ```sh:surface
@@ -205,15 +187,12 @@ mt report --strategy KEY --symbols SYM,… --start DATE --end DATE
 
 # state
 
-- state carries status, selected and paused strategies, heartbeat, rules and
-  bounded events
+- state = status, selected and paused strategies, heartbeat, rules and bounded events
 - status ∈ starting | running | stopped | failed
-- unknown fields fail validation
-- one bot writer replaces validated JSON at `mt:state` every export interval,
-  without expiry
-- a vendor[store] publication failure warns and trading continues; shutdown
-  publication is best effort with a bounded wait
-- a state read returns absent state or validated state; a failure stays an error
+- one bot writer replaces `mt:state` every export interval, without expiry
+- a vendor[store] publication failure warns; trading continues
+- shutdown publication is best effort with a bounded wait
+- a state read → absent | validated state; a failure stays an error
 - the web keeps the last state across its own restarts and a stale heartbeat
 
 # web
@@ -252,7 +231,6 @@ POST /logout
 
 - account, positions, orders and events fit one viewport; only the chart scrolls
 - absent, stale and unavailable values render as such, never as zero
-- a stale bot shows its last report and says so
 - a trade links to its chart
 - every response carries the read_at of its source
 - snapshot and ledger share one account read
