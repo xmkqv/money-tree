@@ -23,4 +23,8 @@ after planning:
 
 # sync skills
 
-rsync -a ../ddoc/agents/skills/ .claude/skills/
+mirror each inherited skill; leave unique skills alone
+
+for d in ../ddoc/agents/skills/*/; do
+  rsync -a --delete "$d" ".claude/skills/$(basename "$d")/"
+done
