@@ -15,6 +15,8 @@ AUTHORIZATION_URL = "https://backboard.railway.com/oauth/auth"
 TOKEN_URL = "https://backboard.railway.com/oauth/token"
 IDENTITY_URL = "https://backboard.railway.com/oauth/me"
 
+claims_adapter = TypeAdapter(dict[str, object])
+
 
 class AuthorizationRequest(NamedTuple):
     url: str
@@ -73,7 +75,7 @@ class RailwayOAuthClient:
             await client.fetch_token(TOKEN_URL, code=code, code_verifier=verifier)
             identity = await client.get(IDENTITY_URL)
             identity.raise_for_status()
-            claims = TypeAdapter(dict[str, object]).validate_python(identity.json())
+            claims = claims_adapter.validate_python(identity.json())
             subject = claims.get("sub")
             email = claims.get("email")
         if (
