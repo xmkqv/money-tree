@@ -24,9 +24,3 @@ after planning:
 # sync skills
 
 rsync -a ../ddoc/agents/skills/ .claude/skills/
-
-# ignore
-
-- [x] data clients
-- [x] storage
-- [ ] framework
