@@ -19,7 +19,6 @@ from .sections import (
     FinnhubSection,
     IndicatorsSection,
     LoginSection,
-    OrderTagSection,
     PortfolioSection,
     RedisSection,
     RequestSection,
@@ -49,7 +48,6 @@ class RuleSettings(Settings):
 
 
 class SharedSettings(RuleSettings):
-    order_tag: OrderTagSection
     finnhub: FinnhubSection
     broker: BrokerSection
     bars: BarsSection

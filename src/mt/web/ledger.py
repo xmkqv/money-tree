@@ -19,7 +19,7 @@ from mt.exchange import TRADING_ZONE, trading_time
 from mt.rules.sections import DashboardSection
 from mt.rules.values import UNATTRIBUTED, StrategyKey, Symbol, Unattributed
 from mt.sizing import Direction
-from mt.strategies.order_tag import find_order_strategy_key
+from mt.strategies.registry import find_order_strategy_key
 
 from .snapshot import Snapshot, SnapshotPosition, build_snapshot
 from .strategies import StrategyLabel, strategy_labels

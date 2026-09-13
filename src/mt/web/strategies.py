@@ -9,8 +9,7 @@ from mt.rules.settings import RuleSettings
 from mt.rules.values import UNATTRIBUTED, SettingsSection, StrategyKey, Unattributed
 from mt.strategies.base import Strategy
 from mt.strategies.breakout import Breakout
-from mt.strategies.order_tag import ORDER_TAG_PREFIX
-from mt.strategies.registry import STRATEGIES
+from mt.strategies.registry import ORDER_PREFIX, STRATEGIES
 
 
 FAMILIES = {"breakout": "Intraday breakout", "daily": "Daily trend"}
@@ -77,7 +76,7 @@ def strategy_labels() -> list[StrategyLabel]:
     ]
     labels.append(
         StrategyLabel(
-            key=UNATTRIBUTED, short="Unattributed", label=f"No {ORDER_TAG_PREFIX}- order tag"
+            key=UNATTRIBUTED, short="Unattributed", label=f"No {ORDER_PREFIX}- order code"
         )
     )
     return labels

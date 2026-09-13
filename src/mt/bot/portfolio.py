@@ -20,8 +20,7 @@ from mt.sizing import entry_quantity, round_quantity, round_stop
 from mt.state import EventLevel
 from mt.strategies.base import Candidate, Holding, Session, Strategy, ranked
 from mt.strategies.daily import Daily
-from mt.strategies.order_tag import order_tag
-from mt.strategies.registry import STRATEGIES
+from mt.strategies.registry import STRATEGIES, order_code
 
 from .bars import Bars
 from .export import StateExporter
@@ -476,9 +475,7 @@ class Portfolio(LumibotStrategy):
             quantity,
             "buy" if direction == 1 else "sell",
             time_in_force="day",
-            custom_params={
-                "client_order_id": order_tag(strategy.key, holding.stop_distance / price)
-            },
+            custom_params={"client_order_id": order_code(strategy.key)},
         )
         self._traded[strategy.key].add((now.date(), asset))
         self.submit_order(order)
@@ -523,12 +520,7 @@ class Portfolio(LumibotStrategy):
             "sell" if holding.direction == 1 else "buy",
             stop_price=stop,
             time_in_force="day",
-            custom_params={
-                "client_order_id": order_tag(
-                    holding.strategy.key,
-                    holding.stop_distance / holding.entry,
-                )
-            },
+            custom_params={"client_order_id": order_code(holding.strategy.key)},
         )
         self.submit_order(order)
         self._stops[holding.asset] = (stop, float(size))
@@ -550,12 +542,7 @@ class Portfolio(LumibotStrategy):
             size,
             "sell" if holding.direction == 1 else "buy",
             time_in_force="day",
-            custom_params={
-                "client_order_id": order_tag(
-                    holding.strategy.key,
-                    holding.stop_distance / holding.entry,
-                )
-            },
+            custom_params={"client_order_id": order_code(holding.strategy.key)},
         )
         self._closing.add(holding.asset)
         self.submit_order(order)

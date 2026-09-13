@@ -40,7 +40,7 @@ defer:
 | signal | the condition that makes a strategy act |
 | candidate | a proposed entry with price, stop and direction |
 | order | one instruction sent to the broker |
-| code | the frozen tag that attributes an order to its strategy |
+| code | the frozen name that attributes an order to its strategy |
 | fill | the part of an order the broker completed |
 | exposure | the notional a position or holding places in the market |
 | position | the exposure the broker reports |

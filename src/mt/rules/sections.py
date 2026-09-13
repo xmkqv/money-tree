@@ -152,10 +152,6 @@ class BreakoutSection(SettingsSection):
     trail_lookback_days: Count
 
 
-class OrderTagSection(SettingsSection):
-    stop_fraction_scale: Count
-
-
 class StrategySection(SettingsSection):
     is_paused: bool
 
