@@ -1,7 +1,6 @@
 .claude
 .env*
 .git
-.pytest_cache
 .ruff_cache
 **/__pycache__
 .run
