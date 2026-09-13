@@ -217,8 +217,22 @@ if [[ -n "$(git status --porcelain)" ]]; then
   revision="${revision}-dirty"
 fi
 
+keys='import json, sys; print("\n".join(k for k in json.load(sys.stdin) if "__" in k))'
+
 for service in web bot; do
-  for key in $(uv run mt env list --service "$service"); do
+  expected="$(uv run mt env list --service "$service")"
+
+  stale="$(
+    railway variable list --service "money-tree-$service" --json \
+      | uv run python -c "$keys" \
+      | grep -vxF "$expected" || true
+  )"
+  for key in $stale; do
+    echo "dropping $key from money-tree-$service"
+    railway variable delete "$key" --service "money-tree-$service" --json >/dev/null
+  done
+
+  for key in $expected; do
     eval "value=\${$key}"
     printf '%s' "$value" \
       | railway variable set "$key" --stdin --service "money-tree-$service" \
