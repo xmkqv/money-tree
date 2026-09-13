@@ -86,7 +86,7 @@ class Strategy(ABC):
     variation: ClassVar[str]
     is_paused: ClassVar[bool] = False
     is_stop_resting: ClassVar[bool] = False
-    positions_max: ClassVar[int] = settings.risk.strategy_positions_max
+    holdings_max: ClassVar[int] = settings.risk.strategy_holdings_max
 
     def __init_subclass__(cls) -> None:
         if "key" not in cls.__dict__:
@@ -135,7 +135,7 @@ class Strategy(ABC):
         return None
 
     def is_capped(self) -> bool:
-        return self.portfolio.holding_count(self.cap_keys()) >= self.positions_max
+        return self.portfolio.holding_count(self.cap_keys()) >= self.holdings_max
 
 
 def family_keys(family: str) -> frozenset[StrategyKey]:

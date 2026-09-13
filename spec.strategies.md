@@ -12,7 +12,7 @@ elide:
 
 ```py:surface
 strategy
-    key, code, family, variation, positions_max, is_paused, is_stop_resting
+    key, code, family, variation, holdings_max, is_paused, is_stop_resting
 
     entry_window(opens, closes) → (start, end)
     begin(day)

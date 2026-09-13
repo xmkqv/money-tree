@@ -75,7 +75,7 @@ class RiskSection(SettingsSection):
         return 1.0 / self.positions_max
 
     @property
-    def strategy_positions_max(self) -> int:
+    def strategy_holdings_max(self) -> int:
         return self.positions_max // 2
 
     @model_validator(mode="after")
