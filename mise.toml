@@ -188,10 +188,11 @@ DAILY_TFB__DOES_HEED_EARNINGS = "false"
 DAILY_TFB__IS_PAUSED = "false"
 
 [tasks.setup]
-run = ["mise install", "uv sync --locked"]
-
-[tasks.vendor]
-run = "curl -sSfL https://cdn.jsdelivr.net/gh/lit/dist@${LIT_VERSION}/all/lit-all.min.js -o src/mt/web/assets/lit.min.js"
+run = [
+  "mise install",
+  "uv sync --locked",
+  "curl -sSfL https://cdn.jsdelivr.net/gh/lit/dist@${LIT_VERSION}/all/lit-all.min.js -o src/mt/web/assets/lit.min.js",
+]
 
 [tasks.test]
 run = [

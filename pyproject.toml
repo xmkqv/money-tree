@@ -56,7 +56,6 @@ select = ["B", "E", "F", "I", "SIM", "UP"]
 
 [tool.ruff.lint.isort]
 lines-after-imports = 2
-known-first-party = ["mt"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/mt", "LICENSE", "README.md", "pyproject.toml"]
