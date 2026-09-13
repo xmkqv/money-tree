@@ -139,9 +139,6 @@ def _build_state(
 ) -> State:
     events = [*previous.events, event] if event is not None else list(previous.events)
     return State(
-        run_id=previous.run_id,
-        sequence=previous.sequence,
-        started_at=previous.started_at,
         status=previous.status if status is None else status,
         strategies=list(previous.strategies),
         paused=list(previous.paused),

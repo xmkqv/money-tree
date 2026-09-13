@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import UUID4, AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 from redis import Redis
 from redis.asyncio import Redis as AsyncRedis
 
@@ -25,14 +25,11 @@ class StateEvent(_StrictModel):
 
 
 class State(_StrictModel):
-    run_id: UUID4 | None = Field(default=None, exclude=True)
-    sequence: int | None = Field(default=None, ge=1, exclude=True)
     status: RunStatus
     strategies: list[StrategyKey] = Field(min_length=1, max_length=len(STRATEGY_KEYS))
     paused: list[StrategyKey] = Field(
         default_factory=list[StrategyKey], max_length=len(STRATEGY_KEYS)
     )
-    started_at: AwareDatetime | None = Field(default=None, exclude=True)
     heartbeat_at: AwareDatetime
     configuration: RuleSettings
     events: list[StateEvent]
