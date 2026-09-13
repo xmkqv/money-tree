@@ -441,7 +441,7 @@ class Portfolio(LumibotStrategy):
             abs(float(engine_position.quantity) * float(self.get_last_price(engine_position.asset)))
             for engine_position in positions.values()
         ) + sum(pending.notional for pending in self._pending.values())
-        if len(owned) >= settings.risk.positions_max or gross >= equity:
+        if len(owned) >= settings.risk.positions_max:
             self.record(
                 strategy,
                 f"portfolio.capped.{asset}.{now.date()}",
