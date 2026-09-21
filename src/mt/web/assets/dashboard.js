@@ -496,8 +496,9 @@ const SWITCH_STATE = {
   paused:  { label: "Paused",  hint: "This strategy manages existing positions and opens no new positions" },
   unselected: { label: "Unselected", hint: "This strategy is not selected; existing positions are still managed" },
   unknown: { label: "Unknown", hint: "The bot has not reported its selected strategies" },
-  stale: { label: "Last known", hint: "The bot has stopped reporting; this is its last report" },
 };
+
+const STALE_HINT = "last reported state; the bot has stopped reporting";
 
 const SESSION_STATE = {
   open:   { label: "Open",   hint: "Inside its entry window — it can open a trade now" },
@@ -508,8 +509,12 @@ function switchState(strategy_key) {
   const bot = LEDGER.bot || {};
   if (!bot.reported) return "unknown";
   if (!(bot.strategies || []).includes(strategy_key)) return "unselected";
-  if (!bot.running) return "stale";
   return (bot.paused || []).includes(strategy_key) ? "paused" : "online";
+}
+
+function botStale() {
+  const bot = LEDGER.bot || {};
+  return Boolean(bot.reported) && !bot.running;
 }
 
 function botNote() {
@@ -539,14 +544,17 @@ function windowLabel(strategy_key) {
   return window ? window.from + "–" + window.to + " ET" : "";
 }
 
-function stateBadge(kind, key, table, extra) {
-  return html`<span class=${"run-state " + kind + " is-" + key}
-    title=${table[key].hint + (extra ? " (" + extra + ")" : "")}>${table[key].label}</span>`;
+function stateBadge(kind, key, table, extra, stale) {
+  const notes = [table[key].hint, extra, stale ? STALE_HINT : ""].filter(Boolean);
+  return html`<span class=${"run-state " + kind + " is-" + key + (stale ? " stale" : "")}
+    title=${notes[0] + (notes.length > 1 ? " (" + notes.slice(1).join("; ") + ")" : "")}
+    >${table[key].label}</span>`;
 }
 
 function stateBadges(strategy_key) {
+  const stale = botStale();
   return html`<span class="states">
-    ${stateBadge("switch", switchState(strategy_key), SWITCH_STATE)}
+    ${stateBadge("switch", switchState(strategy_key), SWITCH_STATE, "", stale)}
     ${stateBadge("session", sessionState(strategy_key), SESSION_STATE, windowLabel(strategy_key))}
   </span>`;
 }

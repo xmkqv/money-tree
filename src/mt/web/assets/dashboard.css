@@ -782,12 +782,7 @@
     border-color: color-mix(in oklab, var(--loss-mark) 30%, transparent);
   }
 
-  .run-state.switch.is-stale {
-    color: var(--hold-ink);
-    background: color-mix(in oklab, var(--hold-mark) 10%, var(--surface));
-    border-color: color-mix(in oklab, var(--hold-mark) 32%, transparent);
-    border-style: dotted;
-  }
+  .run-state.switch.stale { border-style: dotted; opacity: 0.75; }
 
   .run-state.switch.is-unknown {
     color: var(--ink-2);
