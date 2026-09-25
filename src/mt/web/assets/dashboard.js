@@ -258,7 +258,7 @@ function derive(ledger, readAt) {
   ACCOUNT = {
     ...ACCOUNT,
     invested: ledger.invested,
-    positionCapPct: ledger.positionCapPct,
+    positionCapUsd: ledger.positionCapUsd,
     dailyLossLimitPct: ledger.dailyLossLimitPct,
   };
 
@@ -332,7 +332,7 @@ function renderToday() {
   if (todayTab === "open") {
     render(html`Unrealized <b class=${tone(ACCOUNT.unrealized_pnl)}>${signedMoney(ACCOUNT.unrealized_pnl)}</b>
       <span>Deployed <b>${money(ACCOUNT.deployed)}</b></span><span>Exposure <b>${ACCOUNT.exposurePct.toFixed(1)}%</b></span>
-      <span>Largest <b>${ACCOUNT.largestPositionPct.toFixed(1)}%</b> of ${ACCOUNT.positionCapPct.toFixed(1)}% cap</span>`, sum);
+      <span>Largest <b>${money(ACCOUNT.largestPositionUsd)}</b> of ${money(ACCOUNT.positionCapUsd)} cap</span>`, sum);
     buildTable(table,
       ["Symbol", "Strategy", "Entry", "Last", "Value", "Unreal."],
       OPEN_POSITIONS.map(pos => [
@@ -452,8 +452,8 @@ function renderAccount() {
 function renderAccountValues(view) {
   const portfolio = view === "portfolio";
   const limit = (value, maximum, digits) => html`<b>${value.toFixed(digits)}%</b> of ${maximum.toFixed(digits)}%`;
-  const cap = ["Position cap", limit(ACCOUNT.largestPositionPct, ACCOUNT.positionCapPct, 1), "lim",
-    clamp(ACCOUNT.largestPositionPct / ACCOUNT.positionCapPct, 0, 1)];
+  const cap = ["Position cap", html`<b>${money(ACCOUNT.largestPositionUsd)}</b> of ${money(ACCOUNT.positionCapUsd)}`, "lim",
+    clamp(ACCOUNT.largestPositionUsd / ACCOUNT.positionCapUsd, 0, 1)];
   const stats = portfolio ? [
     ["Unrealized", signedMoney(ACCOUNT.unrealized_pnl), "v " + tone(ACCOUNT.unrealized_pnl)],
     ["Positions", OPEN_POSITIONS.length],
@@ -1127,9 +1127,9 @@ function renderPortfolio() {
   }), document.getElementById("pf-alloc"));
 
   render(repeat(OPEN_POSITIONS, position => position.symbol, position => html`
-    <div class=${"weight-row" + (position.weight >= ACCOUNT.positionCapPct - .2 ? " near" : "")}>
+    <div class=${"weight-row" + (position.value >= ACCOUNT.positionCapUsd - .5 ? " near" : "")}>
       <div class="nm">${position.symbol}</div><div class="gap">${position.weight.toFixed(1)}% · ${money(position.value)}</div>
-      ${meterBar(clamp(position.weight / ACCOUNT.positionCapPct, .03, 1))}</div>`), document.getElementById("pf-weights"));
+      ${meterBar(clamp(position.value / ACCOUNT.positionCapUsd, .03, 1))}</div>`), document.getElementById("pf-weights"));
 
   document.getElementById("pf-open-note").textContent =
     OPEN_POSITIONS.length + " held · " + money(ACCOUNT.deployed);
@@ -1284,7 +1284,7 @@ function renderLog() {
 
 
 
-const blankTradeState = timeframe => ({ timeframe, bars: null, averages: [] });
+const blankTradeState = timeframe => ({ timeframe, bars: null, averages: [], name: "" });
 let TRADE = null, TC_STATE = blankTradeState("5Min");
 let TC_LEVELS = null, TC_COTRADES = [];
 const TC_VIEW = { i0: 0, i1: 0, yManual: null, custom: false };
@@ -1410,9 +1410,15 @@ function railToggle(key, label, averageIndex, enabled, why) {
     <span>${label}</span></label>`;
 }
 
+function paintTradeTitle() {
+  render(html`${TRADE.symbol}${TC_STATE.name
+    ? html`<span class="tc-co">${TC_STATE.name}</span>` : nothing}`,
+    document.getElementById("tc-title"));
+}
+
 function paintTradeFacts() {
   const t = TRADE;
-  document.getElementById("tc-title").textContent = t.symbol;
+  paintTradeTitle();
   const strategy = STRAT_BY_KEY[t.strategy_key];
   document.getElementById("tc-sub").textContent =
     (strategy ? strategy.short : t.strategy_key) + " · " + (t.side === "short" ? "Short" : "Long") +
@@ -1464,6 +1470,7 @@ async function loadTradeBars() {
     });
     if (TC_STATE !== state) return;
     TC_STATE.averages = data.averages;
+    TC_STATE.name = data.name || "";
     TC_STATE.bars = data.bars.map(b => ({ ...b, x: barStamp(b.t) }));
     const from = barStamp(data.displayFrom);
     TC_STATE.first = Math.max(0, TC_STATE.bars.findIndex(b => b.x >= from));
@@ -1478,6 +1485,7 @@ async function loadTradeBars() {
     return;
   }
   tcState("");
+  paintTradeTitle();
   setTradeView(0, Math.max(1, TC_STATE.bars.length - TC_STATE.first));
   paintRail();
   paintTradeTable();
@@ -1754,50 +1762,99 @@ function drawTradeChart() {
 
   sizeHits(box);
 
-  paintTradeLabels(x1, y1, x2, y2, width, inIndex >= i0 && inIndex <= i1,
-    outIndex >= i0 && outIndex <= i1);
+  const marks = [];
+  if (inIndex >= i0 && inIndex <= i1) {
+    marks.push({ x: x1, y: y1, index: inIndex, title: "Entry", price: t.entry, cls: "entry" });
+  }
+  if (outIndex >= i0 && outIndex <= i1) {
+    marks.push({ x: x2, y: y2, index: outIndex, title: t.open ? "Now" : "Exit", price: t.exit, cls: "exit" });
+  }
+  paintTradeLabels(marks, TC_STATE.geo, TC_PAD);
 }
 
-function paintTradeLabels(x1, y1, x2, y2, width, entryInView, exitInView) {
-  const outcome = TRADE.pnl >= 0 ? "gain" : "loss";
+const MARK_GAP = 10;
+const MARK_BARS = 3;
+
+function paintTradeLabels(marks, geo, pad) {
   const host = document.getElementById("tc-host");
   host.querySelectorAll(".tc-mark").forEach(n => n.remove());
+  const outcome = TRADE.pnl >= 0 ? "gain" : "loss";
   const strategy = STRAT_BY_KEY[TRADE.strategy_key];
-  const place = (x, y, title, price, cls) => {
+  const placed = marks.map(mark => {
     const el = document.createElement("div");
-    el.className = "tc-mark " + cls + (cls === "exit" ? " mark-" + outcome : "");
+    el.className = "tc-mark " + mark.cls + (mark.cls === "exit" ? " mark-" + outcome : "");
     const head = document.createElement("span");
     head.className = "tc-k";
-    head.textContent = title;
+    head.textContent = mark.title;
     const val = document.createElement("span");
     val.className = "tc-v num";
-    val.textContent = money(price);
+    val.textContent = money(mark.price);
     const who = document.createElement("span");
     who.className = "tc-s";
     who.textContent = strategy ? strategy.short : TRADE.strategy_key;
     el.append(head, val, who);
-    el.style.left = Math.round(x) + "px";
-    el.style.top = Math.round(y) + "px";
-    if (x > width * 0.6) el.classList.add("flip");
+    el.style.left = Math.round(mark.x) + "px";
+    if (mark.x > geo.width * 0.6) el.classList.add("flip");
     host.append(el);
-  };
-  if (entryInView) place(x1, y1, "Entry", TRADE.entry, "entry");
-  if (exitInView) place(x2, y2, TRADE.open ? "Now" : "Exit", TRADE.exit, "exit");
-  separateMarks(host);
+    return { el, mark };
+  });
+  placed.forEach(({ el, mark }) => parkMark(el, mark, geo, pad));
+  partMarks(placed, geo, pad);
+  placed.forEach(({ el, mark }) => leadMark(el, mark, host));
 }
 
-function separateMarks(host) {
-  const [a, b] = [...host.querySelectorAll(".tc-mark")];
-  if (!a || !b) return;
+function barBand(geo, index) {
+  const from = Math.max(geo.lo, index - MARK_BARS), to = Math.min(geo.hi, index + MARK_BARS);
+  const near = geo.bars.slice(from, to + 1);
+  return near.length
+    ? { top: geo.py(Math.max(...near.map(b => b.h))), bottom: geo.py(Math.min(...near.map(b => b.l))) }
+    : null;
+}
+
+function parkMark(el, mark, geo, pad, side) {
+  const half = el.offsetHeight / 2;
+  const highest = pad.t + half, lowest = pad.t + geo.plotH - half;
+  const band = barBand(geo, mark.index) || { top: mark.y, bottom: mark.y };
+  const above = band.top - MARK_GAP - half, below = band.bottom + MARK_GAP + half;
+  const roomAbove = above - highest, roomBelow = lowest - below;
+  const wanted = side === "above" || side === "below"
+    ? (side === "above" ? above : below)
+    : roomAbove >= 0 && roomAbove >= roomBelow ? above
+    : roomBelow >= 0 ? below
+    : roomAbove > roomBelow ? above : below;
+  el.style.top = Math.round(clamp(wanted, highest, lowest)) + "px";
+}
+
+function partMarks(placed, geo, pad) {
+  if (placed.length < 2 || !overlapping(placed[0].el, placed[1].el)) return;
+  const upper = TRADE.entry >= TRADE.exit ? placed[0] : placed[1];
+  const lower = upper === placed[0] ? placed[1] : placed[0];
+  parkMark(upper.el, upper.mark, geo, pad, "above");
+  parkMark(lower.el, lower.mark, geo, pad, "below");
+}
+
+function overlapping(a, b) {
   const boxA = a.getBoundingClientRect(), boxB = b.getBoundingClientRect();
-  const overlapY = Math.min(boxA.bottom, boxB.bottom) - Math.max(boxA.top, boxB.top);
-  const overlapX = Math.min(boxA.right, boxB.right) - Math.max(boxA.left, boxB.left);
-  if (overlapY <= 0 || overlapX <= 0) return;
-  const shift = (overlapY + 8) / 2;
-  const upper = TRADE.entry >= TRADE.exit ? a : b;
-  const lower = upper === a ? b : a;
-  upper.style.marginTop = -shift + "px";
-  lower.style.marginTop = shift + "px";
+  return Math.min(boxA.bottom, boxB.bottom) > Math.max(boxA.top, boxB.top) &&
+    Math.min(boxA.right, boxB.right) > Math.max(boxA.left, boxB.left);
+}
+
+function leadMark(el, mark, host) {
+  const svg = host.querySelector("svg");
+  if (!svg) return;
+  const hostBox = host.getBoundingClientRect(), box = el.getBoundingClientRect();
+  const left = box.left - hostBox.left, right = box.right - hostBox.left;
+  const top = box.top - hostBox.top, bottom = box.bottom - hostBox.top;
+  const x = clamp(mark.x, left + 6, right - 6);
+  const y = mark.y < top ? top : mark.y > bottom ? bottom : mark.y;
+  if (Math.abs(y - mark.y) < 4 && Math.abs(x - mark.x) < 4) return;
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  line.setAttribute("class", "tc-leader");
+  line.setAttribute("x1", mark.x.toFixed(2));
+  line.setAttribute("y1", mark.y.toFixed(2));
+  line.setAttribute("x2", x.toFixed(2));
+  line.setAttribute("y2", y.toFixed(2));
+  svg.append(line);
 }
 
 function paintTradeTable() {
@@ -1999,6 +2056,8 @@ function applySnapshot(snapshot, readAt) {
   const aligned = mergePositions(snapshot.positions);
   ACCOUNT.largestPositionPct = OPEN_POSITIONS.length
     ? Math.max(...OPEN_POSITIONS.map(p => p.weight)) : 0;
+  ACCOUNT.largestPositionUsd = OPEN_POSITIONS.length
+    ? Math.max(...OPEN_POSITIONS.map(p => p.value)) : 0;
 
   retipSeries(DAILY, snapshot.equity);
   retipSeries(INTRADAY, snapshot.equity);

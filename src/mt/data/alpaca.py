@@ -51,6 +51,11 @@ class Clock(Payload):
     next_close: str
 
 
+class AssetProfile(Payload):
+    symbol: str
+    name: str
+
+
 class Fill(Payload):
     id: str
     order_id: str
@@ -205,6 +210,13 @@ class TradingClientAlpaca:
 
     async def clock(self) -> Clock:
         return Clock.model_validate(await get_json(self._client, "/v2/clock"))
+
+    async def asset_name(self, symbol: str) -> str:
+        try:
+            payload = await get_json(self._client, f"/v2/assets/{symbol}")
+        except httpx.HTTPStatusError:
+            return ""
+        return AssetProfile.model_validate(payload).name
 
     async def fills(self, after: str | None = None) -> list[Fill]:
         return await self._pages(

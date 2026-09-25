@@ -118,6 +118,7 @@ mt trade --strategies KEY,…
 - resting-stop holdings exit before the session close
 - Σ risk(open holdings) ≤ risk.per_day_max * equity
 - count(holdings per cap) ≤ risk.positions_max / 2
+- entry notional ≤ risk.notional_usd_max
 - holding.stop never widens
 
 ```py:surface
@@ -129,8 +130,10 @@ universe
 sizing(equity, price, stop_distance, direction)
     per_trade = risk.per_day_max / risk.positions_max
     allocation = 1 / risk.positions_max
-    quantity = min(equity * allocation / price, equity * per_trade / stop_distance)
+    cap = risk.notional_usd_max / price
+    quantity = min(equity * allocation / price, equity * per_trade / stop_distance, cap)
     short → whole shares; otherwise risk.quantity_decimal_places
+    short with price > risk.notional_usd_max → 0
     quantity * price < risk.notional_usd_min → 0
 
 enter(strategy, candidate, session)
@@ -232,6 +235,7 @@ POST /logout
 - account, positions, orders and events fit one viewport; only the chart scrolls
 - absent, stale and unavailable values render as such, never as zero
 - a trade links to its chart
+- trade marks rest clear of the candles and lead back to their price
 - every response carries the read_at of its source
 - snapshot and ledger share one account read
 - an older response never replaces a newer account value
@@ -250,7 +254,7 @@ GET /api/snapshot
 # realtime account, positions and open orders
 
 GET /api/bars?symbol={symbol}&timeframe={timeframe}&opened={date}&closed={date}
-# configured timeframes; symbol → asset
+# configured timeframes; symbol → asset; asset name accompanies the symbol
 # stock hours follow exchange sessions; crypto and options use native hours
 
 GET /api/levels?symbol={symbol}&strategy_key={key}&side={side}&entry={price}&opened={date}
