@@ -1457,10 +1457,18 @@
   }
 
   .tc-mark.flip { transform: translate(calc(-100% - 12px), -50%); }
+
   .tc-mark .tc-k { font-size: var(--text-3xs); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--ink-3); }
   .tc-mark .tc-v { font-size: var(--text-md); font-weight: 600; color: var(--ink); }
   .tc-mark .tc-s { font-size: var(--text-2xs); color: var(--ink-2); }
   .tc-mark.entry, .tc-mark.exit { border-inline-start-width: 3px; border-inline-start-style: solid; }
+
+  .tc-co {
+    margin-inline-start: var(--space-xs);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--ink-2);
+  }
 
   .tc-note {
     margin: var(--space-sm) var(--pad) 0;
@@ -1536,6 +1544,7 @@
 
   .trade-host svg .level { stroke: var(--axis-ink); stroke-width: 1; opacity: 0.72; }
   .trade-host svg .hint { stroke: var(--axis-ink); stroke-width: 1; stroke-dasharray: 2 5; opacity: 0.5; }
+  .trade-host svg .tc-leader { stroke: var(--axis-ink); stroke-width: 1; stroke-dasharray: 2 3; opacity: 0.6; }
 
   .trade-host svg .trend {
     stroke-width: 2;

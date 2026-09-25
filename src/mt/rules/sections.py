@@ -64,6 +64,7 @@ class RiskSection(SettingsSection):
     per_day_max: Fraction
     positions_max: Count
     notional_usd_min: Amount
+    notional_usd_max: Amount
     quantity_decimal_places: Count
 
     @property
@@ -82,6 +83,8 @@ class RiskSection(SettingsSection):
     def check_limits(self) -> Self:
         if self.positions_max < 2:
             raise ValueError("the book must hold at least two positions")
+        if self.notional_usd_max < self.notional_usd_min:
+            raise ValueError("the holding cap must not fall below the smallest tradable notional")
         return self
 
 
@@ -235,6 +238,8 @@ class DashboardSection(SettingsSection):
     snapshot_ttl_seconds: Count
     chart_ttl_seconds: Count
     chart_cache_max: Count
+    name_ttl_seconds: Count
+    name_cache_max: Count
     levels_lookback_days: Count
     levels_source: Timeframe
     levels_source_bars_max: Count
