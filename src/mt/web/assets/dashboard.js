@@ -9,6 +9,7 @@ const signedMoney = v => (v > 0 ? "+" : v < 0 ? "−" : "") + usd.format(Math.ab
 const signedPct = (v, d = 2) => v === null || !Number.isFinite(v) ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d) + "%";
 const ratio = v => Number.isFinite(v) ? v.toFixed(2) : "—";
 const plainNum = new Intl.NumberFormat("en-US").format;
+const shares = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format;
 const tone = v => (v > 0 ? "pos" : v < 0 ? "neg" : "flat");
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -1780,19 +1781,14 @@ function paintTradeLabels(marks, geo, pad) {
   host.querySelectorAll(".tc-mark").forEach(n => n.remove());
   const outcome = TRADE.pnl >= 0 ? "gain" : "loss";
   const strategy = STRAT_BY_KEY[TRADE.strategy_key];
+  const who = strategy ? strategy.short : TRADE.strategy_key;
   const placed = marks.map(mark => {
     const el = document.createElement("div");
     el.className = "tc-mark " + mark.cls + (mark.cls === "exit" ? " mark-" + outcome : "");
-    const head = document.createElement("span");
-    head.className = "tc-k";
-    head.textContent = mark.title;
-    const val = document.createElement("span");
-    val.className = "tc-v num";
-    val.textContent = money(mark.price);
-    const who = document.createElement("span");
-    who.className = "tc-s";
-    who.textContent = strategy ? strategy.short : TRADE.strategy_key;
-    el.append(head, val, who);
+    render(html`<span class="tc-h"><span class="tc-k">${mark.title}</span>
+      <span class="tc-s">${who}</span></span>
+      <span class="tc-v num">${money(mark.price)}</span>
+      <span class="tc-d num">${markDetail(mark)}</span>`, el);
     el.style.left = Math.round(mark.x) + "px";
     if (mark.x > geo.width * 0.6) el.classList.add("flip");
     host.append(el);
@@ -1801,6 +1797,22 @@ function paintTradeLabels(marks, geo, pad) {
   placed.forEach(({ el, mark }) => parkMark(el, mark, geo, pad));
   partMarks(placed, geo, pad);
   placed.forEach(({ el, mark }) => leadMark(el, mark, host));
+}
+
+function filledQuantity(side) {
+  return (TRADE.fills || []).reduce((sum, fill) => fill.side === side ? sum + fill.quantity : sum, 0);
+}
+
+function markDetail(mark) {
+  const t = TRADE;
+  if (mark.cls === "entry") {
+    const quantity = filledQuantity("in") || t.quantity;
+    return html`${shares(quantity)} sh · ${money(quantity * t.entry)}`;
+  }
+  const bought = filledQuantity("in");
+  const sold = bought ? clamp(filledQuantity("out") / bought, 0, 1) : Number(!t.open);
+  return html`${(sold * 100).toFixed(0)}% sold ·
+    <b class=${tone(t.pnl)}>${signedMoney(t.pnl)}</b>`;
 }
 
 function barBand(geo, index) {
