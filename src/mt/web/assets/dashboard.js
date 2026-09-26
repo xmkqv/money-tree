@@ -1166,7 +1166,7 @@ function tile(k, v, cls, sub) {
     ${sub ? html`<span class="sub">${sub}</span>` : nothing}</div>`;
 }
 
-function renderHistory() {
+function renderOverview() {
   document.getElementById("hs-span").textContent =
     SESSIONS.length ? SESSIONS[0].long + " – " + SESSIONS.at(-1).long : "No closed trades";
 
@@ -1193,15 +1193,10 @@ function renderHistory() {
       <div class="down">${session.pnl < 0 ? fill : nothing}</div></div><div class="lab">${session.label}</div></div>`;
   }), document.getElementById("hs-strip"));
 
+  const { rows, classes } = sessionRows();
   buildTable(document.getElementById("hs-sessions"),
-    ["Session", "Trades", "Win rate", "P&L", "Return"],
-    [...SESSIONS].reverse().map(m => [
-      { t: m.long },
-      { t: plainNum(m.trades), r: true, dim: true },
-      { t: m.trades ? ((m.wins / m.trades) * 100).toFixed(1) + "%" : "—", r: true, dim: true },
-      { t: signedMoney(m.pnl), r: true, cls: tone(m.pnl) },
-      { t: signedPct(m.pct), r: true, cls: tone(m.pnl) },
-    ]), 1);
+    ["Session", "Trades", "Won", "Lost", "Win rate", "P&L", "Return"],
+    rows, 1, (_row, index) => classes[index]);
 
   buildTable(document.getElementById("hs-strats"),
     ["Strategy", "Trades", "Win rate", "Factor", "P&L"],
@@ -1216,9 +1211,46 @@ function renderHistory() {
       ];
     }), 1);
 
-  const fs = document.getElementById("f-strategy");
-  if (fs.options.length === 1) {
-    for (const st of STRATEGIES) fs.append(new Option(st.short, st.key));
+}
+
+function sessionStrategies(date) {
+  const trades = tradesByDate.get(date) || [];
+  return STRATEGIES
+    .map(st => [st.key, statsFor(trades.filter(t => t.strategy_key === st.key))])
+    .filter(([, stats]) => stats.n);
+}
+
+function sessionRows() {
+  const rows = [], classes = [];
+  const rate = stats => stats.n ? stats.winRate.toFixed(1) + "%" : "—";
+  const line = (lead, stats, pnl, pct) => [
+    lead,
+    { t: plainNum(stats.n), r: true, dim: true },
+    { t: plainNum(stats.wins), r: true, dim: true },
+    { t: plainNum(stats.losses), r: true, dim: true },
+    { t: rate(stats), r: true, dim: true },
+    { t: signedMoney(pnl), r: true, cls: tone(pnl) },
+    { t: signedPct(pct), r: true, cls: tone(pnl) },
+  ];
+  for (const session of [...SESSIONS].reverse()) {
+    classes.push("group");
+    rows.push(line({ t: session.long },
+      { n: session.trades, wins: session.wins, losses: session.trades - session.wins,
+        winRate: session.trades ? (session.wins / session.trades) * 100 : 0 },
+      session.pnl, session.pct));
+    for (const [key, stats] of sessionStrategies(session.date)) {
+      classes.push("sub");
+      rows.push(line(stratCell(key), stats, stats.net_pnl,
+        session.before ? (stats.net_pnl / session.before) * 100 : null));
+    }
+  }
+  return { rows, classes };
+}
+
+function renderTrades() {
+  const strategies = document.getElementById("f-strategy");
+  if (strategies.options.length === 1) {
+    for (const st of STRATEGIES) strategies.append(new Option(st.short, st.key));
   }
   const sessions = document.getElementById("f-session");
   const selected = sessions.value;
@@ -1331,7 +1363,7 @@ async function openTradeChart(trade, from) {
   if (trade.open) TC_COTRADES.push(trade);
   syncTimeframeButtons();
   document.getElementById("chart-back").textContent =
-    TC_ORIGIN === "portfolio" ? "← Portfolio" : "← Trade log";
+    "← " + (VIEW_NAMES[TC_ORIGIN] || "Trade log");
   switchView("chart");
   paintTradeFacts();
   paintStepper();
@@ -1943,24 +1975,35 @@ function resetTradeView() {
 
 
 let currentView = "dashboard";
-const viewReady = { dashboard: true, portfolio: false, history: false, strategies: false, chart: true };
+const VIEWS = ["dashboard", "portfolio", "overview", "trades", "strategies", "chart"];
+const VIEW_NAMES = { dashboard: "Dashboard", portfolio: "Portfolio",
+  overview: "Overview", trades: "Trade log", strategies: "Strategies" };
+const HISTORY_VIEWS = ["overview", "trades"];
+const viewReady = { dashboard: true, portfolio: false, overview: false, trades: false,
+  strategies: false, chart: true };
 
 function switchView(name) {
   currentView = name;
   document.body.dataset.view = name;
+  openHistoryMenu(false);
 
+  const owner = name === "chart" ? TC_ORIGIN : name;
   for (const b of document.querySelectorAll(".tabs button")) {
-    const owner = name === "chart" ? TC_ORIGIN : name;
     if (b.dataset.view === owner) b.setAttribute("aria-current", "page");
     else b.removeAttribute("aria-current");
   }
-  for (const id of ["dashboard", "portfolio", "history", "strategies", "chart"]) {
+  const history = document.getElementById("history-button");
+  if (HISTORY_VIEWS.includes(owner)) history.setAttribute("aria-current", "page");
+  else history.removeAttribute("aria-current");
+
+  for (const id of VIEWS) {
     document.getElementById("view-" + id).classList.toggle("hidden", id !== name);
   }
 
   if (!viewReady[name]) {
     if (name === "portfolio") renderPortfolio();
-    if (name === "history") renderHistory();
+    if (name === "overview") renderOverview();
+    if (name === "trades") renderTrades();
     if (name === "strategies") renderConfig();
     viewReady[name] = true;
   }
@@ -2027,7 +2070,8 @@ function renderAll() {
   renderCalendar();
   renderToday();
   if (viewReady.portfolio) renderPortfolio();
-  if (viewReady.history) renderHistory();
+  if (viewReady.overview) renderOverview();
+  if (viewReady.trades) renderTrades();
   if (viewReady.strategies) paintConfig();
 }
 
@@ -2180,9 +2224,25 @@ async function refreshLedger() {
 }
 
 
+function openHistoryMenu(open) {
+  const list = document.getElementById("history-list");
+  list.hidden = !open;
+  document.getElementById("history-button").setAttribute("aria-expanded", String(open));
+}
+
 document.querySelector(".tabs").addEventListener("click", ev => {
   const btn = ev.target.closest("button");
-  if (btn && btn.dataset.view) switchView(btn.dataset.view);
+  if (!btn) return;
+  if (btn.id === "history-button") openHistoryMenu(document.getElementById("history-list").hidden);
+  else if (btn.dataset.view) switchView(btn.dataset.view);
+});
+
+document.addEventListener("click", ev => {
+  if (!ev.target.closest("#history-menu")) openHistoryMenu(false);
+});
+
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape") openHistoryMenu(false);
 });
 
 wireGroup("chart-range", "range", setRange);

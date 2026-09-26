@@ -37,7 +37,13 @@
     <nav class="tabs" aria-label="Views">
       <button type="button" data-view="dashboard" aria-current="page">Dashboard</button>
       <button type="button" data-view="portfolio">Portfolio</button>
-      <button type="button" data-view="history">History</button>
+      <div class="menu" id="history-menu">
+        <button type="button" id="history-button" aria-haspopup="menu" aria-expanded="false">History<span class="caret" aria-hidden="true">▾</span></button>
+        <div class="menu-list" id="history-list" role="menu" hidden>
+          <button type="button" role="menuitem" data-view="overview">Overview</button>
+          <button type="button" role="menuitem" data-view="trades">Trades</button>
+        </div>
+      </div>
       <button type="button" data-view="strategies">Strategies</button>
       <button type="button" id="logout" class="ghost" title="Sign out">Sign out</button>
     </nav>
@@ -237,7 +243,7 @@
     </div>
   </div>
 
-  <div class="view hidden" id="view-history">
+  <div class="view hidden" id="view-overview">
     <div class="history">
 
       <section class="panel">
@@ -259,6 +265,12 @@
           <div class="panel-body"><div class="table-scroll"><table class="data" id="hs-strats" data-cards></table></div></div>
         </section>
       </div>
+
+    </div>
+  </div>
+
+  <div class="view hidden" id="view-trades">
+    <div class="history">
 
       <section class="panel">
         <div class="panel-head">
