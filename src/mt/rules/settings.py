@@ -42,6 +42,7 @@ class RuleSettings(Settings):
     breakout: BreakoutSection
     breakout_5m: BreakoutVariationSection
     breakout_10m: BreakoutVariationSection
+    breakout_15m: BreakoutVariationSection
     daily: DailySection
     daily_sma: DailySmaSection
     daily_tfb: DailyTfbSection

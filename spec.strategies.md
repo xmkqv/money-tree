@@ -9,7 +9,7 @@ elide:
 
 # breakout
 
-- variations: breakout_5m, breakout_10m
+- variations: breakout_5m, breakout_10m, breakout_15m
 - one opening range, one volume test
 - the cap counts holdings across the family
 - the stop rests at the broker

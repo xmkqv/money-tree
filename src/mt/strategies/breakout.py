@@ -313,3 +313,8 @@ class Breakout5m(Breakout):
 class Breakout10m(Breakout):
     key = "breakout_10m"
     code = "m"
+
+
+class Breakout15m(Breakout):
+    key = "breakout_15m"
+    code = "f"
