@@ -28,6 +28,10 @@ class Release(Payload):
     date: date
 
 
+class Profile(Payload):
+    market_cap_musd: float = Field(alias="marketCapitalization", default=0.0)
+
+
 class _Calendar(Payload):
     releases: list[Release] = Field(alias="earningsCalendar")
 
@@ -38,6 +42,11 @@ stocks_adapter = TypeAdapter(list[Stock])
 def stocks() -> frozenset[str]:
     payload = stocks_adapter.validate_python(_get("/stock/symbol", {"exchange": "US"}))
     return frozenset(stock.symbol for stock in payload if stock.type == COMMON_STOCK)
+
+
+def market_cap_usd(symbol: str) -> float:
+    profile = Profile.model_validate(_get("/stock/profile2", {"symbol": symbol}))
+    return profile.market_cap_musd * 1_000_000
 
 
 def earnings_dates(start: date, end: date) -> dict[str, date]:

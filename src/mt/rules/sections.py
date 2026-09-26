@@ -114,6 +114,10 @@ class PortfolioSection(SettingsSection):
     stop_coverage_drift_max: Amount
 
 
+class CompanySection(SettingsSection):
+    profile_cache_max: Count
+
+
 class EarningsSection(SettingsSection):
     block_days: Count
     calendar_cache_max: Count
@@ -181,6 +185,35 @@ class DailyVariationSection(StrategySection):
 class DailySmaSection(DailyVariationSection):
     trend_sessions_long: Count
     rsi_min: Amount
+
+
+class Daily20SmaSection(StrategySection):
+    trend_sessions: Count
+    trend_sessions_long: Count
+    rsi_min: Amount
+    rsi_max: Amount
+    adx_min: Amount
+    does_heed_earnings: bool
+    market_cap_usd_min: Amount
+    holdings_max: Count
+    entry_minutes: Count
+    stop_fraction: Fraction
+    breakeven_gain: Fraction
+    target_gains: tuple[Fraction, Fraction]
+    target_fractions: tuple[Fraction, Fraction]
+    trail_atr_multiple: Amount
+    trail_hours: Count
+    trail_lookback_days: Count
+
+    @model_validator(mode="after")
+    def check_targets(self) -> Self:
+        if self.rsi_max <= self.rsi_min:
+            raise ValueError("the RSI band must rise from its floor to its ceiling")
+        if self.target_gains[1] <= self.target_gains[0]:
+            raise ValueError("target gains must rise")
+        if sum(self.target_fractions) >= 1:
+            raise ValueError("the target fractions must leave a share to trail")
+        return self
 
 
 class DailyTfbSection(DailyVariationSection):

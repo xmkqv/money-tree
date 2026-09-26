@@ -182,6 +182,12 @@ class Portfolio(LumibotStrategy):
         frames = self._bars.bars(assets, f"{minutes}Min", start, now)
         return {asset: self._completed(frame, now, minutes) for asset, frame in frames.items()}
 
+    def hour_frames(
+        self, assets: list[Asset], start: datetime, now: datetime, hours: int
+    ) -> dict[Asset, DataFrame]:
+        frames = self._bars.bars(assets, f"{hours}Hour", start, now)
+        return {asset: self._completed(frame, now, hours * 60) for asset, frame in frames.items()}
+
     def last_price(self, asset: Asset) -> float:
         return float(self.get_last_price(asset.to_lumibot()))
 
