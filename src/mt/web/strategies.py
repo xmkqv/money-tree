@@ -17,6 +17,7 @@ ACRONYMS = {"atr": "ATR", "adx": "ADX", "rsi": "RSI", "sma": "SMA", "tfb": "TFB"
 BOUNDS = {"max": "≤", "min": "≥"}
 UNITS = {
     "minutes": "min",
+    "hours": "h",
     "seconds": "s",
     "sessions": "sess",
     "days": "days",
@@ -185,6 +186,8 @@ def _number(value: object) -> str:
 
 def _money(value: object) -> str:
     figure = cast(float, value)
+    if figure >= 1_000_000_000:
+        return f"${figure / 1_000_000_000:g}B"
     return f"${figure / 1_000_000:g}M" if figure >= 1_000_000 else f"${figure:g}"
 
 

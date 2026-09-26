@@ -4,6 +4,7 @@ from mt.rules.values import STRATEGY_KEYS, StrategyKey
 
 from .base import Strategy
 from .breakout import Breakout5m, Breakout10m, Breakout15m
+from .daily_20sma import Daily20Sma
 from .daily_sma import DailySma
 from .daily_tfb import DailyTfb
 
@@ -16,6 +17,7 @@ STRATEGIES: tuple[type[Strategy], ...] = (
     Breakout15m,
     DailySma,
     DailyTfb,
+    Daily20Sma,
 )
 STRATEGIES_BY_KEY: dict[StrategyKey, type[Strategy]] = {cls.key: cls for cls in STRATEGIES}
 STRATEGIES_BY_CODE: dict[str, type[Strategy]] = {cls.code: cls for cls in STRATEGIES}

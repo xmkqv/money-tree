@@ -37,7 +37,7 @@ management
 
 # daily
 
-- variations: daily_sma, daily_tfb
+- variations: daily_sma, daily_tfb, daily_20sma
 - one trend test, one session per entry
 - the cap counts holdings of the variation alone
 - portfolio watches the stop
@@ -63,4 +63,28 @@ management
     close < stop or close < SMA(average_sessions) or RSI < exit_rsi_max → exit at the next open
     heeded earnings → exit at the open of the last session before the event
     retry an earnings exit until it is submitted
+```
+
+## daily_20sma
+
+- the daily frame carries every setup, confirmation and exit test
+- the trailing stop reads ATR over trail_hours bars
+- market capitalisation is read once per candidate per session
+
+```py:surface
+entry
+    price > SMA(trend_sessions) > SMA(trend_sessions_long)
+    rsi_min ≤ RSI ≤ rsi_max and ADX ≥ adx_min
+    close crosses above SMA(average_sessions)
+    market capitalisation < market_cap_usd_min or unreadable → skip
+    window = session open → open + entry_minutes
+    stop = entry * (1 - stop_fraction)
+
+management
+    targets = entry * (1 + target_gains)
+    each target closes its target_fractions share; the rest trails
+    highest < entry * (1 + breakeven_gain) → the stop holds
+    otherwise stop = max(stop, entry, highest - trail_atr_multiple * ATR)
+    price ≤ stop → exit
+    at the open, close < SMA(average_sessions) or RSI < exit_rsi_max → exit the rest
 ```
