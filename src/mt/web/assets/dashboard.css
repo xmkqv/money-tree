@@ -1458,9 +1458,12 @@
 
   .tc-mark.flip { transform: translate(calc(-100% - 12px), -50%); }
 
+  .tc-mark .tc-h { display: flex; align-items: baseline; gap: var(--space-2xs); }
   .tc-mark .tc-k { font-size: var(--text-3xs); letter-spacing: var(--track-label); text-transform: uppercase; color: var(--ink-3); }
   .tc-mark .tc-v { font-size: var(--text-md); font-weight: 600; color: var(--ink); }
   .tc-mark .tc-s { font-size: var(--text-2xs); color: var(--ink-2); }
+  .tc-mark .tc-d { font-size: var(--text-2xs); color: var(--ink-2); }
+  .tc-mark .tc-d b { font-weight: 600; }
   .tc-mark.entry, .tc-mark.exit { border-inline-start-width: 3px; border-inline-start-style: solid; }
 
   .tc-co {
