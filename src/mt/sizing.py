@@ -15,7 +15,7 @@ def entry_quantity(
     direction: Direction = 1,
 ) -> Decimal:
     risk = settings.risk
-    capital, last, distance, allocation, per_trade, minimum = map(
+    capital, last, distance, allocation, per_trade, minimum, maximum = map(
         lambda value: Decimal(str(value)),
         (
             equity,
@@ -24,10 +24,11 @@ def entry_quantity(
             risk.allocation,
             risk.per_trade,
             risk.notional_usd_min,
+            risk.notional_usd_max,
         ),
     )
     quantity = round_quantity(
-        min(capital * allocation / last, capital * per_trade / distance),
+        min(capital * allocation / last, capital * per_trade / distance, maximum / last),
         whole=direction == -1,
     )
     return quantity if quantity * last >= minimum else Decimal(0)

@@ -88,7 +88,8 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
     chart_cache_max = dashboard_section.chart_cache_max
     bar_cache = Cache[tuple[datetime, dict[str, Any]]](chart_ttl, chart_cache_max)
     levels_cache = Cache[tuple[datetime, Levels]](chart_ttl, chart_cache_max)
-    caches = (ledger_cache, account_cache, bar_cache, levels_cache)
+    name_cache = Cache[str](dashboard_section.name_ttl_seconds, dashboard_section.name_cache_max)
+    caches = (ledger_cache, account_cache, bar_cache, levels_cache, name_cache)
 
     def trading(request: Request) -> TradingClientAlpaca:
         return request.state.trading
@@ -98,6 +99,9 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
 
     def bars_client(request: Request) -> BarsClientAlpaca:
         return request.state.bars
+
+    async def asset_name(request: Request, symbol: Symbol) -> str:
+        return await name_cache.get_or_build(symbol, lambda: trading(request).asset_name(symbol))
 
     @router.get("/")
     async def dashboard() -> Response:
@@ -156,6 +160,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
             read_at = datetime.now(UTC)
             return read_at, {
                 "symbol": symbol,
+                "name": await asset_name(request, symbol),
                 "timeframe": timeframe,
                 "displayFrom": display.isoformat(),
                 "averages": bar_averages(rows, dashboard_section.sma_lengths),
@@ -260,7 +265,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
                 **cached,
                 "bot": bot_state(state, heartbeat_timeout),
                 "windows": entry_windows(rules),
-                "positionCapPct": round(100 * risk.allocation, 2),
+                "positionCapUsd": risk.notional_usd_max,
                 "dailyLossLimitPct": round(100 * risk.per_day_max, 2),
             },
             dashboard_section.ledger_max_age_seconds,
