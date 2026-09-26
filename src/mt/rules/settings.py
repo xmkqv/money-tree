@@ -10,6 +10,8 @@ from .sections import (
     BreakoutSection,
     BreakoutVariationSection,
     BrokerSection,
+    CompanySection,
+    Daily20SmaSection,
     DailySection,
     DailySmaSection,
     DailyTfbSection,
@@ -37,6 +39,7 @@ class RuleSettings(Settings):
     benchmark_symbol: Symbol
     risk: RiskSection
     universe: UniverseSection
+    company: CompanySection
     earnings: EarningsSection
     indicators: IndicatorsSection
     breakout: BreakoutSection
@@ -45,6 +48,7 @@ class RuleSettings(Settings):
     daily: DailySection
     daily_sma: DailySmaSection
     daily_tfb: DailyTfbSection
+    daily_20sma: Daily20SmaSection
 
 
 class SharedSettings(RuleSettings):

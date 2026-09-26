@@ -32,7 +32,7 @@ class Candidate:
 @dataclass(slots=True)
 class Ladder:
     original_quantity: float
-    targets: tuple[float, float, float]
+    targets: tuple[float, ...]
     stage: int = 0
 
 
@@ -59,6 +59,10 @@ class Portfolio(Protocol):
 
     def minute_frames(
         self, assets: list[Asset], start: datetime, now: datetime, minutes: int
+    ) -> dict[Asset, DataFrame]: ...
+
+    def hour_frames(
+        self, assets: list[Asset], start: datetime, now: datetime, hours: int
     ) -> dict[Asset, DataFrame]: ...
 
     def last_price(self, asset: Asset) -> float: ...
@@ -90,7 +94,8 @@ class Strategy(ABC):
             return
         family, _, variation = cls.key.partition("_")
         cls.family = family
-        cls.variation = variation.upper() if variation.isalpha() else variation
+        if "variation" not in cls.__dict__:
+            cls.variation = variation.upper() if variation.isalpha() else variation
         section: SettingsSection = getattr(settings, cls.key)
         missing = sorted(set(type(section).model_fields) - cls.bind(section))
         if missing:

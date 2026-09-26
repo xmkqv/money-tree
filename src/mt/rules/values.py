@@ -11,7 +11,7 @@ from pydantic import (
 )
 
 
-type StrategyKey = Literal["breakout_5m", "breakout_10m", "daily_sma", "daily_tfb"]
+type StrategyKey = Literal["breakout_5m", "breakout_10m", "daily_sma", "daily_tfb", "daily_20sma"]
 
 type Unattributed = Literal["unattributed"]
 
