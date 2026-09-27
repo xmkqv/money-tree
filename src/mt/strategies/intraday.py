@@ -68,12 +68,6 @@ class Intraday(Strategy):
     def manage(self, holding: Holding, session: Session) -> None:
         if session.now >= session.closes - timedelta(minutes=self.close_lead_minutes):
             self.portfolio.exit(holding, "close")
-            return
-        price = self.price(holding.asset)
-        if price is None:
-            return
-        holding.highest = max(holding.highest, price)
-        holding.lowest = min(holding.lowest, price)
 
     def _read_signal(self, now: datetime) -> tuple[date, Asset | None, float] | None:
         day = now.date()

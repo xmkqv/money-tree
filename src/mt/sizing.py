@@ -12,7 +12,7 @@ def entry_quantity(
     equity: float,
     price: float,
     stop_distance: float,
-    direction: Direction = 1,
+    direction: Direction,
 ) -> Decimal:
     risk = settings.risk
     capital, last, distance, allocation, per_trade, minimum, maximum = map(

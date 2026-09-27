@@ -36,7 +36,7 @@ def _parse_assets(value: str) -> list[Asset]:
     from mt.data.asset import Asset, AssetType
 
     try:
-        assets = [Asset.from_symbol(item.strip()) for item in value.split(",")]
+        assets = [Asset.from_symbol(item) for item in value.split(",")]
         if len(set(assets)) != len(assets):
             raise ValueError("symbols must be distinct")
         if any(asset.asset_type != AssetType.STOCK for asset in assets):
@@ -72,13 +72,12 @@ def run_report(
     from mt.rules.bot import settings as bot_settings
     from mt.rules.shared import settings
 
-    strategy = bot_settings.strategies[0] if strategy is None else strategy
     symbols = settings.benchmark_symbol if symbols is None else symbols
     start = bot_settings.backtest.start_at if start is None else start
     end = bot_settings.backtest.end_at if end is None else end
     if start.tzinfo != end.tzinfo or end <= start:
         raise typer.BadParameter("end must follow start in the same timezone")
-    selected = _parse_strategy(strategy)
+    selected = bot_settings.strategies[0] if strategy is None else _parse_strategy(strategy)
     assets = _parse_assets(symbols)
     from mt.bot.backtest import report
 
@@ -92,5 +91,4 @@ def run_trade(
     from mt.bot.trade import trade
     from mt.rules.bot import settings as bot_settings
 
-    strategies = ",".join(bot_settings.strategies) if strategies is None else strategies
-    trade(_parse_strategies(strategies))
+    trade(list(bot_settings.strategies) if strategies is None else _parse_strategies(strategies))

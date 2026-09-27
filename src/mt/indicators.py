@@ -56,7 +56,7 @@ def latest_turnover_usd(frame: DataFrame) -> float:
 def average_turnover_usd(frame: DataFrame, sessions: int) -> float:
     closes = frame["close"].tail(sessions)
     volumes = frame["volume"].tail(sessions)
-    if len(closes) < sessions or closes.count() < sessions or volumes.count() < sessions:
+    if closes.count() < sessions or volumes.count() < sessions:
         return 0.0
     traded = float((closes * volumes).mean())
     return traded if isfinite(traded) and traded > 0.0 else 0.0
