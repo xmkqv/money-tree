@@ -58,7 +58,6 @@ class OpenTrade(TypedDict):
 class Totals(TypedDict):
     n: int
     wins: int
-    losses: int
     net_pnl: float
     gross_profit: float
     gross_loss: float
@@ -104,13 +103,11 @@ class Ledger(Snapshot):
     periods: dict[str, Period]
     today: str
     accountNumber: str
-    status: str
     marketOpen: bool
     nextOpen: str
     nextClose: str
     invested: float
     funded: str
-    lastEquity: float
     strategies: list[StrategyLabel]
     trades: list[Trade]
     days: list[Day]
@@ -252,7 +249,6 @@ def totals(trades: list[Trade]) -> Totals:
     return Totals(
         n=len(trades),
         wins=len(wins),
-        losses=len(losses),
         net_pnl=round(sum(trade["pnl"] for trade in trades), 2),
         gross_profit=round(sum(trade["pnl"] for trade in wins), 2),
         gross_loss=round(abs(sum(trade["pnl"] for trade in losses)), 2),
@@ -321,7 +317,7 @@ async def build_ledger(
     first_funded = equity_daily[0] if equity_daily else None
     invested = first_funded["equity"] if first_funded is not None else account.equity
     funded = first_funded["date"] if first_funded is not None else ""
-    equity = round(account.equity, 2)
+    equity = snapshot["equity"]
     closes = {row["date"]: row["equity"] for row in equity_daily}
 
     today = datetime.now(TRADING_ZONE).date().isoformat()
@@ -346,13 +342,11 @@ async def build_ledger(
         "periods": calendar_periods(date.fromisoformat(today), periods_equity, benchmark_closes),
         "today": today,
         "accountNumber": account.account_number,
-        "status": account.status,
         "marketOpen": clock.is_open,
         "nextOpen": trading_time(clock.next_open).strftime("%H:%M ET"),
         "nextClose": trading_time(clock.next_close).strftime("%H:%M ET"),
         "invested": invested,
         "funded": datetime.fromisoformat(funded).strftime("%-d %b %Y") if funded else "—",
-        "lastEquity": round(account.last_equity, 2),
         "strategies": strategy_labels(),
         "positions": rows,
         "trades": trades,

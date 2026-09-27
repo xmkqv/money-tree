@@ -6,7 +6,7 @@ from pydantic import Field, TypeAdapter
 
 from mt.rules.bot import settings as bot_settings
 
-from .http import Payload, http_timeout
+from .http import Payload, fetch_json, http_timeout
 
 
 FRAMES_URL = "https://data.sec.gov/api/xbrl/frames/us-gaap/{concept}/USD/{period}.json"
@@ -58,7 +58,7 @@ tickers_adapter = TypeAdapter(dict[str, Ticker])
 
 
 def ciks() -> dict[str, int]:
-    payload = tickers_adapter.validate_python(_get(TICKERS_URL))
+    payload = tickers_adapter.validate_python(fetch_json(CLIENT, TICKERS_URL))
     found: dict[str, int] = {}
     for row in payload.values():
         found.setdefault(row.ticker.upper().replace("-", "."), row.cik)
@@ -113,9 +113,3 @@ def _facts(concept: str, period: str) -> dict[int, Fact]:
         return {}
     response.raise_for_status()
     return {fact.cik: fact for fact in _Frame.model_validate(response.json()).data}
-
-
-def _get(url: str) -> object:
-    response = CLIENT.get(url)
-    response.raise_for_status()
-    return response.json()

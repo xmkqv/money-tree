@@ -32,6 +32,12 @@ async def get_json(
     return response.json()
 
 
+def fetch_json(client: httpx.Client, url: str, params: Mapping[str, str] | None = None) -> Any:
+    response = client.get(url, params=params)
+    response.raise_for_status()
+    return response.json()
+
+
 def http_timeout(timeout: TimeoutSection) -> httpx.Timeout:
     return httpx.Timeout(
         connect=timeout.connect_seconds,

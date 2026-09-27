@@ -5,7 +5,7 @@ from pydantic import Field, TypeAdapter
 
 from mt.rules.shared import settings
 
-from .http import Payload, http_timeout
+from .http import Payload, fetch_json, http_timeout
 
 
 API_URL = "https://finnhub.io/api/v1"
@@ -41,16 +41,20 @@ stocks_adapter = TypeAdapter(list[Stock])
 
 
 def stocks() -> frozenset[str]:
-    payload = stocks_adapter.validate_python(_get("/stock/symbol", {"exchange": "US"}))
+    payload = stocks_adapter.validate_python(
+        fetch_json(CLIENT, "/stock/symbol", {"exchange": "US"})
+    )
     return frozenset(stock.symbol for stock in payload if stock.type == COMMON_STOCK)
 
 
 def profile(symbol: str) -> Profile:
-    return Profile.model_validate(_get("/stock/profile2", {"symbol": symbol}))
+    return Profile.model_validate(fetch_json(CLIENT, "/stock/profile2", {"symbol": symbol}))
 
 
 def earnings_dates(start: date, end: date) -> dict[str, date]:
-    payload = _get("/calendar/earnings", {"from": start.isoformat(), "to": end.isoformat()})
+    payload = fetch_json(
+        CLIENT, "/calendar/earnings", {"from": start.isoformat(), "to": end.isoformat()}
+    )
     calendar = _Calendar.model_validate(payload)
     dates: dict[str, date] = {}
     for release in calendar.releases:
@@ -58,9 +62,3 @@ def earnings_dates(start: date, end: date) -> dict[str, date]:
         if upcoming is None or release.date < upcoming:
             dates[release.symbol] = release.date
     return dates
-
-
-def _get(path: str, params: dict[str, str]) -> object:
-    response = CLIENT.get(path, params=params)
-    response.raise_for_status()
-    return response.json()

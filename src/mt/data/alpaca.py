@@ -16,9 +16,7 @@ from .http import Payload, get_json
 
 class Account(Payload):
     account_number: str
-    status: str
     equity: float
-    last_equity: float
     cash: float
     buying_power: float
 
@@ -52,7 +50,6 @@ class Clock(Payload):
 
 
 class AssetProfile(Payload):
-    symbol: str
     name: str
 
 
@@ -98,6 +95,10 @@ fills_adapter = TypeAdapter(list[Fill])
 closed_orders_adapter = TypeAdapter(list[ClosedOrder])
 
 
+def _upcoming_session() -> date:
+    return upcoming_session_bounds(datetime.now(TRADING_ZONE).date())[0].date()
+
+
 def trading_api_url(broker: BrokerSection) -> str:
     target = BaseURL.TRADING_PAPER if broker.is_paper else BaseURL.TRADING_LIVE
     return target.value
@@ -135,7 +136,7 @@ class TradingClientAlpaca:
     async def history(self) -> History:
         async with self._history_lock:
             now = datetime.now(UTC)
-            session = upcoming_session_bounds(now.astimezone(TRADING_ZONE).date())[0].date()
+            session = _upcoming_session()
             prior = self._history
             if prior is not None and prior.session_at != session:
                 prior = None
@@ -177,7 +178,7 @@ class TradingClientAlpaca:
     async def daily_equity(self) -> list[EquityPoint]:
         async with self._daily_lock:
             today = datetime.now(TRADING_ZONE).date()
-            session = upcoming_session_bounds(today)[0].date()
+            session = _upcoming_session()
             if self._daily is None or self._daily[0] != session:
                 points = await self.equity(
                     self._configuration.equity_daily_period,
@@ -219,7 +220,7 @@ class TradingClientAlpaca:
             return ""
         return AssetProfile.model_validate(payload).name
 
-    async def fills(self, after: str | None = None) -> list[Fill]:
+    async def fills(self, after: str | None) -> list[Fill]:
         return await self._pages(
             "/v2/account/activities",
             fills_adapter,
@@ -230,8 +231,8 @@ class TradingClientAlpaca:
             after=after,
         )
 
-    async def closed_orders(self, after: str | None = None) -> list[ClosedOrder]:
-        orders = await self._pages(
+    async def closed_orders(self, after: str | None) -> list[ClosedOrder]:
+        return await self._pages(
             "/v2/orders",
             closed_orders_adapter,
             lambda order: order.submitted_at,
@@ -240,7 +241,6 @@ class TradingClientAlpaca:
             limit=self._configuration.page_rows_max,
             after=after,
         )
-        return list({order.id: order for order in orders}.values())
 
     async def equity(self, period: str, timeframe: str) -> list[EquityPoint]:
         params: dict[str, object] = {"period": period, "timeframe": timeframe}
