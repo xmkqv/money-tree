@@ -11,6 +11,7 @@ tests/
     setup.{ext}
       ├ setup()
       └ teardown()
+    seed.{ext}
     … fixtures
   {exp}.{ext}
     └ cases

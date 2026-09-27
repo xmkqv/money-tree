@@ -1,7 +1,7 @@
 # sketch
 
 - a sketch renders one subject
-- content ∈ label, sketch glyph
+- content ∈ { label, sketch glyph }
 - label.words ⊆ context.words
 - sketch.w ≤ 72
 - sketch.h ≤ 2 * sketch.w

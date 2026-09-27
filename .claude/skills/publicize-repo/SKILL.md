@@ -4,17 +4,17 @@ description: only-if-asked
 argument-hint: "[fov=infer()] [foe=infer()]"
 ---
 
-publicize-repo(fov, foe)
+publicize-repo(fov=infer(), foe=infer())
   assert fov and foe resolve to one git repository
   skills.guides()
   log intent, fov, foe, repository status, and publication target
   log inspect-public-surface(fov) as report
-  wait for approval
-  prepare-public-surface(foe, report.approved)
+  wait for approval as approved
+  prepare-public-surface(foe, approved)
   verify-public-surface(fov)
 
 inspect-public-surface(fov)
-  map the worktree, refs, history, submodules, lfs objects, symlinks, and generated files
+  map fov worktree, refs, history, submodules, lfs objects, symlinks, and generated files
   log secrets and personal data by class, location, reachability, and remedy
   log name mismatches across paths, code, configuration, packages, commands, and docs
   log dead files with evidence that they have no publication role
@@ -30,7 +30,7 @@ prepare-public-surface(foe, approved)
   foe.docs.each(doc → skills.humanizer(doc))
 
 sanitize-public-surface(foe, approved)
-  remove approved secrets and personal data
+  remove approved secrets and personal data from foe
   replace required private inputs with named placeholders and setup instructions
   if a secret is live or reachable in history, require rotation or revocation
   if history must change, log the exact refs, remotes, and collaborator impact
@@ -38,7 +38,7 @@ sanitize-public-surface(foe, approved)
   rewrite only approved refs and do not claim that remote copies were removed
 
 verify-public-surface(fov)
-  build a clean publication candidate from the files and refs intended for the target
+  build a clean publication candidate from the fov files and refs intended for the target
   rescan its content, filenames, binary metadata, and full reachable history
   run the documented setup, checks, exemplars, link checks, and render commands
   compare names, paths, badges, links, and outputs against the publication candidate
@@ -48,7 +48,7 @@ verify-public-surface(fov)
 
 - the public surface contains every object and identity that the target refs make reachable
 - preparation does not authorize publication or destructive history changes
-- stop before push, visibility changes, release, credential rotation, or account changes
+- preparation stops before push, visibility changes, release, credential rotation, or account changes
 - missing license authority is a blocker
 - legal terms are neither invented nor changed
 - code cleanup beyond the approved report is out of scope

@@ -1,33 +1,25 @@
 # recs
 
-recs(max=null)
-  skills.guides.spec
+recs(max?)
   log intent
-  log skills.mk.sketch(code tree)
-  log recs in phases
-
-```md:form:phase
-# [{idx}] {intent}
-
-{dv}
-
-{recs}
-```
+  log recs.sort(by=coupling descending).slice(max)
 
 ```md:form:rec
-## [{step}] {intent}
+# [{idx}] {bad} → {good}
 
-{dv}
+{deps?}
 
 {diff}
+```
+
+```md:form:deps
+succedes [{idx},…]
+precedes [{idx},…]
 ```
 
 ## rules
 
 - count(recs) ≤ max
-- idx ≥ 1
-- step = md:form:step`{idx}:{sub-idx}`
-- diff is concrete diff on current files
-- dv is the delta volume
-- phases group recs by layer
-- layers are decoupled
+- diff is concrete diff on active files
+- count(rec.deps) ≤ 3
+- rec.diff is atomic

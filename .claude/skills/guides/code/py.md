@@ -339,7 +339,8 @@ async def load_shelves(ids: Sequence[ShelfId]) -> dict[ShelfId, Shelf]:
 
 ## verification
 
-- ruff lints and formats; pyright checks types
+- ruff lints and formats
+- pyright checks types
 
 ### strict type check
 

@@ -1,12 +1,10 @@
 # env
 
-```invs
-environment ⊇ declarations(variables)
-mode ∈ { development, production }
-loaded variables = environment[mode]
-mise.toml + mise.{mode}.toml → config
-.env.{mode} → secrets
-```
+- environment ⊇ declarations(variables)
+- mode ∈ { development, production }
+- loaded variables = environment[mode]
+- mise.toml + mise.{mode}.toml → config
+- .env.{mode} → secrets
 
 ```sh:command
 mise --env production run …
@@ -14,12 +12,12 @@ mise --env production run …
 
 ## tools
 
-```toml:root:example
+```toml:root
 min_version = …
 monorepo_root = …
 
 [monorepo]
-config_roots = ["lib/db", "lib/e2e"]
+config_roots = ["lib/{module}", …]
 
 [tools]
 bun = …
@@ -32,7 +30,7 @@ bun = …
 - ∀ variable: count(assignments(variable)) ≤ 1
 - variables can be namespaced like {NAMESPACE}__{NAME}
 
-```mise.toml/mise.{mode}.toml
+```toml:config
 [env]
 {NAME} = …
 …
@@ -45,23 +43,23 @@ _.file = { path = ".env.{ENV_MODE}", redact = true }
 ## tasks
 
 - a module declares its own tasks
-- task name ∈ { setup, build, serve, stop, check, test, deploy }
+- task name ∈ { reset, build, serve, stop, check, test, deploy }
 - local and continuous runners invoke the root test
-- omit descriptions
+- a task declaration has no description
 - runners are inlined in task declarations
 - runners delegate environment checks to consumers
 
 ```toml:root
 [tasks.test]
 run = [
-  { tasks = ["//lib/db:check", "//lib/e2e:check"] },
-  { tasks = ["//lib/db:test", "//lib/e2e:test"] },
+  { tasks = ["//lib/{module}:check", …] },
+  { tasks = ["//lib/{module}:test", …] },
 ]
 ```
 
 ```toml:module
 [tasks.test]
-depends = ["//lib/db:build", ":build"]
+depends = ["//lib/{module}:build", ":build"]
 run = "bun run test"
 ```
 

@@ -42,3 +42,9 @@ export default {
 import shelf from "./shelf";
 import getThing from "~/fns/getThing";
 ```
+
+## solid
+
+- a primitive that takes a callback registers its own release with the owner
+- `onCleanup` wraps a disposer from outside solid, never a primitive's return
+- a component body already runs under its owner, so subscriptions need no `onMount`

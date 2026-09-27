@@ -4,13 +4,8 @@ description: only-if-asked
 ---
 
 use-checklist(key)
-  if ¬exists(skills.use-checklist.{key})
-    mk(key)
   skills.use-checklist.{key}
   log evaluation
-
-mk(key)
-  log out=skills.use-checklist.{key}
 
 # rules
 
@@ -24,7 +19,9 @@ mk(key)
 
 {rules}
 
-## checks
+## {label}
 
 {checks}
+
+…
 ```

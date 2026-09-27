@@ -24,7 +24,6 @@ repo(
   link pk
   last_active nn datetime
   stars nn integer
-  dx nn integer
   features nn array<text>
 )
 ```

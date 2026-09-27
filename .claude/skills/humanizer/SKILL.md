@@ -10,7 +10,7 @@ metadata:
 
 Rewrite AI-sounding text so it reads like the writer, not a chatbot. Do not change what it says or make up details.
 
-These patterns come from WikiProject AI Cleanup's [Signs of AI writing][source] on Wikipedia.
+These patterns come from WikiProject AI Cleanup's [Signs of AI writing][wiki:ai-writing] on Wikipedia.
 
 ## What to do
 
@@ -445,10 +445,7 @@ These details often carry the writer's voice. Keep them unless they hurt the mea
 
 Return the result required by [How to return the result](#how-to-return-the-result).
 
-## Source
+## refs
 
-WikiProject AI Cleanup maintains [the source guide][source] from reviews of AI-generated Wikipedia text.
-
-Wikipedia attributes generic output to statistical next-word prediction favoring broadly applicable continuations.
-
-[source]: https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing
+[wiki:ai-writing]: https://en.wikipedia.org/wiki/Wikipedia:Signs_of_AI_writing
+    this list is descriptive, not prescriptive

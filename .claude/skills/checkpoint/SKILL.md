@@ -6,7 +6,7 @@ description: only-if-asked
 checkpoint(spec?)
   bundle the changes below the current working directory into coherent layers
   commit each layer
-  if ¬spec, commit everything except spec changes; keep the spec changes just do not commit them
+  if ¬spec, commit every change except spec
 
 # rules
 

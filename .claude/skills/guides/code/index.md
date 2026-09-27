@@ -17,11 +17,11 @@ router(keys=infer())
 
 ## packages
 
-- widest and latest version ranges
+- widest and latest version ranges are installed
 
 ## modules
 
-- generally, order module concerns: imports, types, constants, surface, private
+- module concerns generally order as imports, types, constants, surface, private
 - imports are relative when no upward traversal is needed; otherwise absolute
 
 ## names

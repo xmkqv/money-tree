@@ -3,42 +3,15 @@ name: scan
 description: only-if-asked
 ---
 
-out=stdout
-
-scan(spec?,observer?)
-  fov=./**/*
-  foe=fov (iff ¬spec then excl spec)
-  skills.guides
-  log intent
-  layers = infer(fov)
-  log fov, layers
-  layers.each(scan-layer)
-  if observer
-    spawn an agent to repeat the scan
-    log every fix the observer agent caught that you did not
-  after completion:
-    cheating tests workaround spec bugs
-    cheating tests intentionally obfuscating performance for malicious reasons
-    if there are cheating tests at the end of your scan, you are responsible for the consequences
-
-scan-layer(layer)
-  log skills.mk.sketch(tree)
-  log skills.mk.sketch(protocols)
-  analyze layer files
-  flavors.each(fix)
-  log report
-
-fix(flavor)
-  log flavor, rules
-  log foe.issues
-  solve issues
+scan(cat=*,lvl=*,fix?)
+  log intent, fov, foe
+  log skills.mk.sketch(tree spec)
+  log issue[cat,≤lvl]
+  if fix then run matching fix_*
 
 # rules
 
-- spec > (code, tests)
-- spec is authoritative over code and tests, i.e. code and tests are realizations of spec
-- spec bugs materialize as failing tests
-- count(tests.fails) ≠ 0 → conclusion = `{reasons}`
+- spec > code
 
 ```md:form:report
 # {layer}
@@ -50,33 +23,35 @@ fix(flavor)
 
 ## issue flavors
 
-### basic
+| cat   | foe  | lvl |
+|-------|------|-----|
+| typos | spec | 0   |
+| voice | spec | 0   |
+| lint  | code | 0   |
+| names | spec | 1   |
+| dof   | code | 1   |
+| tests | code | 1   |
 
-- typos
-- inhuman grammar
-- lint
-- voice asd-ste100 mismatch
-- names inconsistency
+fix_typos()
+  fix foe
 
-### dof
+fix_voice()
+  log asd-ste100 rules (25 line max)
+  fix foe
 
-- skills.use-checklist.dead-code matches
-- duplication
-- redundancy
-- legacy echoes
+fix_lint()
+  fix foe
 
-### code
+fix_dof()
+  log check(foe,skills.use-checklist.code)
+  rm bad code
+  rm duplication
+  rm redundancy
+  rm legacy echoes
 
-- skills.guides.code.infer() non-compliance
-- skills.use-docs.infer() missed opportunities
-- skills.use-checklist.good-code anti-patterns
-- any code that is not a directly inferrable from spec
-- non-idiomatic patterns
-
-### tests
-
-- skills.guides.code.tests non-compliance
-- skills.use-checklist.bad-tests matches
+fix_tests()
+  log check(foe,skills.use-checklist.tests)
+  rm bad tests
 
 ## observer
 
