@@ -1,7 +1,7 @@
 ---
 name: strategies
 reminders:
-    - strategy spec is a faithful logical projection of the fundamental math
+  - strategy spec is a faithful logical projection of the fundamental math
 ---
 
 - family is the first segment of the key; variation is the rest

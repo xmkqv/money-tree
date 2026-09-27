@@ -144,7 +144,7 @@ iteration
         retry liquidation on later iterations
 ```
 
-```md
+```md:invs
 invs:
     Σ risk(open holdings) ≤ risk.per_day_max * equity
     entry notional ≤ risk.notional_usd_max
