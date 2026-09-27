@@ -1459,7 +1459,7 @@ function paintTradeFacts() {
 
   const openNote = document.getElementById("tc-open-note");
   openNote.textContent = t.open
-    ? "This position is still open. The second mark is the current price, not an exit, and "
+    ? "This position is still open. The Now mark is the current price, not an exit, and "
       + "the figure beside it is unrealized P&L."
     : "";
   openNote.hidden = !t.open;
@@ -1468,10 +1468,14 @@ function paintTradeFacts() {
     ? Math.round(t.duration_minutes / 1440) + "d"
     : t.duration_minutes >= 60 ? Math.floor(t.duration_minutes / 60) + "h " + (t.duration_minutes % 60) + "m" : t.duration_minutes + "m";
 
+  const exits = (t.fills || []).filter(fill => fill.side === "out").length;
+  const entries = (t.fills || []).filter(fill => fill.side === "in").length;
   const facts = [
-    ["Entry", money(t.entry), dayOf(t.entered_at) + " " + clockOf(t.entered_at)],
-    [t.open ? "Last" : "Exit", money(t.exit),
-      t.open ? "still open" : dayLabel(t.date) + " " + clockLabel(t.minute)],
+    [entries > 1 ? "Average entry" : "Entry", money(t.entry),
+      (entries > 1 ? entries + " entries · first " : "") + dayOf(t.entered_at) + " " + clockOf(t.entered_at)],
+    [t.open ? "Last" : exits > 1 ? "Average exit" : "Exit", money(t.exit),
+      t.open ? "still open"
+        : (exits > 1 ? exits + " exits · last " : "") + dayLabel(t.date) + " " + clockLabel(t.minute)],
     ["Quantity", plainNum(Math.round(t.quantity * 100) / 100), ""],
     [t.open ? "Held so far" : "Held", held, ""],
     [t.open ? "Unrealized" : "P&L", signedMoney(t.pnl),
@@ -1557,6 +1561,7 @@ function drawTradeChart() {
   };
   const inIndex = nearest(barStamp(t.entered_at));
   const outIndex = nearest(stampOf(t.date, t.minute));
+  const points = tradePoints(t, inIndex, outIndex, fill => nearest(stampOf(fill.date, fill.minute)));
 
   const i0 = TC_VIEW.i0, i1 = TC_VIEW.i1;
   const [lo, hi] = indexBounds(i0, i1, all.length);
@@ -1565,7 +1570,7 @@ function drawTradeChart() {
   const levels = TC_LEVELS || {};
   const extra = [];
   if (!TC_VIEW.custom) {
-    extra.push(t.entry, t.exit);
+    extra.push(t.entry, t.exit, ...points.map(point => point.price));
     if (TC_SHOW.range && levels.range) extra.push(levels.range.high, levels.range.low);
     if (TC_SHOW.stop && levels.stop !== undefined) extra.push(levels.stop);
     if (TC_SHOW.targets && levels.targets) extra.push(...levels.targets);
@@ -1753,32 +1758,27 @@ function drawTradeChart() {
       '" width="' + bodyW.toFixed(2) + '" height="' + h.toFixed(2) + '"/>';
   }).join("");
 
-  const outcome = t.pnl >= 0 ? "gain" : "loss";
-  const x1 = px(inIndex), y1 = py(t.entry), x2 = px(outIndex), y2 = py(t.exit);
-  const trend =
-    '<line class="trend mark-' + outcome + '" x1="' + x1.toFixed(2) + '" y1="' + y1.toFixed(2) +
-    '" x2="' + x2.toFixed(2) + '" y2="' + y2.toFixed(2) + '"/>';
+  const [anchor] = points;
+  const ax = px(anchor.index), ay = py(anchor.price);
+  const legs = points.filter(point => point.cls !== "entry").map(point =>
+    '<line class="trend mark-' + point.outcome + '" x1="' + ax.toFixed(2) + '" y1="' + ay.toFixed(2) +
+    '" x2="' + px(point.index).toFixed(2) + '" y2="' + py(point.price).toFixed(2) + '"/>').join("");
 
   const hint = y =>
     '<line class="hint" x1="' + TC_PAD.l + '" y1="' + y.toFixed(2) + '" x2="' + (width - TC_PAD.r) +
     '" y2="' + y.toFixed(2) + '"/>';
+  const hints = [...new Set(points.map(point => point.price))].map(price => hint(py(price))).join("");
 
-  const entryMark =
-    '<circle class="entry-mark" cx="' + x1.toFixed(2) + '" cy="' + y1.toFixed(2) + '" r="5.5"/>';
-  const exitMark =
-    '<circle class="exit-mark fill-' + outcome + '" cx="' + x2.toFixed(2) + '" cy="' + y2.toFixed(2) + '" r="6"/>';
-
-  const fillMarks = (t.fills || []).map(f => {
-    const i = nearest(stampOf(f.date, f.minute));
-    const x = px(i), y = py(f.price);
-    return '<rect class="' + (f.side === "in" ? "fill-in" : "fill-out fill-" + outcome) +
-      '" x="' + (x - 3.5).toFixed(2) + '" y="' + (y - 3.5).toFixed(2) +
-      '" width="7" height="7" rx="1.5" transform="rotate(45 ' + x.toFixed(2) + " " + y.toFixed(2) + ')"/>';
+  const pointMarks = points.map(point => {
+    const x = px(point.index).toFixed(2), y = py(point.price).toFixed(2);
+    return point.cls === "entry"
+      ? '<circle class="entry-mark" cx="' + x + '" cy="' + y + '" r="5.5"/>'
+      : '<circle class="exit-mark fill-' + point.outcome + '" cx="' + x + '" cy="' + y + '" r="6"/>';
   }).join("");
 
   const plotted =
     overlays + barMarks + smaLines +
-    hint(y1) + hint(y2) + trend + fillMarks + entryMark + exitMark;
+    hints + legs + pointMarks;
 
   paintSvg(box,
     t.symbol + " price around the trade, entry " + money(t.entry) +
@@ -1795,56 +1795,87 @@ function drawTradeChart() {
 
   sizeHits(box);
 
-  const marks = [];
-  if (inIndex >= i0 && inIndex <= i1) {
-    marks.push({ x: x1, y: y1, index: inIndex, title: "Entry", price: t.entry, cls: "entry" });
-  }
-  if (outIndex >= i0 && outIndex <= i1) {
-    marks.push({ x: x2, y: y2, index: outIndex, title: t.open ? "Now" : "Exit", price: t.exit, cls: "exit" });
-  }
+  const marks = points
+    .filter(point => point.index >= i0 && point.index <= i1)
+    .map(point => ({ ...point, x: px(point.index), y: py(point.price) }));
   paintTradeLabels(marks, TC_STATE.geo, TC_PAD);
 }
 
 const MARK_GAP = 10;
 const MARK_BARS = 3;
+const REASON_LABELS = {
+  entry: "Entry",
+  stop: "Stop hit",
+  breakeven: "Breakeven stop hit",
+  trail: "Trailing stop hit",
+  target_1: "Target 1 hit",
+  target_2: "Target 2 hit",
+  target_3: "Target 3 hit",
+  close: "End-of-day exit",
+  signal: "Exit signal",
+  earnings: "Earnings exit",
+  limit: "Daily loss limit",
+};
+
+function tradePoints(t, inIndex, outIndex, indexOf) {
+  const fills = t.fills || [];
+  const bought = fills.reduce((sum, fill) => fill.side === "in" ? sum + fill.quantity : sum, 0);
+  const direction = t.side === "short" ? -1 : 1;
+  const ins = fills.filter(fill => fill.side === "in").map(fill => ({
+    cls: "entry", title: "Entry", index: indexOf(fill), price: fill.price, quantity: fill.quantity,
+  }));
+  const outs = fills.filter(fill => fill.side === "out").map(fill => {
+    const pnl = (fill.price - t.entry) * fill.quantity * direction;
+    return {
+      cls: "exit", title: "Exit", index: indexOf(fill), price: fill.price, quantity: fill.quantity,
+      share: bought ? clamp(fill.quantity / bought, 0, 1) : 1, pnl,
+      outcome: pnl >= 0 ? "gain" : "loss", reason: REASON_LABELS[fill.reason] || "",
+    };
+  });
+  const entries = ins.length ? ins
+    : [{ cls: "entry", title: "Entry", index: inIndex, price: t.entry, quantity: t.quantity }];
+  const outcome = t.pnl >= 0 ? "gain" : "loss";
+  const last = t.open
+    ? [{ cls: "exit now", title: "Now", index: outIndex, price: t.exit, quantity: t.quantity,
+      pnl: t.pnl, outcome }]
+    : outs.length ? []
+    : [{ cls: "exit", title: "Exit", index: outIndex, price: t.exit, quantity: t.quantity,
+      share: 1, pnl: t.pnl, outcome, reason: "" }];
+  return [...entries, ...outs, ...last];
+}
 
 function paintTradeLabels(marks, geo, pad) {
   const host = document.getElementById("tc-host");
   host.querySelectorAll(".tc-mark").forEach(n => n.remove());
-  const outcome = TRADE.pnl >= 0 ? "gain" : "loss";
   const strategy = STRAT_BY_KEY[TRADE.strategy_key];
   const who = strategy ? strategy.short : TRADE.strategy_key;
   const placed = marks.map(mark => {
     const el = document.createElement("div");
-    el.className = "tc-mark " + mark.cls + (mark.cls === "exit" ? " mark-" + outcome : "");
+    el.className = "tc-mark " + mark.cls + (mark.outcome ? " mark-" + mark.outcome : "");
     render(html`<span class="tc-h"><span class="tc-k">${mark.title}</span>
       <span class="tc-s">${who}</span></span>
       <span class="tc-v num">${money(mark.price)}</span>
+      ${mark.reason ? html`<span class="tc-r">${mark.reason}</span>` : nothing}
       <span class="tc-d num">${markDetail(mark)}</span>`, el);
     el.style.left = Math.round(mark.x) + "px";
-    if (mark.x > geo.width * 0.6) el.classList.add("flip");
     host.append(el);
+    if (mark.x + MARK_GAP + el.offsetWidth > geo.width - pad.r) el.classList.add("flip");
     return { el, mark };
   });
   placed.forEach(({ el, mark }) => parkMark(el, mark, geo, pad));
-  partMarks(placed, geo, pad);
+  partMarks(placed, host, geo, pad);
   placed.forEach(({ el, mark }) => leadMark(el, mark, host));
 }
 
-function filledQuantity(side) {
-  return (TRADE.fills || []).reduce((sum, fill) => fill.side === side ? sum + fill.quantity : sum, 0);
-}
-
 function markDetail(mark) {
-  const t = TRADE;
   if (mark.cls === "entry") {
-    const quantity = filledQuantity("in") || t.quantity;
-    return html`${shares(quantity)} sh · ${money(quantity * t.entry)}`;
+    return html`${shares(mark.quantity)} sh · ${money(mark.quantity * mark.price)}`;
   }
-  const bought = filledQuantity("in");
-  const sold = bought ? clamp(filledQuantity("out") / bought, 0, 1) : Number(!t.open);
-  return html`${(sold * 100).toFixed(0)}% sold ·
-    <b class=${tone(t.pnl)}>${signedMoney(t.pnl)}</b>`;
+  if (mark.title === "Now") {
+    return html`${shares(mark.quantity)} sh held · <b class=${tone(mark.pnl)}>${signedMoney(mark.pnl)}</b>`;
+  }
+  return html`${(mark.share * 100).toFixed(0)}% sold ·
+    <b class=${tone(mark.pnl)}>${signedMoney(mark.pnl)}</b>`;
 }
 
 function barBand(geo, index) {
@@ -1869,12 +1900,25 @@ function parkMark(el, mark, geo, pad, side) {
   el.style.top = Math.round(clamp(wanted, highest, lowest)) + "px";
 }
 
-function partMarks(placed, geo, pad) {
-  if (placed.length < 2 || !overlapping(placed[0].el, placed[1].el)) return;
-  const upper = TRADE.entry >= TRADE.exit ? placed[0] : placed[1];
-  const lower = upper === placed[0] ? placed[1] : placed[0];
-  parkMark(upper.el, upper.mark, geo, pad, "above");
-  parkMark(lower.el, lower.mark, geo, pad, "below");
+function partMarks(placed, host, geo, pad) {
+  const settled = [];
+  for (const item of [...placed].sort((a, b) => a.mark.x - b.mark.x)) {
+    const clash = () => settled.find(other => overlapping(other.el, item.el));
+    const first = clash();
+    if (first) {
+      const [upper, lower] = item.mark.price >= first.mark.price ? [item, first] : [first, item];
+      parkMark(upper.el, upper.mark, geo, pad, "above");
+      parkMark(lower.el, lower.mark, geo, pad, "below");
+    }
+    for (let tries = settled.length; tries > 0 && clash(); tries--) stackMark(item.el, clash().el, host, geo, pad);
+    settled.push(item);
+  }
+}
+
+function stackMark(el, below, host, geo, pad) {
+  const half = el.offsetHeight / 2;
+  const floor = below.getBoundingClientRect().bottom - host.getBoundingClientRect().top;
+  el.style.top = Math.round(Math.min(floor + MARK_GAP / 2 + half, pad.t + geo.plotH - half)) + "px";
 }
 
 function overlapping(a, b) {

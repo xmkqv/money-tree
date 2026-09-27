@@ -9,8 +9,8 @@ from pandas import DataFrame
 
 from mt.data.asset import Asset
 from mt.rules.shared import settings
-from mt.rules.values import SettingsSection, StrategyKey
-from mt.sizing import Direction
+from mt.rules.values import OrderReason, SettingsSection, StrategyKey
+from mt.sizing import Direction, next_stop
 from mt.state import EventLevel
 
 
@@ -48,6 +48,12 @@ class Holding:
     highest: float
     lowest: float
     ladder: Ladder | None = None
+    stop_reason: OrderReason = "stop"
+
+    def raise_stop(self, stop: float, reason: OrderReason) -> None:
+        raised = next_stop(self.direction, self.stop, stop)
+        if raised != self.stop:
+            self.stop, self.stop_reason = raised, reason
 
 
 class Portfolio(Protocol):
@@ -73,7 +79,9 @@ class Portfolio(Protocol):
 
     def enter(self, strategy: "Strategy", candidate: Candidate, session: Session) -> bool: ...
 
-    def exit(self, holding: Holding, quantity: float | None = None) -> None: ...
+    def exit(
+        self, holding: Holding, reason: OrderReason, quantity: float | None = None
+    ) -> None: ...
 
     def protect(self, holding: Holding, quantity: float | None = None) -> None: ...
 

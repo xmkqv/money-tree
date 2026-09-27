@@ -2,7 +2,6 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Any, cast
-from uuid import uuid4
 
 from lumibot.strategies import Strategy as LumibotStrategy
 from pandas import DataFrame, DatetimeIndex
@@ -15,12 +14,12 @@ from mt.frames import last_close, normalize_ohlcv
 from mt.indicators import average_turnover_usd, daily_indicators
 from mt.rules.bot import settings as bot_settings
 from mt.rules.shared import settings
-from mt.rules.values import StrategyKey
+from mt.rules.values import OrderReason, StrategyKey
 from mt.sizing import Direction, entry_quantity, round_quantity, round_stop
 from mt.state import EventLevel
 from mt.strategies.base import Candidate, Holding, Session, Strategy, ranked
 from mt.strategies.daily import Daily
-from mt.strategies.registry import STRATEGIES, order_code
+from mt.strategies.registry import STRATEGIES, liquidate_code, order_code
 
 from .bars import Bars
 from .export import StateExporter
@@ -102,7 +101,7 @@ class Portfolio(LumibotStrategy):
     def before_market_closes(self) -> None:
         for holding in list(self._holdings.values()):
             if holding.strategy.is_stop_resting:
-                self.exit(holding)
+                self.exit(holding, "close")
 
     def on_partially_filled_order(
         self,
@@ -304,9 +303,7 @@ class Portfolio(LumibotStrategy):
             if not quantity or asset in self._closing:
                 continue
             self._closing.add(asset)
-            self._submit(
-                asset, abs(quantity), -1 if quantity > 0 else 1, f"mt-liquidate-{uuid4().hex}"
-            )
+            self._submit(asset, abs(quantity), -1 if quantity > 0 else 1, liquidate_code())
 
     def _engine_positions(self) -> dict[Asset, Any]:
         return {
@@ -483,7 +480,7 @@ class Portfolio(LumibotStrategy):
         )
         self._pending[asset] = Pending(holding, now, notional)
         self._traded[strategy.key].add((now.date(), asset))
-        self._submit(asset, quantity, direction, order_code(strategy.key))
+        self._submit(asset, quantity, direction, order_code(strategy.key, "entry"))
         return True
 
     def protect(self, holding: Holding, quantity: float | None = None) -> None:
@@ -513,7 +510,7 @@ class Portfolio(LumibotStrategy):
                 "warning",
                 f"{holding.asset} is already through its stop at {price:.2f}: closing at market",
             )
-            self.exit(holding)
+            self.exit(holding, holding.stop_reason)
             return
         size = round_quantity(amount)
         if size <= 0 or self._stops.get(holding.asset) == (stop, float(size)):
@@ -523,12 +520,12 @@ class Portfolio(LumibotStrategy):
             holding.asset,
             size,
             -holding.direction,
-            order_code(holding.strategy.key),
+            order_code(holding.strategy.key, holding.stop_reason),
             stop_price=stop,
         )
         self._stops[holding.asset] = (stop, float(size))
 
-    def exit(self, holding: Holding, quantity: float | None = None) -> None:
+    def exit(self, holding: Holding, reason: OrderReason, quantity: float | None = None) -> None:
         if holding.asset in self._closing:
             return
         current = self._quantity(holding.asset)
@@ -541,7 +538,9 @@ class Portfolio(LumibotStrategy):
             return
         self._cancel(holding.asset)
         self._closing.add(holding.asset)
-        self._submit(holding.asset, size, -holding.direction, order_code(holding.strategy.key))
+        self._submit(
+            holding.asset, size, -holding.direction, order_code(holding.strategy.key, reason)
+        )
 
     def _cancel(self, asset: Asset, *, stops_only: bool = False) -> None:
         def matches(order: Any) -> bool:

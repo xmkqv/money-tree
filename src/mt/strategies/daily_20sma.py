@@ -10,6 +10,7 @@ from mt.data.earnings import is_earnings_blocked
 from mt.frames import last_close
 from mt.indicators import finite_row, finite_value, latest_atr
 from mt.rules.shared import settings
+from mt.rules.values import TARGET_REASONS
 from mt.sizing import round_quantity
 
 from .base import Candidate, Holding, Ladder, Session
@@ -116,9 +117,11 @@ class Daily20Sma(Daily):
         price = self.price(holding.asset)
         holding.highest = max(holding.highest, price)
         self._take(holding, price)
-        holding.stop = max(holding.stop, self._raised_stop(holding, now))
-        if price <= holding.stop or self._is_exit_due(holding, session):
-            self.portfolio.exit(holding)
+        self._raise_stop(holding, now)
+        if price <= holding.stop:
+            self.portfolio.exit(holding, holding.stop_reason)
+        elif self._is_exit_due(holding, session):
+            self.portfolio.exit(holding, "signal")
 
     def _take(self, holding: Holding, price: float) -> None:
         ladder = holding.ladder
@@ -128,17 +131,18 @@ class Daily20Sma(Daily):
             return
         share = self.target_fractions[ladder.stage]
         quantity = round_quantity(Decimal(str(ladder.original_quantity)) * Decimal(str(share)))
+        reason = TARGET_REASONS[ladder.stage]
         ladder.stage += 1
         if quantity > 0:
-            self.portfolio.exit(holding, float(quantity))
+            self.portfolio.exit(holding, reason, float(quantity))
 
-    def _raised_stop(self, holding: Holding, now: datetime) -> float:
+    def _raise_stop(self, holding: Holding, now: datetime) -> None:
         if holding.highest < holding.entry * (1 + self.breakeven_gain):
-            return holding.stop
+            return
+        holding.raise_stop(holding.entry, "breakeven")
         trail = self._trail_distance(holding, now)
-        if trail is None:
-            return holding.entry
-        return max(holding.entry, holding.highest - trail)
+        if trail is not None:
+            holding.raise_stop(holding.highest - trail, "trail")
 
     def _trail_distance(self, holding: Holding, now: datetime) -> float | None:
         period = settings.indicators.period

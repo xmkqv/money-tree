@@ -127,7 +127,7 @@ class Daily(Strategy):
             and session.opens <= now < session.closes
             and is_earnings_exit_due(holding.asset, now.date())
         ):
-            self.portfolio.exit(holding)
+            self.portfolio.exit(holding, "earnings")
             return
         frame = self.portfolio.daily_frame(holding.asset)
         if frame is None or len(frame) < settings.daily.average_sessions:
@@ -137,9 +137,11 @@ class Daily(Strategy):
         if len(since):
             holding.highest = max(holding.highest, float(cast(Any, since["close"]).max()))
         distance = self.stop_atr_multiple * latest_atr(frame, settings.indicators.period)
-        holding.stop = max(holding.stop, holding.highest - distance)
-        if last < holding.stop or does_signal_exit(frame):
-            self.portfolio.exit(holding)
+        holding.raise_stop(holding.highest - distance, "trail")
+        if last < holding.stop:
+            self.portfolio.exit(holding, holding.stop_reason)
+        elif does_signal_exit(frame):
+            self.portfolio.exit(holding, "signal")
 
     def _ranked(self) -> list[tuple[Asset, DataFrame]]:
         rows = [
