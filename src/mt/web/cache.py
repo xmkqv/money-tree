@@ -34,7 +34,6 @@ class Cache[Value]:
         if self._pending.get(key) is task:
             del self._pending[key]
             if not failed:
-                self._entries.pop(key, None)
                 self._entries[key] = task.result()
 
     async def close(self) -> None:

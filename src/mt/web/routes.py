@@ -56,10 +56,8 @@ def error_response(
     )
 
 
-def read_response(
-    data: Any, max_age: int, read_at: datetime | None = None, **metadata: Any
-) -> JSONResponse:
-    content = {"data": data, "read_at": read_at or datetime.now(UTC), **metadata}
+def read_response(data: Any, max_age: int, read_at: datetime | None = None) -> JSONResponse:
+    content = {"data": data, "read_at": read_at or datetime.now(UTC)}
     return JSONResponse(
         jsonable_encoder(content),
         headers={"Cache-Control": f"private, max-age={max_age}, must-revalidate", "Vary": "Cookie"},
@@ -224,7 +222,6 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
                 if average_range is not None:
                     distance = found_class.stop_atr_multiple * average_range
                     payload["stop"] = round(entry - direction * distance, 4)
-                    payload["atr"] = round(average_range, 4)
             return datetime.now(UTC), payload
 
         key = repr((instrument, strategy_key, side, entry, opened))

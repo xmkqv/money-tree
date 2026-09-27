@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal, TypedDict
 
 from alpaca.trading.models import Order
-from pydantic import computed_field
+from pydantic import Field, computed_field
 
 from mt.data.alpaca import AccountRead, Position
 from mt.exchange import TRADING_ZONE
@@ -23,6 +23,7 @@ class BotState(TypedDict):
 
 
 class SnapshotPosition(Position):
+    unrealized_pnl_fraction: float = Field(exclude=True)
     weight: float
 
     @computed_field

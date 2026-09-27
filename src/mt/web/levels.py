@@ -20,7 +20,6 @@ class Levels(TypedDict):
     range: NotRequired[OpeningRange]
     stop: NotRequired[float]
     targets: NotRequired[list[float]]
-    atr: NotRequired[float]
 
 
 def opening_range(bars: list[Bar], opens: datetime, minutes: int) -> tuple[float, float] | None:

@@ -69,7 +69,6 @@
     --sma-1-h: 204;
     --sma-2-h: 300;
     --sma-3-h:  38;
-    --strategy-h: var(--s-breakout-5m-h);
 
     --axis-ink:  light-dark(oklch(65.7% 0.020 258), oklch(60.1% 0.021 258));
     --ring:      var(--surface);
@@ -82,9 +81,6 @@
     --shadow: 0 1px 2px var(--shadow-near), 0 6px 18px var(--shadow-far);
     --shadow-thumb: 0 1px 3px light-dark(oklch(21% 0.034 263 / 0.14), oklch(0% 0 0 / 0.45));
     --shadow-pop: 0 8px 30px light-dark(oklch(21% 0.034 263 / 0.14), oklch(0% 0 0 / 0.6));
-
-    --density: 1;
-    --type-density: 1;
 
     --space-3xs: calc(0.125rem * var(--density));
     --space-2xs: calc(0.25rem  * var(--density));
@@ -506,8 +502,8 @@
     box-shadow: var(--shadow-thumb);
   }
 
-  .tabs button.ghost { color: var(--ink-3); padding-inline: var(--space-md); margin-inline-start: var(--space-2xs); }
-  .tabs button.ghost:hover { color: var(--ink-2); background: var(--surface); }
+  .tabs button.ghost { padding-inline: var(--space-md); margin-inline-start: var(--space-2xs); }
+  .tabs button.ghost:hover { background: var(--surface); }
 
   .stepper { display: inline-flex; align-items: center; gap: 2px; }
 
@@ -631,7 +627,7 @@
 
   .stat { padding-block: var(--space-2xs); }
 
-  .stat .k {
+  .stat .k, .tile .k {
     display: block;
     font-size: var(--text-xs);
     color: var(--ink-3);
@@ -661,7 +657,6 @@
 
   .meter {
     --meter-size: 4px;
-    --meter-fill: 0;
     --meter-mark: var(--ink-3);
     block-size: var(--meter-size);
     margin-block-start: var(--space-2xs);
@@ -757,15 +752,18 @@
 
   table.data { inline-size: 100%; block-size: 100%; border-collapse: collapse; font-size: var(--text-md); }
 
-  table.data th, table.trades th {
-    text-align: left;
-    font-family: var(--font-ui);
+  table.data th, table.trades th, .cal-summary .k, .cal th {
     font-size: var(--text-3xs);
     font-weight: 500;
     font-stretch: var(--width-narrow);
     letter-spacing: var(--track-label);
     text-transform: uppercase;
     color: var(--ink-3);
+  }
+
+  table.data th, table.trades th {
+    text-align: left;
+    font-family: var(--font-ui);
     padding: 0 0 var(--space-sm);
     white-space: nowrap;
   }
@@ -781,7 +779,7 @@
   table.data tr.group td { border-block-start: 1px solid var(--rule-strong); }
   table.data tr.sub td { color: var(--ink-2); font-size: var(--text-sm); border-block-start: 0; }
   table.data tr.sub td:first-child { padding-inline-start: var(--space-lg); }
-  table.data tr.band td { background: var(--surface-2); }
+  :is(table.data, .trades.log) tr.band td { background: var(--surface-2); }
 
   .strat { display: flex; align-items: center; gap: var(--space-sm); }
   .chip {
@@ -965,7 +963,7 @@
     margin-block-start: var(--space-2xs);
   }
 
-  .today-title { display: flex; align-items: center; gap: var(--space-sm); min-inline-size: 0; }
+  .today-title, .cal-title { display: flex; align-items: center; gap: var(--space-sm); min-inline-size: 0; }
 
   .today-sum {
     display: flex;
@@ -1049,15 +1047,7 @@
 
   .cal-summary div { text-align: right; }
 
-  .cal-summary .k {
-    display: block;
-    font-size: var(--text-3xs);
-    font-weight: 500;
-    font-stretch: var(--width-narrow);
-    letter-spacing: var(--track-label);
-    text-transform: uppercase;
-    color: var(--ink-3);
-  }
+  .cal-summary .k { display: block; }
 
   .cal-summary .v {
     font-family: var(--font-data);
@@ -1066,8 +1056,6 @@
     font-size: var(--text-md);
     letter-spacing: var(--track-tight);
   }
-
-  .cal-title { display: flex; align-items: center; gap: var(--space-sm); min-inline-size: 0; }
 
   .cal-title .m {
     font-weight: 600;
@@ -1088,12 +1076,6 @@
   }
 
   .cal th {
-    font-size: var(--text-3xs);
-    font-weight: 500;
-    font-stretch: var(--width-narrow);
-    letter-spacing: var(--track-label);
-    text-transform: uppercase;
-    color: var(--ink-3);
     padding: 0;
     text-align: center;
     block-size: 15px;
@@ -1102,7 +1084,6 @@
   .cal td { padding: 0; }
 
   .cell {
-    --depth: 0;
     --tone-mark: var(--flat-ink);
     position: relative;
     block-size: 100%;
@@ -1184,7 +1165,7 @@
   .loss-swatch { background: var(--loss-mark); }
   .flat-swatch { background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--rule-strong); }
 
-  .alloc { display: grid; gap: var(--space-sm); }
+  .alloc, .weights { display: grid; gap: var(--space-sm); }
   .alloc-row { display: grid; grid-template-columns: 1fr auto; gap: var(--space-2xs) var(--space-sm); align-items: baseline; }
   .alloc-row .nm { display: flex; align-items: center; gap: var(--space-sm); font-size: var(--text-sm); }
 
@@ -1198,7 +1179,6 @@
   .alloc-row .amt .pc { color: var(--ink-3); margin-inline-start: var(--space-xs); }
   .alloc-row .meter { --meter-size: 5px; grid-column: 1 / -1; margin-block-start: 0; }
 
-  .weights { display: grid; gap: var(--space-sm); }
   .weight-row { display: grid; grid-template-columns: 1fr auto; gap: 3px var(--space-sm); align-items: baseline; }
 
   .weight-row .nm {
@@ -1225,8 +1205,6 @@
   }
 
   .tile { padding-block: 3px; }
-  .tile .k { display: block; font-size: var(--text-xs); color: var(--ink-3); line-height: 1.4; }
-
   .tile .v {
     font-family: var(--font-data);
     font-variant-numeric: tabular-nums;
@@ -1310,7 +1288,6 @@
 
   .log-date { color: var(--ink-2); }
 
-  .trades.log tbody tr.band td { background: var(--surface-2); }
   .trades.log tbody tr.band td:first-child { border-start-start-radius: var(--radius-xs); border-end-start-radius: var(--radius-xs); }
   .trades.log tbody tr.band td:last-child { border-start-end-radius: var(--radius-xs); border-end-end-radius: var(--radius-xs); }
   .trades.log tbody tr.week-edge td { border-block-start: 2px solid var(--rule-week); }
@@ -1384,11 +1361,6 @@
   }
 
   .sym.linked {
-    font: inherit;
-    font-family: var(--font-ui);
-    font-weight: 600;
-    color: var(--ink);
-    letter-spacing: -0.01em;
     background: none;
     border: 0;
     padding: 0;
@@ -1616,7 +1588,7 @@
   .trade-host svg .exit-mark { stroke: var(--ring); stroke-width: 2; }
 
   .trade-host svg .sma { fill: none; stroke-width: 1.5; opacity: 0.95; stroke: var(--sma-mark); }
-  .trade-host svg .sma-label { fill: var(--sma-mark); font-weight: 600; stroke: var(--ring); }
+  .trade-host svg .sma-label { fill: var(--sma-mark); font-weight: 600; }
   .trade-host svg :where(.sma, .sma-label) { --sma-mark: oklch(var(--mark-l) var(--mark-c) var(--sma-h, var(--sma-1-h))); }
 
   .tc-mark.entry { border-inline-start-color: var(--ink-3); }
@@ -1800,11 +1772,10 @@
     }
 
     .trades.log tbody tr { padding-inline: var(--space-sm); }
-    .trades.log tbody tr.band td { background: none; }
-    .trades.log tbody tr.band { background: var(--surface-2); border-radius: var(--radius-ctl); }
+    :is(table.data, .trades.log) tbody tr.band td { background: none; }
+    :is(table.data, .trades.log) tbody tr.band { background: var(--surface-2); }
+    .trades.log tbody tr.band { border-radius: var(--radius-ctl); }
     .trades.log tbody tr.week-edge { border-block-start: 2px solid var(--rule-week); }
-    table.data tbody tr.band td { background: none; }
-    table.data tbody tr.band { background: var(--surface-2); }
 
     .tstrat { white-space: normal; }
 

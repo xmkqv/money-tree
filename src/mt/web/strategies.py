@@ -19,21 +19,11 @@ FAMILIES = {
     "allocation": "Asset allocation",
     "quality": "Monthly quality",
 }
-ACRONYMS = {
-    "atr": "ATR",
-    "adx": "ADX",
-    "rsi": "RSI",
-    "sma": "SMA",
-    "tfb": "TFB",
-    "mim": "MIM",
-    "baa": "BAA",
-    "gp": "GP",
-}
+ACRONYMS = {"atr": "ATR", "adx": "ADX", "rsi": "RSI"}
 BOUNDS = {"max": "≤", "min": "≥"}
 UNITS = {
     "minutes": "min",
     "hours": "h",
-    "seconds": "s",
     "sessions": "sess",
     "days": "days",
     "bars": "bars",

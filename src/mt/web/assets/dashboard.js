@@ -51,6 +51,7 @@ const clockLabel = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + Stri
 const dparts = d => d.split("-").map(Number);
 const parseDate = d => { const [y, m, day] = dparts(d); return new Date(y, m - 1, day); };
 const isoDay = (y, m, day) => y + "-" + String(m + 1).padStart(2, "0") + "-" + String(day).padStart(2, "0");
+const weekdayLabel = (weekday, day, m) => DAY3[weekday] + " " + day + " " + MON3[m];
 const enGB = options => date => date.toLocaleDateString("en-GB", options);
 const shortDay = enGB({ day: "numeric", month: "short" });
 const longDay = enGB({ weekday: "short", day: "numeric", month: "short" });
@@ -170,8 +171,7 @@ function weekRows(md) {
   const groups = new Map();
   for (const d of md.days) {
     if (d.weekend) continue;
-    const monday = new Date(md.y, md.m, d.day - (d.weekday - 1));
-    const key = monday.getFullYear() + "-" + monday.getMonth() + "-" + monday.getDate();
+    const key = weekStart(isoDay(md.y, md.m, d.day));
     if (!groups.has(key)) groups.set(key, new Array(5).fill(null));
     groups.get(key)[d.weekday - 1] = d;
   }
@@ -321,7 +321,7 @@ function renderToday() {
   document.getElementById("today-heading").textContent =
     iso === LEDGER.today ? "Today" : isLatest() ? "Last session" : "Session";
   document.getElementById("today-date").textContent =
-    DAY3[weekday] + " " + todaySel.day + " " + MON3[todaySel.m] + " " + todaySel.y;
+    weekdayLabel(weekday, todaySel.day, todaySel.m) + " " + todaySel.y;
   document.getElementById("today-reset").classList.toggle("hidden", isLatest());
 
   document.getElementById("n-closed").textContent = trades.length;
@@ -344,12 +344,6 @@ function renderToday() {
         { t: money(pos.value), r: true, dim: true },
         { t: signedMoney(pos.unrealized_pnl), r: true, cls: tone(pos.unrealized_pnl) },
       ]), 2);
-    return;
-  }
-
-  if (!cell) {
-    render(html`<span>No session</span>`, sum);
-    render(html`<tbody><tr><td class="empty">No session on this date.</td></tr></tbody>`, table);
     return;
   }
 
@@ -582,10 +576,8 @@ function renderStrategies(period) {
 
 const space = step => parseFloat(token(step)) || 12;
 
-function axisMetrics(hostId) {
-  const size = parseFloat(getComputedStyle(document.getElementById(hostId)).fontSize) || 10;
-  return { size, advance: size * 0.62 };
-}
+const axisAdvance = hostId =>
+  (parseFloat(getComputedStyle(document.getElementById(hostId)).fontSize) || 10) * 0.62;
 
 const gutterFor = (labels, advance) =>
   Math.ceil(Math.max(...labels.map(text => text.length)) * advance) + 16;
@@ -598,7 +590,7 @@ function plotBox(hostId, { minimum, scale, widest }) {
   const host = document.getElementById(hostId);
   const width = host.clientWidth, height = host.clientHeight;
   if (width < minimum || height < minimum) return null;
-  const { advance } = axisMetrics(hostId);
+  const advance = axisAdvance(hostId);
   const unit = space("--space-md");
   const pad = {
     t: unit * scale.t, r: gutterFor(widest, advance), b: unit * scale.b, l: unit * scale.l,
@@ -797,7 +789,7 @@ function drawChart() {
     const rect = document.getElementById("chart-host").getBoundingClientRect();
     return i0 + ((clientX - rect.left - PAD.l) / plotW) * (i1 - i0);
   };
-  geo = { width, height, plotW, plotH, px, py, indexAt, yMin, yMax, baseline, lo, hi };
+  geo = { width, plotW, plotH, px, py, indexAt, yMin, yMax, baseline, lo, hi };
 
   const zeroY = clamp(py(0), PAD.t, PAD.t + plotH);
   const line = visible.map((v, k) => (k ? "L" : "M") + px(v.i).toFixed(2) + " " + py(v.y).toFixed(2)).join(" ");
@@ -1087,7 +1079,7 @@ function dayCell(cell, peak, tip) {
   const show = target => {
     const box = target.getBoundingClientRect();
     const ref = tip.offsetParent.getBoundingClientRect();
-    render(html`<span class="tt-k">${DAY3[cell.weekday]} ${cell.day} ${MON3[calM]} ${calY}</span>
+    render(html`<span class="tt-k">${weekdayLabel(cell.weekday, cell.day, calM)} ${calY}</span>
       <span class=${"tt-v " + tone(cell.pnl)}>${signedMoney(cell.pnl)}</span>
       ${[["Return", signedPct(cell.pct)], ["Trades", cell.trades], ["Wins", cell.wins + " of " + cell.trades]].map(([label, value]) =>
         html`<span class="tt-row"><span>${label}</span><span>${value}</span></span>`)}`, tip);
@@ -1111,7 +1103,7 @@ function dayCell(cell, peak, tip) {
     @keydown=${event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectDay(calY, calM, cell.day); } }}
     @pointerenter=${event => show(event.currentTarget)} @focus=${event => show(event.currentTarget)}
     @pointerleave=${hide} @blur=${hide}
-    aria-label=${DAY3[cell.weekday] + " " + cell.day + " " + MON3[calM] + ", " + signedMoney(cell.pnl) +
+    aria-label=${weekdayLabel(cell.weekday, cell.day, calM) + ", " + signedMoney(cell.pnl) +
       ", " + signedPct(cell.pct) + ", " + cell.wins + " of " + cell.trades + " trades won"}>
     <span class="d">${cell.day}</span><span class=${"p " + tone(cell.pnl)}>${signedMoney(cell.pnl)}</span>
     <span class="q">${signedPct(cell.pct)}</span></div>`;
@@ -1309,7 +1301,7 @@ function renderLog() {
   buildTable(table,
     ["Date", "Entry time", "Exit time", "Symbol", "Strategy", ...TRADE_TOTAL_HEADERS],
     rows.map(t => [
-      { t: DAY3[t.weekday] + " " + t.day + " " + MON3[t.m] + " " + String(t.y).slice(2), cls: "log-date" },
+      { t: weekdayLabel(t.weekday, t.day, t.m) + " " + String(t.y).slice(2), cls: "log-date" },
       openedCell(t),
       ...tradeCells(t, true),
     ]), 5, (_row, index) => [
@@ -1330,7 +1322,6 @@ const TC_SHOW = { range: true, stop: true, targets: true };
 
 function selectTradeState(timeframe) {
   TC_STATE = blankTradeState(timeframe);
-  TC_LEVELS = null;
   Object.assign(TC_VIEW, { i0: 0, i1: 0, yManual: null, custom: false });
   document.getElementById("tc-host").querySelectorAll("svg, .tc-mark").forEach(n => n.remove());
   document.getElementById("tc-tip").classList.remove("on");
@@ -1361,6 +1352,7 @@ function positionTrade(position) {
 async function openTradeChart(trade, from, record = "push") {
   TRADE = trade;
   if (from) TC_ORIGIN = from;
+  TC_LEVELS = null;
   selectTradeState("5Min");
   TC_COTRADES = ALL_TRADES.filter(t => t.symbol === trade.symbol).reverse();
   if (trade.open) TC_COTRADES.push(trade);
@@ -1503,7 +1495,7 @@ function tcState(message) {
 async function loadTradeBars() {
   const state = TC_STATE;
   const t = TRADE;
-  tcState("Loading " + document.querySelector("#tc-range [aria-pressed=true]").textContent.trim().toLowerCase() + " bars…");
+  tcState("Loading " + timeframeLabel().toLowerCase() + " bars…");
   try {
     const data = await readData("/api/bars", {
       symbol: t.symbol, timeframe: TC_STATE.timeframe, opened: dateOf(t.entered_at), closed: t.date,
@@ -1552,9 +1544,8 @@ function drawTradeChart() {
       averages[length] = values;
     }
   }
-  const first = TC_STATE.first || 0;
+  const first = TC_STATE.first;
   const all = bars.slice(first);
-  if (!all.length) return;
   if (TC_VIEW.i1 <= TC_VIEW.i0) setTradeView(0, all.length);
 
   const nearest = x => {
@@ -1707,7 +1698,7 @@ function drawTradeChart() {
       lastY = py(v);
     });
     if (!path) return "";
-    if (lastY !== null) smaEnds.push({ y: lastY, index, length });
+    smaEnds.push({ y: lastY, index, length });
     return '<path class="sma" data-sma="' + index + '" d="' + path.trim() + '"/>';
   }).join("");
 
@@ -1723,27 +1714,28 @@ function drawTradeChart() {
     '<rect class="band" x="' + TC_PAD.l + '" y="' + Math.min(top, bottom).toFixed(2) + '" width="' + plotW +
     '" height="' + Math.abs(bottom - top).toFixed(2) + '"/>';
   let overlays = "", overlayText = "";
-  const named = (y, mark, text, dash) => {
+  const named = (y, text, dash, mark = "") => {
+    const tone = mark ? " " + mark : "";
     overlays +=
-      '<line class="level ' + mark + '" x1="' + TC_PAD.l + '" y1="' + y.toFixed(2) + '" x2="' +
+      '<line class="level' + tone + '" x1="' + TC_PAD.l + '" y1="' + y.toFixed(2) + '" x2="' +
       (width - TC_PAD.r) + '" y2="' + y.toFixed(2) + '" stroke-dasharray="' + dash + '"/>';
     overlayText +=
-      '<text class="level-label halo ' + mark + '" x="' + (TC_PAD.l + 5) + '" y="' + (y - 4).toFixed(2) +
+      '<text class="level-label halo' + tone + '" x="' + (TC_PAD.l + 5) + '" y="' + (y - 4).toFixed(2) +
       '">' + text + "</text>";
   };
 
   if (TC_SHOW.range && levels.range) {
     overlays += band(py(levels.range.high), py(levels.range.low));
-    named(py(levels.range.high), "axis", "Range high " + money(levels.range.high), "4 3");
-    named(py(levels.range.mid), "axis", "Range mid " + money(levels.range.mid), "2 4");
-    named(py(levels.range.low), "axis", "Range low " + money(levels.range.low), "4 3");
+    named(py(levels.range.high), "Range high " + money(levels.range.high), "4 3");
+    named(py(levels.range.mid), "Range mid " + money(levels.range.mid), "2 4");
+    named(py(levels.range.low), "Range low " + money(levels.range.low), "4 3");
   }
   if (TC_SHOW.stop && levels.stop !== undefined) {
-    named(py(levels.stop), "mark-loss", "Stop " + money(levels.stop), "5 4");
+    named(py(levels.stop), "Stop " + money(levels.stop), "5 4", "mark-loss");
   }
   if (TC_SHOW.targets && levels.targets) {
     levels.targets.forEach((value, i) => {
-      named(py(value), "mark-gain", "Target " + (i + 1) + " " + money(value), "1 4");
+      named(py(value), "Target " + (i + 1) + " " + money(value), "1 4", "mark-gain");
     });
   }
 
@@ -1952,8 +1944,10 @@ function paintTradeTable() {
   const rows = TC_STATE.bars.map(b =>
     `${dayOf(b.t)} ${clockOf(b.t)} open ${money(b.o)} high ${money(b.h)} low ${money(b.l)} close ${money(b.c)}`);
   document.getElementById("tc-table").textContent =
-    TRADE.symbol + " " + document.querySelector("#tc-range [aria-pressed=true]").textContent.trim() + " bars. " + rows.join(". ");
+    TRADE.symbol + " " + timeframeLabel() + " bars. " + rows.join(". ");
 }
+
+const timeframeLabel = () => document.querySelector("#tc-range [aria-pressed=true]").textContent.trim();
 
 function tradeHover(event) {
   const geo = TC_STATE.geo;
@@ -1979,7 +1973,7 @@ function wireTradeChart() {
     const button = event.target.closest("button");
     if (!button || button.dataset.timeframe === TC_STATE.timeframe) return;
     selectTradeState(button.dataset.timeframe);
-    loadTradeLevels();
+    if (TC_LEVELS === null) loadTradeLevels();
     syncTimeframeButtons();
     loadTradeBars();
   });
@@ -2142,7 +2136,6 @@ function paintConfig() {
 }
 
 async function renderConfig() {
-  if (CONFIG) { paintConfig(); return; }
   try {
     CONFIG = await readData("/api/strategies");
   } catch {
