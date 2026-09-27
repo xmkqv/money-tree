@@ -180,6 +180,7 @@ class DailyVariationSection(StrategySection):
     adx_min: Amount
     stop_atr_multiple: Amount
     does_heed_earnings: bool
+    holdings_max: Count
 
 
 class DailySmaSection(DailyVariationSection):
