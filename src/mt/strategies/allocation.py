@@ -5,7 +5,7 @@ from pandas import DataFrame, DateOffset, DatetimeIndex, Timestamp
 
 from mt.data.asset import Asset
 
-from .base import Candidate, Holding, Portfolio, Session, Strategy
+from .monthly import Monthly
 
 
 FAST_WEIGHTS = {1: 12.0, 3: 4.0, 6: 2.0, 12: 1.0}
@@ -38,7 +38,7 @@ def slow_momentum(closes: list[float]) -> float:
     return closes[0] / (sum(closes[: SLOW_MONTHS + 1]) / (SLOW_MONTHS + 1)) - 1
 
 
-class Allocation(Strategy):
+class Allocation(Monthly):
     canary_symbols: ClassVar[tuple[str, ...]]
     offensive_symbols: ClassVar[tuple[str, ...]]
     defensive_symbols: ClassVar[tuple[str, ...]]
@@ -46,62 +46,14 @@ class Allocation(Strategy):
     offensive_top: ClassVar[int]
     defensive_top: ClassVar[int]
     breadth: ClassVar[int]
-    entry_minutes: ClassVar[int]
-    stop_fraction: ClassVar[float]
-
-    def __init__(self, portfolio: Portfolio) -> None:
-        super().__init__(portfolio)
-        self._month: tuple[int, int] | None = None
-        self._picks: tuple[Asset, ...] = ()
 
     @classmethod
     def symbols(cls) -> tuple[str, ...]:
         found = (*cls.canary_symbols, *cls.offensive_symbols, *cls.defensive_symbols)
         return tuple(dict.fromkeys((*found, cls.cash_symbol)))
 
-    @classmethod
-    def entry_window(cls, opens: datetime, closes: datetime) -> tuple[datetime, datetime]:
-        return min(closes, opens + timedelta(minutes=cls.entry_minutes)), closes
-
-    def run(self, session: Session) -> None:
-        now = session.now
-        start, until = self.entry_window(session.opens, session.closes)
-        if not start <= now < until:
-            return
-        if self._month != (now.year, now.month):
-            picks = self._select(now.date())
-            if picks is None:
-                return
-            self._month, self._picks = (now.year, now.month), picks
-        for asset in self._picks:
-            if self.portfolio.is_taken(self, asset, now.date()):
-                continue
-            if self.is_capped(now):
-                return
-            price = self.price(asset)
-            if price is None:
-                continue
-            candidate = Candidate(asset, price, price * (1 - self.stop_fraction))
-            self.portfolio.enter(self, candidate, session)
-
-    def manage(self, holding: Holding, session: Session) -> None:
-        now = session.now
-        price = self.price(holding.asset)
-        if price is None:
-            return
-        holding.highest = max(holding.highest, price)
-        if price <= holding.stop:
-            self.portfolio.exit(holding, holding.stop_reason)
-            return
-        start, until = self.entry_window(session.opens, session.closes)
-        if (
-            start <= now < until
-            and self._month == (now.year, now.month)
-            and holding.asset not in self._picks
-        ):
-            self.portfolio.exit(holding, "signal")
-
-    def _select(self, day: date) -> tuple[Asset, ...] | None:
+    def select(self, now: datetime) -> tuple[Asset, ...] | None:
+        day = now.date()
         month_start = day.replace(day=1)
         fast: dict[str, float] = {}
         slow: dict[str, float] = {}
