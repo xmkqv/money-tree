@@ -12,8 +12,23 @@ from mt.strategies.breakout import Breakout
 from mt.strategies.registry import ORDER_PREFIX, STRATEGIES
 
 
-FAMILIES = {"breakout": "Intraday breakout", "daily": "Daily trend"}
-ACRONYMS = {"atr": "ATR", "adx": "ADX", "rsi": "RSI", "sma": "SMA", "tfb": "TFB"}
+FAMILIES = {
+    "breakout": "Intraday breakout",
+    "daily": "Daily trend",
+    "intraday": "Intraday momentum",
+    "allocation": "Asset allocation",
+    "quality": "Monthly quality",
+}
+ACRONYMS = {
+    "atr": "ATR",
+    "adx": "ADX",
+    "rsi": "RSI",
+    "sma": "SMA",
+    "tfb": "TFB",
+    "mim": "MIM",
+    "baa": "BAA",
+    "gp": "GP",
+}
 BOUNDS = {"max": "≤", "min": "≥"}
 UNITS = {
     "minutes": "min",

@@ -63,6 +63,9 @@
     --s-daily-sma-h:    287;
     --s-daily-tfb-h:    352;
     --s-daily-20sma-h:  170;
+    --s-intraday-mim-h:   56;
+    --s-allocation-baa-h: 230;
+    --s-quality-gp-h:    326;
     --sma-1-h: 204;
     --sma-2-h: 300;
     --sma-3-h:  38;
