@@ -1,12 +1,11 @@
 from typing import ClassVar
 
-from pandas import DataFrame, Series
-from pandas_ta_classic.utils import cross as ta_cross
+from pandas import DataFrame
 
 from mt.indicators import finite_row, finite_value
 from mt.rules.shared import settings
 
-from .daily import Daily
+from .daily import Daily, crossed_above_average
 
 
 class DailySma(Daily):
@@ -23,10 +22,8 @@ class DailySma(Daily):
     def does_enter(cls, frame: DataFrame) -> bool:
         period = settings.indicators.period
         close = frame["close"]
-        crossed = ta_cross(
-            close, frame[f"SMA_{settings.daily.average_sessions}"], above=True, asint=False
-        )
-        if not isinstance(crossed, Series):
+        crossed = crossed_above_average(frame)
+        if crossed is None:
             return False
         row = finite_row(
             [

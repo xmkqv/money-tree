@@ -1,20 +1,16 @@
-from datetime import datetime, timedelta
-from decimal import Decimal
+from datetime import date, datetime, timedelta
 from typing import ClassVar
 
-from pandas import DataFrame, Series
-from pandas_ta_classic.utils import cross as ta_cross
+from pandas import DataFrame
 
+from mt.data.asset import Asset
 from mt.data.company import is_large_enough
-from mt.data.earnings import is_earnings_blocked
 from mt.frames import last_close
 from mt.indicators import finite_row, finite_value, latest_atr
 from mt.rules.shared import settings
-from mt.rules.values import TARGET_REASONS
-from mt.sizing import round_quantity
 
 from .base import Candidate, Holding, Ladder, Session
-from .daily import Daily, does_signal_exit
+from .daily import Daily, crossed_above_average, does_signal_exit
 
 
 class Daily20Sma(Daily):
@@ -45,15 +41,12 @@ class Daily20Sma(Daily):
     @classmethod
     def does_enter(cls, frame: DataFrame) -> bool:
         period = settings.indicators.period
-        close = frame["close"]
-        crossed = ta_cross(
-            close, frame[f"SMA_{settings.daily.average_sessions}"], above=True, asint=False
-        )
-        if not isinstance(crossed, Series):
+        crossed = crossed_above_average(frame)
+        if crossed is None:
             return False
         row = finite_row(
             [
-                finite_value(close),
+                finite_value(frame["close"]),
                 finite_value(frame[f"SMA_{cls.trend_sessions}"]),
                 finite_value(frame[f"SMA_{cls.trend_sessions_long}"]),
                 finite_value(crossed),
@@ -72,44 +65,21 @@ class Daily20Sma(Daily):
         )
 
     def run(self, session: Session) -> None:
-        now = session.now
         opens, until = self.entry_window(session.opens, session.closes)
-        if not opens <= now <= until:
-            return
-        if self._scanned_at != now.date():
-            self._scanned_at = now.date()
-            self._candidates = self.scan(session)
-        for candidate in self._candidates:
-            if self.is_capped(now):
-                return
-            if self.portfolio.is_taken(self, candidate.asset, now.date()):
-                continue
-            price = self.price(candidate.asset)
-            if price is None:
-                continue
-            stop = price * (1 - self.stop_fraction)
-            self.portfolio.enter(self, Candidate(candidate.asset, price, stop), session)
+        if opens <= session.now <= until:
+            self.enter_candidates(session)
 
-    def scan(self, session: Session) -> list[Candidate]:
-        now = session.now
-        candidates: list[Candidate] = []
-        for asset, frame in self._ranked():
-            if not self.does_enter(frame):
-                continue
-            if self.does_heed_earnings and is_earnings_blocked(asset, now.date()):
-                continue
-            if not is_large_enough(asset, self.market_cap_usd_min, now.date()):
-                continue
-            last = last_close(frame)
-            candidates.append(Candidate(asset, last, last * (1 - self.stop_fraction)))
-        if not candidates:
-            self.portfolio.record(
-                self,
-                f"scan.emptied.{now.date()}",
-                "info",
-                f"{self.name()} found no candidate: no asset passed the universe and setup",
-            )
-        return candidates
+    def does_qualify(self, asset: Asset, frame: DataFrame, day: date) -> bool:
+        return super().does_qualify(asset, frame, day) and is_large_enough(
+            asset, self.market_cap_usd_min, day
+        )
+
+    def candidate(self, asset: Asset, frame: DataFrame) -> Candidate:
+        last = last_close(frame)
+        return Candidate(asset, last, last * (1 - self.stop_fraction))
+
+    def refreshed(self, candidate: Candidate, price: float) -> Candidate | None:
+        return Candidate(candidate.asset, price, price * (1 - self.stop_fraction))
 
     def ladder(self, holding: Holding, quantity: float) -> Ladder | None:
         return Ladder(quantity, tuple(holding.entry * (1 + gain) for gain in self.target_gains))
@@ -133,10 +103,7 @@ class Daily20Sma(Daily):
             return
         if price < ladder.targets[ladder.stage]:
             return
-        share = self.target_fractions[ladder.stage]
-        quantity = round_quantity(Decimal(str(ladder.original_quantity)) * Decimal(str(share)))
-        reason = TARGET_REASONS[ladder.stage]
-        ladder.stage += 1
+        quantity, reason = ladder.step(self.target_fractions[ladder.stage])
         if quantity > 0:
             self.portfolio.exit(holding, reason, float(quantity))
 
@@ -165,6 +132,4 @@ class Daily20Sma(Daily):
         if not opens <= session.now <= until:
             return False
         frame = self.portfolio.daily_frame(holding.asset)
-        if frame is None or len(frame) < settings.daily.average_sessions:
-            return False
-        return does_signal_exit(frame)
+        return frame is not None and does_signal_exit(frame)

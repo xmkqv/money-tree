@@ -2,7 +2,8 @@ from abc import abstractmethod
 from datetime import date, datetime
 from typing import Any, ClassVar, cast
 
-from pandas import DataFrame
+from pandas import DataFrame, Series
+from pandas_ta_classic.utils import cross as ta_cross
 
 from mt.data.asset import Asset
 from mt.data.earnings import is_earnings_blocked, is_earnings_exit_due
@@ -38,6 +39,13 @@ def does_signal_exit(frame: DataFrame) -> bool:
     return latest < latest_average or strength_now < settings.daily.exit_rsi_max
 
 
+def crossed_above_average(frame: DataFrame) -> "Series[Any] | None":
+    crossed = ta_cross(
+        frame["close"], frame[f"SMA_{settings.daily.average_sessions}"], above=True, asint=False
+    )
+    return crossed if isinstance(crossed, Series) else None
+
+
 class Daily(Strategy):
     stop_atr_multiple: ClassVar[float]
     does_heed_earnings: ClassVar[bool]
@@ -65,13 +73,8 @@ class Daily(Strategy):
     def does_clear(cls, frame: DataFrame) -> bool:
         return True
 
-    def begin(self, session_on: date) -> None:
-        self._candidates = []
-        self._scanned_at = None
-
     def run(self, session: Session) -> None:
-        now = session.now
-        if not session.opens <= now < session.closes:
+        if not session.opens <= session.now < session.closes:
             return
         benchmark = self.portfolio.benchmark_frame()
         if benchmark is None:
@@ -85,40 +88,60 @@ class Daily(Strategy):
                 f"{settings.daily.average_sessions}-day average",
             )
             return
-        if self._scanned_at != now.date():
-            self._scanned_at = now.date()
-            self._candidates = self.scan(session)
-        for candidate in self._candidates:
+        self.enter_candidates(session)
+
+    def enter_candidates(self, session: Session) -> None:
+        now = session.now
+        for candidate in self.candidates(session):
             if self.is_capped(now):
                 return
             if self.portfolio.is_taken(self, candidate.asset, now.date()):
                 continue
             price = self.price(candidate.asset)
-            if price is None or price <= candidate.stop:
+            if price is None:
                 continue
-            distance = candidate.price - candidate.stop
-            refreshed = Candidate(candidate.asset, price, price - distance, candidate.direction)
-            self.portfolio.enter(self, refreshed, session)
+            refreshed = self.refreshed(candidate, price)
+            if refreshed is not None:
+                self.portfolio.enter(self, refreshed, session)
+
+    def candidates(self, session: Session) -> list[Candidate]:
+        day = session.now.date()
+        if self._scanned_at != day:
+            self._scanned_at = day
+            self._candidates = self.scan(session)
+        return self._candidates
 
     def scan(self, session: Session) -> list[Candidate]:
-        now = session.now
-        candidates: list[Candidate] = []
-        for asset, frame in self._ranked():
-            if not self.does_clear(frame) or not self.does_enter(frame):
-                continue
-            if self.does_heed_earnings and is_earnings_blocked(asset, now.date()):
-                continue
-            last = last_close(frame)
-            stop = last - self.stop_atr_multiple * latest_atr(frame, settings.indicators.period)
-            candidates.append(Candidate(asset, last, stop))
+        day = session.now.date()
+        candidates = [
+            self.candidate(asset, frame)
+            for asset, frame in self._ranked()
+            if self.does_qualify(asset, frame, day)
+        ]
         if not candidates:
             self.portfolio.record(
                 self,
-                f"scan.emptied.{now.date()}",
+                f"scan.emptied.{day}",
                 "info",
                 f"{self.name()} found no candidate: no asset passed the universe and setup",
             )
         return candidates
+
+    def does_qualify(self, asset: Asset, frame: DataFrame, day: date) -> bool:
+        if not self.does_clear(frame) or not self.does_enter(frame):
+            return False
+        return not (self.does_heed_earnings and is_earnings_blocked(asset, day))
+
+    def candidate(self, asset: Asset, frame: DataFrame) -> Candidate:
+        last = last_close(frame)
+        distance = self.stop_atr_multiple * latest_atr(frame, settings.indicators.period)
+        return Candidate(asset, last, last - distance)
+
+    def refreshed(self, candidate: Candidate, price: float) -> Candidate | None:
+        if price <= candidate.stop:
+            return None
+        distance = candidate.price - candidate.stop
+        return Candidate(candidate.asset, price, price - distance, candidate.direction)
 
     def manage(self, holding: Holding, session: Session) -> None:
         now = session.now
