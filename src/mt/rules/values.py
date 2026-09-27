@@ -20,6 +20,23 @@ type Unattributed = Literal["unattributed"]
 UNATTRIBUTED: Unattributed = "unattributed"
 STRATEGY_KEYS: tuple[StrategyKey, ...] = get_args(StrategyKey.__value__)
 
+type OrderReason = Literal[
+    "entry",
+    "stop",
+    "breakeven",
+    "trail",
+    "target_1",
+    "target_2",
+    "target_3",
+    "close",
+    "signal",
+    "earnings",
+    "limit",
+]
+
+ORDER_REASONS: tuple[OrderReason, ...] = get_args(OrderReason.__value__)
+TARGET_REASONS: tuple[OrderReason, ...] = ("target_1", "target_2", "target_3")
+
 
 def parse_none(value: object) -> object:
     return None if value == "none" else value
@@ -39,6 +56,10 @@ def check_distinct(values: tuple[StrategyKey, ...]) -> tuple[StrategyKey, ...]:
 
 def is_strategy_key(value: str) -> TypeIs[StrategyKey]:
     return value in STRATEGY_KEYS
+
+
+def is_order_reason(value: str) -> TypeIs[OrderReason]:
+    return value in ORDER_REASONS
 
 
 type Count = Annotated[int, Field(gt=0)]

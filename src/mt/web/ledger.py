@@ -17,9 +17,9 @@ from mt.data.asset import Asset
 from mt.data.bars import BarsClientAlpaca
 from mt.exchange import TRADING_ZONE, trading_time
 from mt.rules.sections import DashboardSection
-from mt.rules.values import UNATTRIBUTED, StrategyKey, Symbol, Unattributed
+from mt.rules.values import UNATTRIBUTED, OrderReason, StrategyKey, Symbol, Unattributed
 from mt.sizing import Direction
-from mt.strategies.registry import find_order_strategy_key
+from mt.strategies.registry import find_order_reason, find_order_strategy_key
 
 from .snapshot import Snapshot, SnapshotPosition, build_snapshot
 from .strategies import StrategyLabel, strategy_labels
@@ -31,6 +31,7 @@ class FillRow(TypedDict):
     price: float
     quantity: float
     side: str
+    reason: OrderReason | None
 
 
 class Trade(TypedDict):
@@ -131,6 +132,17 @@ class _Tally:
     out_quantity: float = 0.0
     out_value: float = 0.0
     fills: list[FillRow] = field(default_factory=list[FillRow])
+    order_id: str | None = None
+
+
+STOP_ORDER_TYPES = frozenset({"stop", "stop_limit", "trailing_stop"})
+
+
+def order_reason(order: ClosedOrder) -> OrderReason | None:
+    found = find_order_reason(order.client_order_id or "")
+    if found is None and order.order_type in STOP_ORDER_TYPES:
+        return "stop"
+    return found
 
 
 def match_trades(
@@ -141,6 +153,7 @@ def match_trades(
     strategies: dict[str, StrategyKey | None] = {
         order.id: find_order_strategy_key(order.client_order_id or "") for order in orders
     }
+    reasons: dict[str, OrderReason | None] = {order.id: order_reason(order) for order in orders}
     held: defaultdict[str, float] = defaultdict(float)
     tallies: dict[str, _Tally] = {}
     trades: list[Trade] = []
@@ -169,15 +182,26 @@ def match_trades(
             )
 
         entering = (signed > 0) == (trade.direction > 0)
-        trade.fills.append(
-            FillRow(
-                date=when.date().isoformat(),
-                minute=_clock_minute(when),
-                price=round(price, 4),
-                quantity=round(quantity, 4),
-                side="in" if entering else "out",
+        side = "in" if entering else "out"
+        latest = trade.fills[-1] if trade.fills else None
+        if latest is not None and trade.order_id == fill.order_id and latest["side"] == side:
+            merged = latest["quantity"] + quantity
+            latest["price"] = round(
+                (latest["price"] * latest["quantity"] + price * quantity) / merged, 4
             )
-        )
+            latest["quantity"] = round(merged, 4)
+        else:
+            trade.fills.append(
+                FillRow(
+                    date=when.date().isoformat(),
+                    minute=_clock_minute(when),
+                    price=round(price, 4),
+                    quantity=round(quantity, 4),
+                    side=side,
+                    reason=reasons.get(fill.order_id),
+                )
+            )
+        trade.order_id = fill.order_id
         if entering:
             trade.in_quantity += quantity
             trade.in_value += quantity * price

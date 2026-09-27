@@ -1,6 +1,6 @@
 from uuid import uuid4
 
-from mt.rules.values import STRATEGY_KEYS, StrategyKey
+from mt.rules.values import STRATEGY_KEYS, OrderReason, StrategyKey, is_order_reason
 
 from .base import Strategy
 from .breakout import Breakout5m, Breakout10m, Breakout15m
@@ -10,6 +10,7 @@ from .daily_tfb import DailyTfb
 
 
 ORDER_PREFIX = "mt"
+LIQUIDATE_CODE = "liquidate"
 
 STRATEGIES: tuple[type[Strategy], ...] = (
     Breakout5m,
@@ -31,8 +32,12 @@ for _strategy in STRATEGIES:
         raise ValueError(f"{_strategy.__name__} order code must be one character")
 
 
-def order_code(strategy_key: StrategyKey) -> str:
-    return "-".join((ORDER_PREFIX, STRATEGIES_BY_KEY[strategy_key].code, uuid4().hex[:8]))
+def order_code(strategy_key: StrategyKey, reason: OrderReason) -> str:
+    return "-".join((ORDER_PREFIX, STRATEGIES_BY_KEY[strategy_key].code, reason, uuid4().hex[:8]))
+
+
+def liquidate_code() -> str:
+    return "-".join((ORDER_PREFIX, LIQUIDATE_CODE, uuid4().hex))
 
 
 def find_order_strategy_key(value: str) -> StrategyKey | None:
@@ -41,3 +46,14 @@ def find_order_strategy_key(value: str) -> StrategyKey | None:
         return None
     found = STRATEGIES_BY_CODE.get(parts[1])
     return None if found is None else found.key
+
+
+def find_order_reason(value: str) -> OrderReason | None:
+    parts = value.split("-")
+    if len(parts) < 3 or parts[0] != ORDER_PREFIX:
+        return None
+    if parts[1] == LIQUIDATE_CODE:
+        return "limit"
+    if len(parts) == 4 and is_order_reason(parts[2]):
+        return parts[2]
+    return None

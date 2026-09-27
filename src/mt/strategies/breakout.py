@@ -11,7 +11,8 @@ from mt.exchange import TRADING_ZONE
 from mt.frames import frame_between, frame_since, frame_until, regular_session
 from mt.indicators import latest_atr, latest_turnover_usd
 from mt.rules.shared import settings
-from mt.sizing import Direction, next_stop, round_quantity
+from mt.rules.values import TARGET_REASONS
+from mt.sizing import Direction, round_quantity
 
 from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, ranked
 
@@ -183,7 +184,7 @@ class Breakout(Strategy):
     def manage(self, holding: Holding, session: Session) -> None:
         now = session.now
         if now >= session.closes - timedelta(minutes=settings.breakout.close_lead_minutes):
-            self.portfolio.exit(holding)
+            self.portfolio.exit(holding, "close")
             return
         price = self.portfolio.last_price(holding.asset)
         holding.highest = max(holding.highest, price)
@@ -198,22 +199,23 @@ class Breakout(Strategy):
         )
         if reached:
             fractions = settings.breakout.target_fractions
+            reason = TARGET_REASONS[ladder.stage]
             if ladder.stage == len(fractions) - 1:
-                self.portfolio.exit(holding)
+                self.portfolio.exit(holding, reason)
                 return
             quantity = round_quantity(
                 Decimal(str(ladder.original_quantity)) * Decimal(str(fractions[ladder.stage])),
                 whole=holding.direction == -1,
             )
             ladder.stage += 1
-            holding.stop = next_stop(holding.direction, holding.stop, holding.entry)
+            holding.raise_stop(holding.entry, "breakeven")
             if quantity > 0:
-                self.portfolio.exit(holding, float(quantity))
+                self.portfolio.exit(holding, reason, float(quantity))
             self.portfolio.protect(holding)
             return
         if ladder.stage == 0:
             return
-        holding.stop = next_stop(holding.direction, holding.stop, self._trailed_stop(holding, now))
+        holding.raise_stop(self._trailed_stop(holding, now), "trail")
         self.portfolio.protect(holding)
 
     def _trailed_stop(self, holding: Holding, now: datetime) -> float:

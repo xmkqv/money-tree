@@ -70,6 +70,7 @@ class ClosedOrder(Payload):
     id: str
     submitted_at: str
     client_order_id: str | None = None
+    order_type: str | None = Field(default=None, validation_alias="type")
 
 
 class EquityPoint(Payload):
