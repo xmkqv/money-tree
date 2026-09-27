@@ -13,8 +13,6 @@ elide:
   - http retries, pagination and rate limits
   - frame shaping and indicator arithmetic
   - logging
-defer:
-  - bot restarts and recovery
 ---
 
 - the bot trades selected US-equity strategies on one broker account
@@ -25,51 +23,44 @@ defer:
 
 # entities
 
-| name | idea |
-| --- | --- |
-| asset | an instrument identified the same way across providers and ownership |
-| bar | one open, high, low, close and volume over one span |
-| feed | the source that supplies bars to a run |
-| quote | the price of the latest trade the intraday feed reports for an asset |
-| read | one vendor response and the instant it was taken |
-| run | one bot process from start to finish |
-| iteration | one pass of the portfolio loop |
-| session | one exchange trading day from open to close |
-| period | a span of sessions bounded in exchange time |
-| baseline | the equity a period measures from |
-| universe | the assets that pass price and turnover selection |
-| signal | the condition that makes a strategy act |
-| candidate | a proposed entry with price, stop and direction |
-| order | one instruction sent to the broker |
-| code | the frozen name that attributes an order to its strategy |
-| fill | the part of an order the broker completed |
-| exposure | the notional a position or holding places in the market |
-| position | the exposure the broker reports |
-| holding | the exposure a strategy manages, with stop and staged exits |
-| ladder | the staged exits that reduce a holding |
-| cap | the holding limit a strategy shares with the keys it counts |
-| trade | one round trip from flat to flat |
-| equity | the account value at one moment |
-| snapshot | the realtime account, positions and open orders |
-| ledger | trades, fills and profit over a period |
-| levels | the prices a chart draws for entry and averages |
-| state | the record the bot publishes for the dashboard |
-| event | one dated note inside the published state |
-| heartbeat | the time of the last publication |
-| login | an authenticated web visitor |
-| rules | the trading limits and strategy fields the bot and the web share |
-| strategy | one named way to enter and manage holdings |
-| family | strategies that share entry logic |
-| variation | one configured member of a family |
-| benchmark | the symbol every comparison uses |
-| report | one backtest run and its artifacts |
-
-# rules
-
-- the bot and the web share rules; rules and state reject unknown fields
-- each service alone receives its credentials, hosts and runtime limits
-- lookback days count calendar days; lookback sessions count exchange sessions
-- published rules omit secrets
+| name      | idea                                                                 |
+|-----------|----------------------------------------------------------------------|
+| asset     | an instrument identified the same way across providers and ownership |
+| bar       | one open, high, low, close and volume over one span                  |
+| feed      | the source that supplies bars to a run                               |
+| quote     | the price of the latest trade the intraday feed reports for an asset |
+| read      | one vendor response and the instant it was taken                     |
+| run       | one bot process from start to finish                                 |
+| iteration | one pass of the portfolio loop                                       |
+| session   | one exchange trading day from open to close                          |
+| period    | a span of sessions bounded in exchange time                          |
+| baseline  | the equity a period measures from                                    |
+| universe  | the assets that pass price and turnover selection                    |
+| signal    | the condition that makes a strategy act                              |
+| candidate | a proposed entry with price, stop and direction                      |
+| order     | one instruction sent to the broker                                   |
+| code      | the frozen name that attributes an order to its strategy             |
+| fill      | the part of an order the broker completed                            |
+| exposure  | the notional a position or holding places in the market              |
+| position  | the exposure the broker reports                                      |
+| holding   | the exposure a strategy manages, with stop and staged exits          |
+| ladder    | the staged exits that reduce a holding                               |
+| cap       | the holding limit of one variation                                   |
+| trade     | one round trip from flat to flat                                     |
+| equity    | the account value at one moment                                      |
+| snapshot  | the realtime account, positions and open orders                      |
+| ledger    | trades, fills and profit over a period                               |
+| levels    | the prices a chart draws for entry and averages                      |
+| state     | the record the bot publishes for the dashboard                       |
+| event     | one dated note inside the published state                            |
+| heartbeat | the time of the last publication                                     |
+| login     | an authenticated web visitor                                         |
+| rules     | the trading limits and strategy fields the bot and the web share     |
+| strategy  | one named way to enter and manage holdings                           |
+| family    | strategies that share entry logic                                    |
+| variation | one configured member of a family                                    |
+| benchmark | the symbol every comparison uses                                     |
+| report    | one backtest run and its artifacts                                   |
 
 ```sh:surface
 mt env list --service {web|bot}
@@ -117,10 +108,7 @@ mt trade --strategies KEY,…
 - portfolio owns the universe, sizing, exposure, ownership and execution
 - strategies reach bars, quotes and actions only through portfolio
 - a resting stop is an order at the broker; otherwise portfolio watches the stop
-- resting-stop holdings exit before the session close
-- Σ risk(open holdings) ≤ risk.per_day_max * equity
 - count(holdings per cap) ≤ risk.positions_max / 2
-- entry notional ≤ risk.notional_usd_max
 - holding.stop never widens
 - a quote older than bars.trade_max_age_seconds is absent; an absent quote defers the decision
 - closing orders never exceed the broker position
@@ -156,10 +144,16 @@ iteration
         retry liquidation on later iterations
 ```
 
+```md
+invs:
+    Σ risk(open holdings) ≤ risk.per_day_max * equity
+    entry notional ≤ risk.notional_usd_max
+```
+
 ## strategy
 
 - a strategy owns its signals and its holding management
-- variations are specified in [strategies]
+- [strategies] declares the variations and logic
 
 ```py:surface
 strategy
@@ -169,7 +163,6 @@ strategy
     variation
     is_paused
     is_stop_resting
-    cap → {own | family} keys
 
     symbols → fixed symbols outside the universe; daily frames include them
     entry_window(opens, closes) → (start, end)
@@ -188,7 +181,7 @@ strategy
 - a report runs the same portfolio, strategy and trade contracts as the bot
 - a report funds an empty account with backtest.budget_usd
 - asset defaults are simulation assumptions, not historical eligibility
-- empty or non-stock assets fail before any artifact is written
+- empty or non-stock assets fail before the report writes any artifact
 - a report returns statistics, trades and plots against the benchmark
 - a breakout report includes backtest.warm_up_days
 - a daily report uses engine daily bars and does not establish fill fidelity

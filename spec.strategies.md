@@ -1,17 +1,17 @@
 ---
 name: strategies
-elide:
-  - frame shaping and indicator arithmetic
+reminders:
+    - strategy spec is a faithful logical projection of the fundamental math
 ---
 
 - family is the first segment of the key; variation is the rest
 - a variation declares every field of its rules section; a missing field fails at import
+- a cap counts holdings of the variation alone
 
 # breakout
 
 - variations: breakout_5m, breakout_10m, breakout_15m
 - one opening range, one volume test
-- the cap counts holdings of the variation alone
 - the stop rests at the broker
 
 ```py:surface
@@ -38,8 +38,7 @@ management
 # daily
 
 - variations: daily_sma, daily_tfb, daily_20sma
-- one trend test, one session per entry
-- the cap counts holdings of the variation alone
+- one trend test
 - portfolio watches the stop
 
 ```py:surface
@@ -67,16 +66,15 @@ management
 
 ## daily_20sma
 
-- the daily frame carries every setup, confirmation and exit test
 - the trailing stop reads ATR over trail_hours bars
-- market capitalisation is read once per candidate per session
+- the strategy reads market capitalization once per candidate per session
 
 ```py:surface
 entry
     price > SMA(trend_sessions) > SMA(trend_sessions_long)
     rsi_min ≤ RSI ≤ rsi_max and ADX ≥ adx_min
     close crosses above SMA(average_sessions)
-    market capitalisation < market_cap_usd_min or unreadable → skip
+    market capitalization < market_cap_usd_min or unreadable → skip
     window = session open → open + entry_minutes
     stop = entry * (1 - stop_fraction)
 
@@ -93,7 +91,6 @@ management
 
 - variations: intraday_mim
 - Gao, Han, Li & Zhou (2018); noise band after Zarattini, Aziz & Barbon (2024)
-- the cap counts holdings of the variation alone
 - the stop rests at the broker
 
 ```py:surface
@@ -116,7 +113,6 @@ management
 - variations: allocation_baa
 - Keller (2022), Bold Asset Allocation
 - closes are the last daily close of each month
-- the cap counts holdings of the variation alone
 - portfolio watches the stop
 
 ```py:surface
@@ -144,7 +140,6 @@ management
 
 - variations: quality_gp
 - Novy-Marx (2013), gross profitability
-- the cap counts holdings of the variation alone
 - portfolio watches the stop
 
 ```py:surface
@@ -155,7 +150,8 @@ ranking, once per month
     filing older than fundamentals_max_age_days → skip
     industry ∈ excluded_industries → skip
     keep the top keep_rank
-    unreadable filings → retry after retry_minutes
+    no filing → skip
+    unreadable filings or industries → retry after retry_minutes
 
 entry
     window = open + entry_minutes → close
