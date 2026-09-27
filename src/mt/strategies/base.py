@@ -9,7 +9,7 @@ from pandas import DataFrame
 
 from mt.data.asset import Asset
 from mt.rules.shared import settings
-from mt.rules.values import STRATEGY_KEYS, SettingsSection, StrategyKey
+from mt.rules.values import SettingsSection, StrategyKey
 from mt.sizing import Direction
 from mt.state import EventLevel
 
@@ -157,10 +157,6 @@ class Strategy(ABC):
         if not isfinite(price) or price <= 0:
             raise ValueError(f"current price for {asset} must be finite and positive")
         return price
-
-
-def family_keys(family: str) -> frozenset[StrategyKey]:
-    return frozenset(key for key in STRATEGY_KEYS if key.startswith(f"{family}_"))
 
 
 def ranked[Item](

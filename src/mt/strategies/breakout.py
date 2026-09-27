@@ -11,10 +11,9 @@ from mt.exchange import TRADING_ZONE
 from mt.frames import frame_between, frame_since, frame_until, regular_session
 from mt.indicators import latest_atr, latest_turnover_usd
 from mt.rules.shared import settings
-from mt.rules.values import StrategyKey
 from mt.sizing import Direction, next_stop, round_quantity
 
-from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, family_keys, ranked
+from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, ranked
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,14 +104,6 @@ class Breakout(Strategy):
     def __init__(self, portfolio: Portfolio) -> None:
         super().__init__(portfolio)
         self._scanned: set[Asset] = set()
-
-    @classmethod
-    def cap_keys(cls) -> frozenset[StrategyKey]:
-        return family_keys(cls.family)
-
-    @classmethod
-    def cap_label(cls) -> str:
-        return cls.family.capitalize()
 
     @classmethod
     def entry_window(cls, opens: datetime, closes: datetime) -> tuple[datetime, datetime]:
@@ -313,3 +304,8 @@ class Breakout5m(Breakout):
 class Breakout10m(Breakout):
     key = "breakout_10m"
     code = "m"
+
+
+class Breakout15m(Breakout):
+    key = "breakout_15m"
+    code = "f"
