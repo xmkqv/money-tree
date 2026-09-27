@@ -77,7 +77,8 @@ mt env list --service {web|bot}
 # data
 
 - vendor[broker] supplies account, positions, orders, fills, quotes, clock and asset permissions
-- vendor[calendar] supplies common stocks and scheduled earnings
+- vendor[calendar] supplies common stocks, industries and scheduled earnings
+- vendor[filings] supplies annual gross profit and total assets per filer
 - an earnings event date differs from its announcement date
 - a run reads bars through one feed, ending at the engine clock
 
@@ -169,8 +170,11 @@ strategy
     is_stop_resting
     cap → {own | family} keys
 
+    symbols → fixed symbols outside the universe; daily frames include them
     entry_window(opens, closes) → (start, end)
     begin(session)
+    prepare(now)
+        after daily frames load, once per session
     run(session)
         capped → skip; candidates → portfolio.enter
     manage(holding, session)

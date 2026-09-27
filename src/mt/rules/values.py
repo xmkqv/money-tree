@@ -12,7 +12,15 @@ from pydantic import (
 
 
 type StrategyKey = Literal[
-    "breakout_5m", "breakout_10m", "breakout_15m", "daily_sma", "daily_tfb", "daily_20sma"
+    "breakout_5m",
+    "breakout_10m",
+    "breakout_15m",
+    "daily_sma",
+    "daily_tfb",
+    "daily_20sma",
+    "intraday_mim",
+    "allocation_baa",
+    "quality_gp",
 ]
 
 type Unattributed = Literal["unattributed"]

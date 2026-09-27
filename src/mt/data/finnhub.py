@@ -30,6 +30,7 @@ class Release(Payload):
 
 class Profile(Payload):
     market_cap_musd: float = Field(alias="marketCapitalization", default=0.0)
+    industry: str = Field(alias="finnhubIndustry", default="")
 
 
 class _Calendar(Payload):
@@ -44,9 +45,8 @@ def stocks() -> frozenset[str]:
     return frozenset(stock.symbol for stock in payload if stock.type == COMMON_STOCK)
 
 
-def market_cap_usd(symbol: str) -> float:
-    profile = Profile.model_validate(_get("/stock/profile2", {"symbol": symbol}))
-    return profile.market_cap_musd * 1_000_000
+def profile(symbol: str) -> Profile:
+    return Profile.model_validate(_get("/stock/profile2", {"symbol": symbol}))
 
 
 def earnings_dates(start: date, end: date) -> dict[str, date]:
