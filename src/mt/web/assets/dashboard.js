@@ -1192,7 +1192,7 @@ function renderOverview() {
     tile("Realised P&L", signedMoney(L.net_pnl), tone(L.net_pnl), "closed round trips"),
     tile("Trades", plainNum(L.n), "", SESSIONS.length + " sessions"),
     tile("Win rate", L.winRate.toFixed(1) + "%", "", L.wins + "W / " + L.losses + "L"),
-    tile("Profit factor", ratio(L.profitFactor), Number.isFinite(L.profitFactor) ? tone(L.profitFactor - 1) : "flat", "gross profit ÷ gross loss"),
+    tile("Profit factor", ratio(L.profitFactor), Number.isFinite(L.profitFactor) ? tone(L.profitFactor - 1) : "flat", "profit ÷ loss"),
     tile("Expectancy", signedMoney(L.expectancy), tone(L.expectancy), "per trade"),
     tile("Average win", signedMoney(L.avgWin), "pos", plainNum(L.wins) + " trades"),
     tile("Average loss", signedMoney(-L.avgLoss), "neg", plainNum(L.losses) + " trades"),
@@ -1245,14 +1245,15 @@ function sessionRows() {
     { t: signedMoney(pnl), r: true, cls: tone(pnl) },
     { t: signedPct(pct), r: true, cls: tone(pnl) },
   ];
-  for (const session of [...SESSIONS].reverse()) {
-    classes.push("group");
+  for (const [index, session] of [...SESSIONS].reverse().entries()) {
+    const band = index % 2 === 1 ? " band" : "";
+    classes.push("group" + band);
     rows.push(line({ t: session.long },
       { n: session.trades, wins: session.wins, losses: session.trades - session.wins,
         winRate: session.trades ? (session.wins / session.trades) * 100 : 0 },
       session.pnl, session.pct));
     for (const [key, stats] of sessionStrategies(session.date)) {
-      classes.push("sub");
+      classes.push("sub" + band);
       rows.push(line(stratCell(key), stats, stats.net_pnl,
         session.before ? (stats.net_pnl / session.before) * 100 : null));
     }
