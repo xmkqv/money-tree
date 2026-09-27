@@ -291,6 +291,12 @@
 
   .history { display: grid; gap: var(--gap); align-content: start; }
 
+  .hist-top {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 36rem), 1fr));
+    gap: var(--gap);
+  }
+
   .strat-cells {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 12.5rem), 1fr));
@@ -786,6 +792,7 @@
   table.data tr.group td { border-block-start: 1px solid var(--rule-strong); }
   table.data tr.sub td { color: var(--ink-2); font-size: var(--text-sm); border-block-start: 0; }
   table.data tr.sub td:first-child { padding-inline-start: var(--space-lg); }
+  table.data tr.band td { background: var(--surface-2); }
 
   .strat { display: flex; align-items: center; gap: var(--space-sm); }
   .chip {
@@ -1691,7 +1698,7 @@
 
     .view { display: block; }
 
-    .grid, .rail, .stage, .stage-bottom, .pf-stage, .rules-grid, .history {
+    .grid, .rail, .stage, .stage-bottom, .pf-stage, .rules-grid, .history, .hist-top {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: auto;
@@ -1810,6 +1817,8 @@
     .trades.log tbody tr.band td { background: none; }
     .trades.log tbody tr.band { background: var(--surface-2); border-radius: var(--radius-ctl); }
     .trades.log tbody tr.week-edge { border-block-start: 2px solid var(--rule-week); }
+    table.data tbody tr.band td { background: none; }
+    table.data tbody tr.band { background: var(--surface-2); }
 
     .tstrat { white-space: normal; }
 
