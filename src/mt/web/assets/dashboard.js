@@ -28,13 +28,14 @@ const onPhone = () => token("--is-phone") === "1";
 
 const strategyHue = key => "var(--s-" + key.replaceAll("_", "-") + "-h)";
 
+function setHue(element, hue) {
+  if (hue) element.style.setProperty("--strategy-h", hue);
+  else element.style.removeProperty("--strategy-h");
+}
+
 function strategyChip(hue) {
   return html`<span class=${"chip" + (hue ? "" : " plain")}
-    ${ref(element => {
-      if (!element) return;
-      if (hue) element.style.setProperty("--strategy-h", hue);
-      else element.style.removeProperty("--strategy-h");
-    })}></span>`;
+    ${ref(element => { if (element) setHue(element, hue); })}></span>`;
 }
 
 function meterBar(fill, extraClass = "", hue) {
@@ -42,8 +43,7 @@ function meterBar(fill, extraClass = "", hue) {
     ${ref(element => {
       if (!element) return;
       element.style.setProperty("--meter-fill", fill);
-      if (hue) element.style.setProperty("--strategy-h", hue);
-      else element.style.removeProperty("--strategy-h");
+      setHue(element, hue);
     })}><i></i></div>`;
 }
 
@@ -104,7 +104,7 @@ function statsFor(trades, summary) {
   const gross_loss = summary?.gross_loss ?? -profits.reduce((sum, value) => sum + Math.min(value, 0), 0);
   const net_pnl = summary?.net_pnl ?? profits.reduce((sum, value) => sum + value, 0);
   return {
-    n, wins, losses, net_pnl, gross_profit, gross_loss,
+    n, wins, losses, net_pnl,
     winRate: n ? wins / n * 100 : 0,
     profitFactor: gross_loss ? gross_profit / gross_loss : Infinity,
     expectancy: n ? net_pnl / n : 0,
@@ -368,33 +368,23 @@ function renderToday() {
 
 const TRADE_TOTAL_HEADERS = ["Quantity", "Entry", "Total entry", "Exit", "Total exit", "P&L"];
 
-function tradeCells(trade) {
+function tradeCells(trade, totals = false) {
+  const total = price => totals ? [{ t: money(price * trade.quantity), r: true, dim: true }] : [];
   return [
     { t: clockLabel(trade.minute), dim: true },
     symbolCell(trade.symbol, trade.side, trade),
     stratCell(trade.strategy_key),
+    ...(totals ? [{ t: shares(trade.quantity), r: true, dim: true }] : []),
     { t: money(trade.entry), r: true },
+    ...total(trade.entry),
     { t: money(trade.exit), r: true },
-    { t: signedMoney(trade.pnl), r: true, cls: tone(trade.pnl) },
-  ];
-}
-
-function tradeTotalCells(trade) {
-  return [
-    { t: clockLabel(trade.minute), dim: true },
-    symbolCell(trade.symbol, trade.side, trade),
-    stratCell(trade.strategy_key),
-    { t: shares(trade.quantity), r: true, dim: true },
-    { t: money(trade.entry), r: true },
-    { t: money(trade.entry * trade.quantity), r: true, dim: true },
-    { t: money(trade.exit), r: true },
-    { t: money(trade.exit * trade.quantity), r: true, dim: true },
+    ...total(trade.exit),
     { t: signedMoney(trade.pnl), r: true, cls: tone(trade.pnl) },
   ];
 }
 
 function sessionSummary(session) {
-  return html`Realised <b class=${tone(session.pnl)}>${signedMoney(session.pnl)}</b>
+  return html`Realized <b class=${tone(session.pnl)}>${signedMoney(session.pnl)}</b>
     <span><b>${session.wins}</b> of <b>${session.trades}</b> won</span>
     <span>Return <b class=${tone(session.pct)}>${signedPct(session.pct)}</b></span>`;
 }
@@ -491,8 +481,7 @@ function renderAccountValues(view) {
       <span class="figure">${money(ACCOUNT.cash)}</span></div>
     <div class="stat-grid">${stats.map(([label, value, cls, fill, isLoss]) => html`
       <div class="stat"><span class="k">${label}</span><span class=${cls || "v"}>${value}</span>
-        ${fill === undefined ? nothing : html`<div class=${"meter" + (isLoss ? " loss" : "")}>
-          <i ${ref(element => { if (element) element.style.setProperty("--meter-fill", fill); })}></i></div>`}</div>`)}</div>`,
+        ${fill === undefined ? nothing : meterBar(fill, isLoss ? "loss" : "")}</div>`)}</div>`,
     document.querySelector("#view-" + view + " .rail .panel-body"));
 }
 
@@ -1140,7 +1129,7 @@ function renderPortfolio() {
       ${strategyChip(strategy.hue)}<span>${strategy.short}</span>
       <span class="eyebrow">${held.length}${held.length === 1 ? " position" : " positions"}</span></div>
       <div class="amt">${money(value)}<span class="pc">${(value / ACCOUNT.deployed * 100).toFixed(0)}%</span></div>
-      ${meterBar(value / ACCOUNT.deployed, strategy.hue ? "strategy" : "plain", strategy.hue)}</div>`;
+      ${meterBar(value / ACCOUNT.deployed, strategy.hue ? "strategy" : "", strategy.hue)}</div>`;
   }), document.getElementById("pf-alloc"));
 
   render(repeat(OPEN_POSITIONS, position => position.symbol, position => html`
@@ -1173,7 +1162,7 @@ function renderPortfolio() {
 
   buildTable(document.getElementById("pf-prev-table"),
     ["Time", "Symbol", "Strategy", ...TRADE_TOTAL_HEADERS],
-    trades.map(tradeTotalCells), 3);
+    trades.map(t => tradeCells(t, true)), 3);
 }
 
 
@@ -1189,7 +1178,7 @@ function renderOverview() {
   const L = TOTALS;
   const tiles = document.getElementById("hs-tiles");
   render([
-    tile("Realised P&L", signedMoney(L.net_pnl), tone(L.net_pnl), "closed round trips"),
+    tile("Realized P&L", signedMoney(L.net_pnl), tone(L.net_pnl), "closed round trips"),
     tile("Trades", plainNum(L.n), "", SESSIONS.length + " sessions"),
     tile("Win rate", L.winRate.toFixed(1) + "%", "", L.wins + "W / " + L.losses + "L"),
     tile("Profit factor", ratio(L.profitFactor), Number.isFinite(L.profitFactor) ? tone(L.profitFactor - 1) : "flat", "profit ÷ loss"),
@@ -1276,11 +1265,11 @@ function renderTrades() {
 }
 
 function openedCell(trade) {
-  const [, month, day] = dparts(dateOf(trade.entered_at));
-  const overnight = dateOf(trade.entered_at) !== trade.date;
+  const opened = dateOf(trade.entered_at);
+  const overnight = opened !== trade.date;
   return { dim: true, node: html`<span class="in-time"
-    title=${overnight ? "Opened " + day + " " + MON3[month - 1] + ", held to the exit shown" : nothing}>
-    <span>${clockOf(trade.entered_at)}</span>${overnight ? html`<span class="in-day">${day} ${MON3[month - 1]}</span>` : nothing}
+    title=${overnight ? "Opened " + dayLabel(opened) + ", held to the exit shown" : nothing}>
+    <span>${clockOf(trade.entered_at)}</span>${overnight ? html`<span class="in-day">${dayLabel(opened)}</span>` : nothing}
   </span>` };
 }
 
@@ -1322,7 +1311,7 @@ function renderLog() {
     rows.map(t => [
       { t: DAY3[t.weekday] + " " + t.day + " " + MON3[t.m] + " " + String(t.y).slice(2), cls: "log-date" },
       openedCell(t),
-      ...tradeTotalCells(t),
+      ...tradeCells(t, true),
     ]), 5, (_row, index) => [
       shade[index] ? "band" : "",
       index && weeks[index] !== weeks[index - 1] ? "week-edge" : "",
@@ -1335,7 +1324,7 @@ const blankTradeState = timeframe => ({ timeframe, bars: null, averages: [], nam
 let TRADE = null, TC_STATE = blankTradeState("5Min");
 let TC_LEVELS = null, TC_COTRADES = [];
 const TC_VIEW = { i0: 0, i1: 0, yManual: null, custom: false };
-let TC_ORIGIN = "history";
+let TC_ORIGIN = "trades";
 
 const TC_SHOW = { range: true, stop: true, targets: true };
 
@@ -1850,7 +1839,7 @@ function tradePoints(t, inIndex, outIndex, indexOf) {
     : [{ cls: "entry", title: "Entry", index: inIndex, price: t.entry, quantity: t.quantity }];
   const outcome = t.pnl >= 0 ? "gain" : "loss";
   const last = t.open
-    ? [{ cls: "exit now", title: "Now", index: outIndex, price: t.exit, quantity: t.quantity,
+    ? [{ cls: "exit", title: "Now", index: outIndex, price: t.exit, quantity: t.quantity,
       pnl: t.pnl, outcome }]
     : outs.length ? []
     : [{ cls: "exit", title: "Exit", index: outIndex, price: t.exit, quantity: t.quantity,

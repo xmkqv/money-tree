@@ -368,14 +368,6 @@
     white-space: nowrap;
   }
 
-  .theme-toggle {
-    display: inline-flex;
-    gap: 2px;
-    padding: 3px;
-    background: var(--surface-3);
-    border-radius: var(--radius-pill);
-  }
-
   .theme-toggle button {
     inline-size: 1.625rem;
     block-size: 1.375rem;
@@ -392,14 +384,6 @@
   }
 
   .theme-toggle button svg { inline-size: 0.8125rem; block-size: 0.8125rem; }
-  .theme-toggle button:hover { color: var(--ink-2); }
-
-  .theme-toggle button[aria-pressed="true"] {
-    background: var(--thumb);
-    color: var(--ink);
-    box-shadow: var(--shadow-thumb);
-  }
-
   .status {
     display: flex;
     align-items: center;
@@ -449,7 +433,7 @@
   .status[data-bot="stale"] .dot { background: var(--hold-mark); animation: none; }
   .status[data-bot="stale"] .bot-note { color: var(--hold-ink); font-weight: 600; }
   .bot-note:empty { display: none; }
-  .bot-note:empty + .sep { display: none; }
+  .sep:has(+ .bot-note:empty) { display: none; }
 
   .menu { position: relative; display: inline-flex; }
 
@@ -487,7 +471,7 @@
 
   .menu-list button[aria-current="page"] { color: var(--ink); font-weight: 600; }
 
-  .segmented, .tabs {
+  .segmented, .tabs, .theme-toggle {
     display: inline-flex;
     gap: 2px;
     padding: 3px;
@@ -511,9 +495,10 @@
   .segmented button { font-size: var(--text-xs); padding: var(--space-2xs) var(--space-md); }
   .tabs button { font-size: var(--text-sm); padding: var(--space-xs) var(--space-lg); }
 
-  .segmented button:hover, .tabs button:hover { color: var(--ink-2); }
+  .segmented button:hover, .tabs button:hover, .theme-toggle button:hover { color: var(--ink-2); }
 
   .segmented button[aria-pressed="true"],
+  .theme-toggle button[aria-pressed="true"],
   .tabs button[aria-current="page"] {
     background: var(--thumb);
     color: var(--ink);
@@ -567,11 +552,12 @@
     background: none;
     border: 1px solid var(--rule-strong);
     border-radius: var(--radius-sm);
+    padding: var(--space-3xs) var(--space-sm);
     cursor: pointer;
   }
 
-  .ghost.back { font-size: var(--text-xs); padding: var(--space-3xs) var(--space-sm); }
-  .ghost.step { font-size: var(--text-md); line-height: 1; padding: var(--space-3xs) var(--space-sm); }
+  .ghost.back { font-size: var(--text-xs); }
+  .ghost.step { font-size: var(--text-md); line-height: 1; }
   .ghost.back:hover, .ghost.step:hover:not(:disabled) { color: var(--ink); }
   .ghost.step:disabled { opacity: 0.35; cursor: default; }
 
@@ -1322,7 +1308,6 @@
 
   .log-wrap { overflow-x: auto; padding: 0 var(--pad) var(--space-lg); }
 
-  table.trades.log th { background: var(--surface); }
   .log-date { color: var(--ink-2); }
 
   .trades.log tbody tr.band td { background: var(--surface-2); }
@@ -1594,8 +1579,8 @@
   .chart-host svg #gLoss .g1 { stop-color: var(--loss-mark); stop-opacity: 0.34; }
 
   .chart-host svg .dot { stroke: var(--ring); stroke-width: 2; }
-  .chart-host svg .dot.mark-gain { fill: var(--gain-mark); stroke: var(--ring); }
-  .chart-host svg .dot.mark-loss { fill: var(--loss-mark); stroke: var(--ring); }
+  .chart-host svg .dot.mark-gain { fill: var(--gain-mark); }
+  .chart-host svg .dot.mark-loss { fill: var(--loss-mark); }
 
   :where(.chart-host, .trade-host) svg .mark-gain { stroke: var(--gain-mark); }
   :where(.chart-host, .trade-host) svg .mark-loss { stroke: var(--loss-mark); }
@@ -1632,7 +1617,7 @@
 
   .trade-host svg .sma { fill: none; stroke-width: 1.5; opacity: 0.95; stroke: var(--sma-mark); }
   .trade-host svg .sma-label { fill: var(--sma-mark); font-weight: 600; stroke: var(--ring); }
-  .trade-host svg :where(.sma, .sma-label) { --sma-mark: oklch(var(--mark-l) var(--mark-c) var(--sma-h, 204)); }
+  .trade-host svg :where(.sma, .sma-label) { --sma-mark: oklch(var(--mark-l) var(--mark-c) var(--sma-h, var(--sma-1-h))); }
 
   .tc-mark.entry { border-inline-start-color: var(--ink-3); }
   .tc-mark.exit.mark-gain { border-inline-start-color: var(--gain-mark); }
@@ -1730,8 +1715,6 @@
       font-size: var(--text-xs);
       line-height: 1.5;
     }
-
-    .panel > .phone-note:last-child { margin-block-end: var(--space-md); }
 
     table[data-cards] { display: block; inline-size: 100%; block-size: auto; }
     table[data-cards] thead { display: none; }
