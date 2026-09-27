@@ -88,7 +88,7 @@ class Portfolio(LumibotStrategy):
         self._begin_day(now.date())
         self._reconcile(now)
         self._check_daily_loss(now.date())
-        if self._locked_at == now.date():
+        if self._is_locked():
             return
         self._prepare(now)
         for holding in list(self._holdings.values()):
@@ -135,8 +135,7 @@ class Portfolio(LumibotStrategy):
         asset = Asset.from_lumibot(order.asset)
         side = str(order.side).lower()
         pending = self._pending.get(asset)
-        entry_side = "buy" if pending is None or pending.holding.direction == 1 else "sell"
-        if pending is not None and entry_side in side:
+        if pending is not None and ("buy" if pending.holding.direction == 1 else "sell") in side:
             holding = pending.holding
             first_fill = pending.filled_quantity == 0
             pending.filled_quantity += abs(float(quantity))
@@ -144,8 +143,6 @@ class Portfolio(LumibotStrategy):
             holding.entry = pending.filled_value / pending.filled_quantity
             if not holding.strategy.is_stop_resting:
                 holding.stop = holding.entry - holding.direction * holding.stop_distance
-            else:
-                holding.stop_distance = abs(holding.entry - holding.stop)
             holding.highest = price if first_fill else max(holding.highest, price)
             holding.lowest = price if first_fill else min(holding.lowest, price)
             holding.ladder = holding.strategy.ladder(holding, pending.filled_quantity)
@@ -179,14 +176,18 @@ class Portfolio(LumibotStrategy):
     def minute_frames(
         self, assets: list[Asset], start: datetime, now: datetime, minutes: int
     ) -> dict[Asset, DataFrame]:
-        frames = self._bars.bars(assets, f"{minutes}Min", start, now)
-        return {asset: self._completed(frame, now, minutes) for asset, frame in frames.items()}
+        return self._frames(assets, f"{minutes}Min", start, now, minutes)
 
     def hour_frames(
         self, assets: list[Asset], start: datetime, now: datetime, hours: int
     ) -> dict[Asset, DataFrame]:
-        frames = self._bars.bars(assets, f"{hours}Hour", start, now)
-        return {asset: self._completed(frame, now, hours * 60) for asset, frame in frames.items()}
+        return self._frames(assets, f"{hours}Hour", start, now, hours * 60)
+
+    def _frames(
+        self, assets: list[Asset], timeframe: str, start: datetime, now: datetime, minutes: int
+    ) -> dict[Asset, DataFrame]:
+        frames = self._bars.bars(assets, timeframe, start, now)
+        return {asset: self._completed(frame, now, minutes) for asset, frame in frames.items()}
 
     def last_price(self, asset: Asset) -> float | None:
         if self.is_backtesting:
@@ -194,12 +195,12 @@ class Portfolio(LumibotStrategy):
             return None if price is None else float(price)
         return self._bars.prices([asset], self._now()).get(asset)
 
-    def holding_count(self, keys: frozenset[StrategyKey]) -> int:
-        held = sum(1 for holding in self._holdings.values() if holding.strategy.key in keys)
+    def holding_count(self, key: StrategyKey) -> int:
+        held = sum(1 for holding in self._holdings.values() if holding.strategy.key == key)
         ordered = sum(
             1
             for asset, pending in self._pending.items()
-            if pending.holding.strategy.key in keys and asset not in self._holdings
+            if pending.holding.strategy.key == key and asset not in self._holdings
         )
         return held + ordered
 
@@ -293,10 +294,12 @@ class Portfolio(LumibotStrategy):
 
     def _liquidate(self) -> None:
         for asset, quantity in self._positions().items():
-            if asset in self._closing:
-                continue
-            self._closing.add(asset)
-            self._submit(asset, abs(quantity), -1 if quantity > 0 else 1, liquidate_code())
+            if asset not in self._closing:
+                self._close(asset, quantity)
+
+    def _close(self, asset: Asset, quantity: float) -> None:
+        self._closing.add(asset)
+        self._submit(asset, abs(quantity), -1 if quantity > 0 else 1, liquidate_code())
 
     def _engine_positions(self) -> dict[Asset, Any]:
         return {
@@ -360,9 +363,7 @@ class Portfolio(LumibotStrategy):
                 "warning",
                 f"{asset} is held without a strategy holding: closing at market",
             )
-            self._closing.add(asset)
-            quantity = positions[asset]
-            self._submit(asset, abs(quantity), -1 if quantity > 0 else 1, liquidate_code())
+            self._close(asset, positions[asset])
         if self._locked_at != now.date():
             self._resync_stops(positions)
 
@@ -473,8 +474,15 @@ class Portfolio(LumibotStrategy):
             or not self._is_runnable(strategy)
             or asset in owned
             or asset in self._holdings
-            or direction * (price - stop) <= 0
         ):
+            return False
+        if direction * (price - stop) <= 0:
+            self.record(
+                strategy,
+                f"stop.rejected.{asset}.{now.date()}",
+                "warning",
+                f"{asset} entry skipped: stop is not beyond the entry price",
+            )
             return False
         if direction == -1 and (
             asset not in self._permissions or not self._permissions[asset].shortable

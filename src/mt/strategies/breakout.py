@@ -1,6 +1,5 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal
 from math import isfinite
 from typing import Any, ClassVar, cast
 
@@ -12,7 +11,7 @@ from mt.frames import frame_between, frame_since, frame_until, regular_session
 from mt.indicators import latest_atr, latest_turnover_usd
 from mt.rules.shared import settings
 from mt.rules.values import TARGET_REASONS
-from mt.sizing import Direction, round_quantity
+from mt.sizing import Direction
 
 from .base import Candidate, Holding, Ladder, Portfolio, Session, Strategy, ranked
 
@@ -203,15 +202,10 @@ class Breakout(Strategy):
         )
         if reached:
             fractions = settings.breakout.target_fractions
-            reason = TARGET_REASONS[ladder.stage]
             if ladder.stage == len(fractions) - 1:
-                self.portfolio.exit(holding, reason)
+                self.portfolio.exit(holding, TARGET_REASONS[ladder.stage])
                 return
-            quantity = round_quantity(
-                Decimal(str(ladder.original_quantity)) * Decimal(str(fractions[ladder.stage])),
-                whole=holding.direction == -1,
-            )
-            ladder.stage += 1
+            quantity, reason = ladder.step(fractions[ladder.stage], whole=holding.direction == -1)
             holding.raise_stop(holding.entry, "breakeven")
             if quantity > 0:
                 self.portfolio.exit(holding, reason, float(quantity))

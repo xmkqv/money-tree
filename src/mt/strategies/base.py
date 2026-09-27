@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from math import isfinite
 from typing import ClassVar, Protocol
 
@@ -9,8 +10,8 @@ from pandas import DataFrame
 
 from mt.data.asset import Asset
 from mt.rules.shared import settings
-from mt.rules.values import OrderReason, SettingsSection, StrategyKey
-from mt.sizing import Direction, next_stop
+from mt.rules.values import TARGET_REASONS, OrderReason, SettingsSection, StrategyKey
+from mt.sizing import Direction, next_stop, round_quantity
 from mt.state import EventLevel
 
 
@@ -34,6 +35,14 @@ class Ladder:
     original_quantity: float
     targets: tuple[float, ...]
     stage: int = 0
+
+    def step(self, fraction: float, *, whole: bool = False) -> tuple[Decimal, OrderReason]:
+        quantity = round_quantity(
+            Decimal(str(self.original_quantity)) * Decimal(str(fraction)), whole=whole
+        )
+        reason = TARGET_REASONS[self.stage]
+        self.stage += 1
+        return quantity, reason
 
 
 @dataclass(slots=True)
@@ -73,7 +82,7 @@ class Portfolio(Protocol):
 
     def last_price(self, asset: Asset) -> float | None: ...
 
-    def holding_count(self, keys: frozenset[StrategyKey]) -> int: ...
+    def holding_count(self, key: StrategyKey) -> int: ...
 
     def is_taken(self, strategy: "Strategy", asset: Asset, day: date) -> bool: ...
 
@@ -125,10 +134,6 @@ class Strategy(ABC):
         return f"{cls.family.capitalize()} {cls.variation}"
 
     @classmethod
-    def cap_keys(cls) -> frozenset[StrategyKey]:
-        return frozenset({cls.key})
-
-    @classmethod
     def symbols(cls) -> tuple[str, ...]:
         return ()
 
@@ -152,7 +157,7 @@ class Strategy(ABC):
         return None
 
     def is_capped(self, now: datetime | None = None) -> bool:
-        if self.portfolio.holding_count(self.cap_keys()) < self.holdings_max:
+        if self.portfolio.holding_count(self.key) < self.holdings_max:
             return False
         if now is not None:
             self.portfolio.record(
