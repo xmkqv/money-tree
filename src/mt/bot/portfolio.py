@@ -292,19 +292,8 @@ class Portfolio(LumibotStrategy):
         self._liquidate()
 
     def _liquidate(self) -> None:
-        if self.is_backtesting:
-            quantities = {
-                asset: float(engine_position.quantity)
-                for asset, engine_position in self._engine_positions().items()
-                if engine_position.asset.asset_type == AssetType.STOCK
-            }
-        else:
-            quantities = {
-                Asset.from_symbol(broker_position.symbol): float(broker_position.qty)
-                for broker_position in self._broker.positions()
-            }
-        for asset, quantity in quantities.items():
-            if not quantity or asset in self._closing:
+        for asset, quantity in self._positions().items():
+            if asset in self._closing:
                 continue
             self._closing.add(asset)
             self._submit(asset, abs(quantity), -1 if quantity > 0 else 1, liquidate_code())

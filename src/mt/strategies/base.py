@@ -129,10 +129,6 @@ class Strategy(ABC):
         return frozenset({cls.key})
 
     @classmethod
-    def cap_label(cls) -> str:
-        return cls.name()
-
-    @classmethod
     def symbols(cls) -> tuple[str, ...]:
         return ()
 
@@ -163,7 +159,7 @@ class Strategy(ABC):
                 self,
                 f"entries.capped.{now.date()}",
                 "info",
-                f"{self.cap_label()} entries paused: {self.holdings_max} holdings already open",
+                f"{self.name()} entries paused: {self.holdings_max} holdings already open",
             )
         return True
 
