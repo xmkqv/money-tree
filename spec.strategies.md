@@ -9,9 +9,9 @@ elide:
 
 # breakout
 
-- variations: breakout_5m, breakout_10m
+- variations: breakout_5m, breakout_10m, breakout_15m
 - one opening range, one volume test
-- the cap counts holdings across the family
+- the cap counts holdings of the variation alone
 - the stop rests at the broker
 
 ```py:surface

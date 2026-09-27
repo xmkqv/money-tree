@@ -3,7 +3,7 @@ from uuid import uuid4
 from mt.rules.values import STRATEGY_KEYS, StrategyKey
 
 from .base import Strategy
-from .breakout import Breakout5m, Breakout10m
+from .breakout import Breakout5m, Breakout10m, Breakout15m
 from .daily_20sma import Daily20Sma
 from .daily_sma import DailySma
 from .daily_tfb import DailyTfb
@@ -14,6 +14,7 @@ ORDER_PREFIX = "mt"
 STRATEGIES: tuple[type[Strategy], ...] = (
     Breakout5m,
     Breakout10m,
+    Breakout15m,
     DailySma,
     DailyTfb,
     Daily20Sma,
