@@ -1369,7 +1369,7 @@ function positionTrade(position) {
   };
 }
 
-async function openTradeChart(trade, from) {
+async function openTradeChart(trade, from, record = "push") {
   TRADE = trade;
   if (from) TC_ORIGIN = from;
   selectTradeState("5Min");
@@ -1378,7 +1378,7 @@ async function openTradeChart(trade, from) {
   syncTimeframeButtons();
   document.getElementById("chart-back").textContent =
     "← " + (VIEW_NAMES[TC_ORIGIN] || "Trade log");
-  switchView("chart");
+  switchView("chart", record);
   paintTradeFacts();
   paintStepper();
   loadTradeLevels();
@@ -1421,7 +1421,7 @@ function paintStepper() {
 function stepTrade(by) {
   const index = TC_COTRADES.findIndex(t => t === TRADE) + by;
   if (index < 0 || index >= TC_COTRADES.length) return;
-  openTradeChart(TC_COTRADES[index]);
+  openTradeChart(TC_COTRADES[index], undefined, "replace");
 }
 
 function paintRail() {
@@ -1983,7 +1983,7 @@ function tradeHover(event) {
 }
 
 function wireTradeChart() {
-  document.getElementById("chart-back").addEventListener("click", () => switchView(TC_ORIGIN));
+  document.getElementById("chart-back").addEventListener("click", () => history.back());
   document.getElementById("tc-prev").addEventListener("click", () => stepTrade(-1));
   document.getElementById("tc-next").addEventListener("click", () => stepTrade(1));
   document.getElementById("tc-range").addEventListener("click", event => {
@@ -2040,7 +2040,52 @@ const HISTORY_VIEWS = ["overview", "trades"];
 const viewReady = { dashboard: true, portfolio: false, overview: false, trades: false,
   strategies: false, chart: true };
 
-function switchView(name) {
+function routeOf(name) {
+  if (name === "dashboard") return "";
+  if (name !== "chart") return "#" + name;
+  return "#chart?" + new URLSearchParams({
+    from: TC_ORIGIN, symbol: TRADE.symbol, entered: TRADE.open ? "open" : TRADE.entered_at,
+  });
+}
+
+function recordView(name, record) {
+  const route = routeOf(name);
+  if (record === "none" || location.hash === route) return;
+  const url = route || location.pathname + location.search;
+  if (record === "replace") history.replaceState(history.state, "", url);
+  else history.pushState({ pushed: true }, "", url);
+}
+
+function routedTrade(query) {
+  const symbol = query.get("symbol"), entered = query.get("entered");
+  if (entered === "open") {
+    const position = OPEN_POSITIONS.find(pos => pos.symbol === symbol);
+    return position ? positionTrade(position) : null;
+  }
+  return ALL_TRADES.find(t => t.symbol === symbol && t.entered_at === entered) || null;
+}
+
+function followRoute(isFirst) {
+  const [name, search] = location.hash.slice(1).split("?");
+  if (name !== "chart") {
+    switchView(VIEWS.includes(name) ? name : "dashboard", isFirst ? "replace" : "none");
+    return;
+  }
+  const query = new URLSearchParams(search);
+  const from = VIEW_NAMES[query.get("from")] ? query.get("from") : "trades";
+  const trade = routedTrade(query);
+  if (!trade) {
+    switchView(from, "replace");
+    return;
+  }
+  const isStacked = !isFirst || history.state?.pushed;
+  if (!isStacked) history.replaceState(null, "", routeOf(from) || location.pathname + location.search);
+  openTradeChart(trade, from, isStacked ? "none" : "push");
+}
+
+window.addEventListener("popstate", () => followRoute(false));
+
+function switchView(name, record = "push") {
   currentView = name;
   document.body.dataset.view = name;
   openHistoryMenu(false);
@@ -2068,6 +2113,7 @@ function switchView(name) {
 
   if (name === "dashboard") queueChart();
   if (name === "chart") requestAnimationFrame(drawTradeChart);
+  recordView(name, record);
   window.scrollTo(0, 0);
 }
 
@@ -2393,6 +2439,7 @@ wireTradeChart();
   if (!read.ok) return;
   LOGIN = await read.json();
   await refresh();
+  followRoute(true);
   setInterval(() => { if (!document.hidden) readSnapshot(); }, LOGIN.snapshot_seconds * 1000);
 })();
 
