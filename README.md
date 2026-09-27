@@ -1,6 +1,6 @@
 # money-tree
 
-Six US-equity trading strategies, written down first and then run:
+Nine US-equity trading strategies, written down first and then run:
 backtesting, multi-strategy portfolio composition, and Alpaca execution.
 
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
