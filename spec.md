@@ -6,6 +6,7 @@ vendors:
   - broker = alpaca
   - calendar = finnhub
   - engine = lumibot
+  - filings = edgar
   - host = railway
   - store = redis
 elide:
