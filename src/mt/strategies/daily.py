@@ -94,7 +94,7 @@ class Daily(Strategy):
             if self.portfolio.is_taken(self, candidate.asset, now.date()):
                 continue
             price = self.price(candidate.asset)
-            if price <= candidate.stop:
+            if price is None or price <= candidate.stop:
                 continue
             distance = candidate.price - candidate.stop
             refreshed = Candidate(candidate.asset, price, price - distance, candidate.direction)

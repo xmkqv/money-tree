@@ -166,6 +166,8 @@ class Breakout(Strategy):
             if not self.is_confirmed(frame_until(frame, found.signal_at), now):
                 continue
             price = self.price(found.asset)
+            if price is None:
+                continue
             if self.is_overextended(found, price):
                 self.portfolio.record(
                     self,
@@ -186,7 +188,9 @@ class Breakout(Strategy):
         if now >= session.closes - timedelta(minutes=settings.breakout.close_lead_minutes):
             self.portfolio.exit(holding, "close")
             return
-        price = self.portfolio.last_price(holding.asset)
+        price = self.price(holding.asset)
+        if price is None:
+            return
         holding.highest = max(holding.highest, price)
         holding.lowest = min(holding.lowest, price)
         ladder = holding.ladder

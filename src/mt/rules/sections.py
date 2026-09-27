@@ -57,6 +57,7 @@ class BarsSection(SettingsSection):
     intraday_feed: DataFeedName
     daily_feed: DataFeedName
     sip_delay_minutes: MaxAge
+    trade_max_age_seconds: MaxAge
     timeout: TimeoutSection
 
 

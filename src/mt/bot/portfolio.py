@@ -160,11 +160,12 @@ class Portfolio(LumibotStrategy):
             return
         if complete:
             self._closing.discard(asset)
-        remaining = abs(float(getattr(engine_position, "quantity", 0.0)))
-        if remaining <= 0:
+        held = self._holdings.get(asset)
+        remaining = 0.0 if held is None else self._held(held)
+        if held is None or remaining <= 0:
             self._release(asset)
-        elif asset in self._holdings and complete:
-            self.protect(self._holdings[asset], remaining)
+        elif complete:
+            self.protect(held, remaining)
 
     def assets(self) -> list[Asset]:
         return self._assets
@@ -187,8 +188,11 @@ class Portfolio(LumibotStrategy):
         frames = self._bars.bars(assets, f"{hours}Hour", start, now)
         return {asset: self._completed(frame, now, hours * 60) for asset, frame in frames.items()}
 
-    def last_price(self, asset: Asset) -> float:
-        return float(self.get_last_price(asset.to_lumibot()))
+    def last_price(self, asset: Asset) -> float | None:
+        if self.is_backtesting:
+            price = self.get_last_price(asset.to_lumibot())
+            return None if price is None else float(price)
+        return self._bars.prices([asset], self._now()).get(asset)
 
     def holding_count(self, keys: frozenset[StrategyKey]) -> int:
         held = sum(1 for holding in self._holdings.values() if holding.strategy.key in keys)
@@ -311,8 +315,35 @@ class Portfolio(LumibotStrategy):
             for value in cast(list[Any], self.get_positions())
         }
 
+    def _positions(self) -> dict[Asset, float]:
+        if self.is_backtesting:
+            quantities = {
+                asset: float(engine_position.quantity)
+                for asset, engine_position in self._engine_positions().items()
+            }
+        else:
+            quantities = {
+                Asset.from_symbol(broker_position.symbol): float(broker_position.qty)
+                for broker_position in self._broker.positions()
+            }
+        return {asset: quantity for asset, quantity in quantities.items() if quantity}
+
+    def _held(self, holding: Holding) -> float:
+        return max(0.0, holding.direction * self._positions().get(holding.asset, 0.0))
+
+    def _gross(self) -> float:
+        if not self.is_backtesting:
+            return sum(
+                abs(float(broker_position.market_value or 0.0))
+                for broker_position in self._broker.positions()
+            )
+        return sum(
+            abs(float(engine_position.quantity) * float(self.get_last_price(engine_position.asset)))
+            for engine_position in self._engine_positions().values()
+        )
+
     def _reconcile(self, now: datetime) -> None:
-        positions = self._engine_positions()
+        positions = self._positions()
         for asset in list(self._holdings):
             if asset not in positions:
                 self._release(asset)
@@ -331,17 +362,30 @@ class Portfolio(LumibotStrategy):
         for asset in set(self._stops).difference(active):
             self._stops.pop(asset, None)
         self._closing.intersection_update(active)
+        owned = self._holdings.keys() | self._pending.keys() | self._closing
+        for asset in active - positions.keys() - owned:
+            self._cancel(asset)
+        for asset in self._strays(positions, owned | active):
+            self._record(
+                f"position.stray.{asset}.{now.date()}",
+                "warning",
+                f"{asset} is held without a strategy holding: closing at market",
+            )
+            self._closing.add(asset)
+            quantity = positions[asset]
+            self._submit(asset, abs(quantity), -1 if quantity > 0 else 1, liquidate_code())
         if self._locked_at != now.date():
             self._resync_stops(positions)
 
-    def _resync_stops(self, positions: dict[Asset, Any]) -> None:
+    def _strays(self, positions: dict[Asset, float], owned: set[Asset]) -> set[Asset]:
+        strays = positions.keys() - owned
+        return strays - self._broker.ordered() if strays else strays
+
+    def _resync_stops(self, positions: dict[Asset, float]) -> None:
         for asset, holding in self._holdings.items():
             if not holding.strategy.is_stop_resting or asset in self._closing:
                 continue
-            engine_position = positions.get(asset)
-            if engine_position is None:
-                continue
-            quantity = abs(float(engine_position.quantity))
+            quantity = holding.direction * positions.get(asset, 0.0)
             if quantity <= 0:
                 continue
             ladder = holding.ladder
@@ -453,10 +497,7 @@ class Portfolio(LumibotStrategy):
             )
             return False
         equity = self._equity()
-        gross = sum(
-            abs(float(engine_position.quantity) * float(self.get_last_price(engine_position.asset)))
-            for engine_position in positions.values()
-        ) + sum(pending.notional for pending in self._pending.values())
+        gross = self._gross() + sum(pending.notional for pending in self._pending.values())
         quantity = entry_quantity(equity, price, abs(price - stop), direction)
         notional = float(quantity) * price
         if quantity <= 0 or gross + notional > equity:
@@ -490,8 +531,11 @@ class Portfolio(LumibotStrategy):
             or self._is_locked()
         ):
             return
-        amount = self._quantity(holding.asset) if quantity is None else quantity
+        held = self._held(holding)
+        amount = held if quantity is None else min(quantity, held)
         price = self.last_price(holding.asset)
+        if price is None:
+            return
         stop = round_stop(holding.direction, holding.stop)
         if amount <= 0 or stop <= 0:
             self.record(
@@ -528,7 +572,7 @@ class Portfolio(LumibotStrategy):
     def exit(self, holding: Holding, reason: OrderReason, quantity: float | None = None) -> None:
         if holding.asset in self._closing:
             return
-        current = self._quantity(holding.asset)
+        current = self._held(holding)
         amount = current if quantity is None else min(quantity, current)
         if amount <= 0:
             self._release(holding.asset)

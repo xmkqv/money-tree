@@ -21,29 +21,21 @@ class Broker(Protocol):
 
     def positions(self) -> list[BrokerPosition]: ...
 
+    def ordered(self) -> set[Asset]: ...
+
 
 class BrokerAlpaca:
     def __init__(self) -> None:
         self._api = TradingClient(*settings.broker.key_pair, paper=settings.broker.is_paper)
 
     def cancel_orders(self) -> set[Asset]:
-        orders = cast(
-            list[Order],
-            self._api.get_orders(
-                filter=GetOrdersRequest(
-                    status=QueryOrderStatus.OPEN,
-                    limit=bot_settings.portfolio.orders_per_request,
-                )
-            ),
-        )
+        orders = self._open_orders()
         closing: set[Asset] = set()
         for order in orders:
             if str(order.client_order_id).startswith("mt-liquidate-"):
                 closing.add(Asset.from_symbol(str(order.symbol)))
             else:
                 self._api.cancel_order_by_id(str(order.id))
-        if len(orders) >= bot_settings.portfolio.orders_per_request:
-            raise RuntimeError("open orders reach the request limit")
         return closing
 
     def assets(self) -> dict[Asset, BrokerAsset]:
@@ -56,6 +48,23 @@ class BrokerAlpaca:
 
     def positions(self) -> list[BrokerPosition]:
         return cast(list[BrokerPosition], self._api.get_all_positions())
+
+    def ordered(self) -> set[Asset]:
+        return {Asset.from_symbol(str(order.symbol)) for order in self._open_orders()}
+
+    def _open_orders(self) -> list[Order]:
+        orders = cast(
+            list[Order],
+            self._api.get_orders(
+                filter=GetOrdersRequest(
+                    status=QueryOrderStatus.OPEN,
+                    limit=bot_settings.portfolio.orders_per_request,
+                )
+            ),
+        )
+        if len(orders) >= bot_settings.portfolio.orders_per_request:
+            raise RuntimeError("open orders reach the request limit")
+        return orders
 
 
 class BrokerEngine:
@@ -75,3 +84,6 @@ class BrokerEngine:
 
     def positions(self) -> list[BrokerPosition]:
         return []
+
+    def ordered(self) -> set[Asset]:
+        return set()
