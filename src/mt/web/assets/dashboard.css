@@ -291,12 +291,17 @@
 
   .history { display: grid; gap: var(--gap); align-content: start; }
 
-  .hist-two {
+  .strat-cells {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 30rem), 1fr));
-    gap: var(--gap);
-    align-items: start;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 12.5rem), 1fr));
+    gap: var(--space-xs) var(--space-lg);
   }
+
+  .strat-cell { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; column-gap: var(--space-sm); }
+  .strat-cell .tstrat { min-inline-size: 0; font-size: var(--text-sm); }
+  .strat-cell .v { font-family: var(--font-data); font-variant-numeric: tabular-nums; font-weight: 600; font-size: var(--text-sm); }
+  .strat-cell .sub { grid-column: 1 / -1; font-family: var(--font-data); font-size: var(--text-2xs); color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .strat-cell.idle { opacity: 0.55; }
 
   .rules-grid {
     display: grid;
@@ -1686,7 +1691,7 @@
 
     .view { display: block; }
 
-    .grid, .rail, .stage, .stage-bottom, .pf-stage, .hist-two, .rules-grid, .history {
+    .grid, .rail, .stage, .stage-bottom, .pf-stage, .rules-grid, .history {
       display: grid;
       grid-template-columns: minmax(0, 1fr);
       grid-template-rows: auto;

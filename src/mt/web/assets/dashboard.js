@@ -337,7 +337,7 @@ function renderToday() {
     buildTable(table,
       ["Symbol", "Strategy", "Entry", "Last", "Value", "Unreal."],
       OPEN_POSITIONS.map(pos => [
-        symbolCell(pos.symbol, pos.side),
+        symbolCell(pos.symbol, pos.side, positionTrade(pos)),
         stratCell(pos.strategy_key),
         { t: money(pos.entry), r: true },
         { t: money(pos.last), r: true },
@@ -362,17 +362,33 @@ function renderToday() {
   render(sessionSummary(cell), sum);
 
   buildTable(table,
-    ["Time", "Symbol", "Strategy", "In", "Out", "P&L"],
+    ["Time", "Symbol", "Strategy", "Entry", "Exit", "P&L"],
     trades.map(t => tradeCells(t)), 3);
 }
 
-function tradeCells(trade, linked = false) {
+const TRADE_TOTAL_HEADERS = ["Quantity", "Entry", "Total entry", "Exit", "Total exit", "P&L"];
+
+function tradeCells(trade) {
   return [
     { t: clockLabel(trade.minute), dim: true },
-    symbolCell(trade.symbol, trade.side, linked ? trade : null),
+    symbolCell(trade.symbol, trade.side, trade),
     stratCell(trade.strategy_key),
     { t: money(trade.entry), r: true },
     { t: money(trade.exit), r: true },
+    { t: signedMoney(trade.pnl), r: true, cls: tone(trade.pnl) },
+  ];
+}
+
+function tradeTotalCells(trade) {
+  return [
+    { t: clockLabel(trade.minute), dim: true },
+    symbolCell(trade.symbol, trade.side, trade),
+    stratCell(trade.strategy_key),
+    { t: shares(trade.quantity), r: true, dim: true },
+    { t: money(trade.entry), r: true },
+    { t: money(trade.entry * trade.quantity), r: true, dim: true },
+    { t: money(trade.exit), r: true },
+    { t: money(trade.exit * trade.quantity), r: true, dim: true },
     { t: signedMoney(trade.pnl), r: true, cls: tone(trade.pnl) },
   ];
 }
@@ -1156,8 +1172,8 @@ function renderPortfolio() {
   render(prev ? sessionSummary(prev) : html`<span>No earlier session yet</span>`, document.getElementById("pf-prev-sum"));
 
   buildTable(document.getElementById("pf-prev-table"),
-    ["Time", "Symbol", "Strategy", "In", "Out", "P&L"],
-    trades.map(t => tradeCells(t, true)), 3);
+    ["Time", "Symbol", "Strategy", ...TRADE_TOTAL_HEADERS],
+    trades.map(tradeTotalCells), 3);
 }
 
 
@@ -1198,18 +1214,15 @@ function renderOverview() {
     ["Session", "Trades", "Won", "Lost", "Win rate", "P&L", "Return"],
     rows, 1, (_row, index) => classes[index]);
 
-  buildTable(document.getElementById("hs-strats"),
-    ["Strategy", "Trades", "Win rate", "Factor", "P&L"],
-    STRATEGIES.map(st => {
-      const st2 = statsFor(ALL_TRADES.filter(t => t.strategy_key === st.key));
-      return [
-        stratCell(st.key),
-        { t: plainNum(st2.n), r: true, dim: true },
-        { t: st2.n ? st2.winRate.toFixed(1) + "%" : "—", r: true, dim: true },
-        { t: st2.n ? ratio(st2.profitFactor) : "—", r: true, cls: Number.isFinite(st2.profitFactor) ? tone(st2.profitFactor - 1) : "flat" },
-        { t: signedMoney(st2.net_pnl), r: true, cls: tone(st2.net_pnl) },
-      ];
-    }), 1);
+  render(STRATEGIES.map(st => {
+    const stats = statsFor(ALL_TRADES.filter(t => t.strategy_key === st.key));
+    return html`<div class=${"strat-cell" + (stats.n ? "" : " idle")}>
+      ${stratCell(st.key).node}
+      <span class=${"v " + tone(stats.net_pnl)}>${signedMoney(stats.net_pnl)}</span>
+      <span class="sub">${stats.n
+        ? plainNum(stats.n) + " trades · " + stats.winRate.toFixed(1) + "% · PF " + ratio(stats.profitFactor)
+        : "no trades"}</span></div>`;
+  }), document.getElementById("hs-strats"));
 
 }
 
@@ -1304,11 +1317,11 @@ function renderLog() {
   const weeks = rows.map(t => weekStart(t.date));
 
   buildTable(table,
-    ["Date", "In time", "Out time", "Symbol", "Strategy", "Entry", "Exit", "P&L"],
+    ["Date", "Entry time", "Exit time", "Symbol", "Strategy", ...TRADE_TOTAL_HEADERS],
     rows.map(t => [
       { t: DAY3[t.weekday] + " " + t.day + " " + MON3[t.m] + " " + String(t.y).slice(2), cls: "log-date" },
       openedCell(t),
-      ...tradeCells(t, true),
+      ...tradeTotalCells(t),
     ]), 5, (_row, index) => [
       shade[index] ? "band" : "",
       index && weeks[index] !== weeks[index - 1] ? "week-edge" : "",
