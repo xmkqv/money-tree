@@ -85,6 +85,8 @@ class Daily20Sma(Daily):
             if self.portfolio.is_taken(self, candidate.asset, now.date()):
                 continue
             price = self.price(candidate.asset)
+            if price is None:
+                continue
             stop = price * (1 - self.stop_fraction)
             self.portfolio.enter(self, Candidate(candidate.asset, price, stop), session)
 
@@ -115,6 +117,8 @@ class Daily20Sma(Daily):
     def manage(self, holding: Holding, session: Session) -> None:
         now = session.now
         price = self.price(holding.asset)
+        if price is None:
+            return
         holding.highest = max(holding.highest, price)
         self._take(holding, price)
         self._raise_stop(holding, now)

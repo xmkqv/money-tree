@@ -71,7 +71,7 @@ class Portfolio(Protocol):
         self, assets: list[Asset], start: datetime, now: datetime, hours: int
     ) -> dict[Asset, DataFrame]: ...
 
-    def last_price(self, asset: Asset) -> float: ...
+    def last_price(self, asset: Asset) -> float | None: ...
 
     def holding_count(self, keys: frozenset[StrategyKey]) -> int: ...
 
@@ -160,11 +160,9 @@ class Strategy(ABC):
             )
         return True
 
-    def price(self, asset: Asset) -> float:
+    def price(self, asset: Asset) -> float | None:
         price = self.portfolio.last_price(asset)
-        if not isfinite(price) or price <= 0:
-            raise ValueError(f"current price for {asset} must be finite and positive")
-        return price
+        return price if price is not None and isfinite(price) and price > 0 else None
 
 
 def ranked[Item](

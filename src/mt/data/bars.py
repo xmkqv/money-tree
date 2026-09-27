@@ -23,10 +23,21 @@ class Bar(Payload):
     volume: float = Field(alias="v", default=0.0)
 
 
+class Trade(Payload):
+    traded_at: str = Field(alias="t")
+    price: float = Field(alias="p")
+
+
 class _BarsPage(Payload):
     bars: dict[str, list[Bar]] | None = None
     next_page_token: str | None = None
 
+
+class _TradesPage(Payload):
+    trades: dict[str, Trade] | None = None
+
+
+TRADE_PATH = "/v2/stocks/trades/latest"
 
 BAR_PATHS: dict[AssetType, str] = {
     AssetType.STOCK: "/v2/stocks/bars",
@@ -134,6 +145,22 @@ class BarsClientAlpaca:
                         raise httpx.HTTPError("Bars exceed the configured page limit")
                     query["page_token"] = page.next_page_token
         return rows
+
+    async def latest_trades(self, assets: list[Asset]) -> dict[Asset, Trade]:
+        if any(asset.asset_type != AssetType.STOCK for asset in assets):
+            raise ValueError("latest trades support stocks only")
+        symbols = {str(asset): asset for asset in assets}
+        requested = list(symbols)
+        batch_size = self._configuration.symbols_per_request
+        trades: dict[Asset, Trade] = {}
+        for offset in range(0, len(requested), batch_size):
+            query = {
+                "symbols": ",".join(requested[offset : offset + batch_size]),
+                "feed": self._configuration.intraday_feed,
+            }
+            page = _TradesPage.model_validate(await get_json(self._client, TRADE_PATH, query))
+            trades.update((symbols[symbol], trade) for symbol, trade in (page.trades or {}).items())
+        return trades
 
     async def series(
         self,

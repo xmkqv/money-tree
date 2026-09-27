@@ -29,7 +29,7 @@ defer:
 | asset | an instrument identified the same way across providers and ownership |
 | bar | one open, high, low, close and volume over one span |
 | feed | the source that supplies bars to a run |
-| quote | the last price the broker reports for an asset |
+| quote | the price of the latest trade the intraday feed reports for an asset |
 | read | one vendor response and the instant it was taken |
 | run | one bot process from start to finish |
 | iteration | one pass of the portfolio loop |
@@ -120,6 +120,8 @@ mt trade --strategies KEY,…
 - count(holdings per cap) ≤ risk.positions_max / 2
 - entry notional ≤ risk.notional_usd_max
 - holding.stop never widens
+- a quote older than bars.trade_max_age_seconds is absent; an absent quote defers the decision
+- closing orders never exceed the broker position
 
 ```py:surface
 universe
@@ -145,6 +147,8 @@ protect(holding)
 
 iteration
     reconcile positions; check the daily loss; manage holdings; run strategies
+    open orders without a position, holding or pending entry → cancel
+    positions without a holding, pending entry or closing order → exit at market
     equity ≤ session open value * (1 - risk.per_day_max) →
         cancel orders; exit all; block entries for the day
         retry liquidation on later iterations
