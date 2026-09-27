@@ -5,6 +5,9 @@ node = "26.7.0"
 python = "3.13.15"
 uv = "0.12.9"
 
+[settings]
+aqua.github_attestations = false
+
 [env]
 MISE_ENV = "{% if mise_env %}{{ mise_env | join(sep='') }}{% else %}{{ throw(message='no environment selected: rerun with --env development or --env production') }}{% endif %}"
 MISE_PROJECT_ROOT = "{{ config_root }}"
