@@ -1,5 +1,5 @@
 [tools]
-redis = "8.2"
+redis = "8.10"
 
 [vars]
 redis_bind = "127.0.0.1"
