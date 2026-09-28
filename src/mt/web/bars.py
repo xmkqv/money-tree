@@ -1,50 +1,56 @@
-from datetime import UTC, date, datetime, timedelta
-from datetime import time as dtime
+from datetime import date, datetime, timedelta
 from math import isfinite
-from typing import Any, TypedDict, cast
+from typing import TypedDict, cast
 
-from pandas import DatetimeIndex, Series, Timedelta, Timestamp
+from pandas import DataFrame, DatetimeIndex, Series, Timedelta, Timestamp
 
 from mt.data.bars import Bar, bar_frame
-from mt.exchange import TRADING_ZONE, session_starts
+from mt.exchange import midnight, session_starts
 from mt.frames import regular_session
 from mt.indicators import latest_atr
 from mt.rules.sections import ChartTimeframeSection
 from mt.rules.shared import settings
+from mt.rules.values import ChartTimeframe
+
+
+def _regular(bars: list[Bar]) -> DataFrame:
+    if not bars:
+        return DataFrame()
+    return regular_session(bar_frame(bars))
 
 
 def session_bars(bars: list[Bar]) -> list[Bar]:
-    if not bars:
+    regular = _regular(bars)
+    if regular.empty:
         return []
-    timestamps = set(regular_session(bar_frame(bars)).index)
+    timestamps = set(regular.index)
     return [bar for bar in bars if Timestamp(bar.opened_at) in timestamps]
 
 
 def session_hour_bars(bars: list[Bar]) -> list[Bar]:
-    if not bars:
-        return []
-    frame = bar_frame(bars)
-    regular = regular_session(frame)
+    regular = _regular(bars)
     if regular.empty:
         return []
     index = cast(DatetimeIndex, regular.index)
     starts = session_starts(index)
     elapsed = (index - starts) // Timedelta(hours=1)
-    folded = (
-        cast(Any, regular)
-        .groupby(starts + elapsed * Timedelta(hours=1))
-        .agg(
-            o=("open", "first"),
-            h=("high", "max"),
-            l=("low", "min"),
-            c=("close", "last"),
-            v=("volume", "sum"),
-        )
+    folded = regular.groupby(starts + elapsed * Timedelta(hours=1)).agg(
+        open=("open", "first"),
+        high=("high", "max"),
+        low=("low", "min"),
+        close=("close", "last"),
+        volume=("volume", "sum"),
     )
-    folded.index = folded.index.tz_convert(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return [
-        Bar.model_validate(row)
-        for row in folded.astype(float).rename_axis("t").reset_index().to_dict("records")
+        Bar(
+            t=cast(datetime, opened_at),
+            o=float(row["open"]),
+            h=float(row["high"]),
+            l=float(row["low"]),
+            c=float(row["close"]),
+            v=float(row["volume"]),
+        )
+        for opened_at, row in folded.iterrows()
     ]
 
 
@@ -58,9 +64,9 @@ def chart_window(
         display = end - timedelta(days=spans.span_max)
     data = display - timedelta(days=spans.warm_up_days)
     return (
-        datetime.combine(data, dtime(0, 0), TRADING_ZONE),
-        datetime.combine(display, dtime(0, 0), TRADING_ZONE),
-        datetime.combine(end, dtime(23, 59), TRADING_ZONE),
+        midnight(data),
+        midnight(display),
+        midnight(end + timedelta(days=1)) - timedelta(minutes=1),
     )
 
 
@@ -69,6 +75,15 @@ def bars_atr(bars: list[Bar]) -> float | None:
     if len(bars) <= period:
         return None
     return latest_atr(bar_frame(bars), period)
+
+
+class Chart(TypedDict):
+    symbol: str
+    name: str
+    timeframe: ChartTimeframe
+    displayFrom: str
+    averages: list[Average]
+    bars: list[Bar]
 
 
 class Average(TypedDict):

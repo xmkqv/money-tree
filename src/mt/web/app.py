@@ -3,22 +3,20 @@ import hmac
 import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import assert_never, cast
+from typing import assert_never
 
 import httpx2
+from alpaca.common.enums import BaseURL
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
+from pydantic import ValidationError
 from redis.asyncio import Redis as AsyncRedis
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-from mt.data.alpaca import (
-    TradingClientAlpaca,
-    credential_headers,
-    trading_api_url,
-)
-from mt.data.bars import BarsClientAlpaca, bars_api_url
+from mt.data.alpaca import TradingClientAlpaca, credential_headers
+from mt.data.bars import BarsClientAlpaca
 from mt.data.http import RequestTransport, http_timeout
 from mt.data.railway import RailwayOAuthClient
 from mt.rules.settings import LoginSettings, WebSettings
@@ -84,7 +82,9 @@ def create_app() -> FastAPI:
                 transport=RequestTransport(
                     requests.web_reads_per_minute, concurrency, requests.pause_seconds
                 ),
-                base_url=trading_api_url(settings.broker),
+                base_url=(
+                    BaseURL.TRADING_PAPER if settings.broker.is_paper else BaseURL.TRADING_LIVE
+                ).value,
                 headers=credentials,
                 timeout=http_timeout(settings.broker.timeout),
             ) as trading,
@@ -92,13 +92,13 @@ def create_app() -> FastAPI:
                 transport=RequestTransport(
                     requests.web_market_data_per_minute, concurrency, requests.pause_seconds
                 ),
-                base_url=bars_api_url(),
+                base_url=BaseURL.DATA.value,
                 headers=credentials,
                 timeout=http_timeout(settings.bars.timeout),
             ) as bars,
         ):
             yield {
-                "state": state,
+                "store": state,
                 "trading": TradingClientAlpaca(
                     trading,
                     configuration.dashboard,
@@ -126,32 +126,29 @@ def create_app() -> FastAPI:
     async def upstream_failed(_: Request, error: Exception) -> JSONResponse:
         if not isinstance(error, httpx2.HTTPStatusError) or error.response.status_code != 429:
             return error_response("Upstream read failed", 502)
-        retry_after = error.response.headers["Retry-After"]
-        return error_response("Alpaca read limit was reached", 503, {"Retry-After": retry_after})
+        retry_after = error.response.headers.get("Retry-After")
+        headers = {"Retry-After": retry_after} if retry_after is not None else None
+        return error_response("Alpaca read limit was reached", 503, headers)
+
+    def _all_http_errors(group: BaseExceptionGroup[BaseException]) -> bool:
+        return group.subgroup(lambda item: not isinstance(item, httpx2.HTTPError)) is None
+
+    def _rate_limited(group: BaseExceptionGroup[BaseException]) -> Exception | None:
+        limited = group.subgroup(
+            lambda item: (
+                isinstance(item, httpx2.HTTPStatusError) and item.response.status_code == 429
+            )
+        )
+        if limited is None:
+            return None
+        leaf = limited.exceptions[0]
+        return leaf if isinstance(leaf, Exception) else None
 
     @app.exception_handler(ExceptionGroup)
     async def upstream_group_failed(request: Request, error: Exception) -> JSONResponse:
-        def leaves(group: BaseException) -> list[BaseException]:
-            if isinstance(group, BaseExceptionGroup):
-                return [
-                    leaf
-                    for child in cast(BaseExceptionGroup[BaseException], group).exceptions
-                    for leaf in leaves(child)
-                ]
-            return [group]
-
-        errors = leaves(error)
-        if not all(isinstance(item, httpx2.HTTPError) for item in errors):
+        if not isinstance(error, BaseExceptionGroup) or not _all_http_errors(error):
             raise error
-        limited = next(
-            (
-                item
-                for item in errors
-                if isinstance(item, httpx2.HTTPStatusError) and item.response.status_code == 429
-            ),
-            None,
-        )
-        return await upstream_failed(request, limited or error)
+        return await upstream_failed(request, _rate_limited(error) or error)
 
     @app.get("/healthz")
     async def health() -> JSONResponse:
@@ -199,10 +196,13 @@ def create_app() -> FastAPI:
                     return error_response("OAuth state is invalid", 400)
                 if not code:
                     return error_response("OAuth code is missing", 400)
-                identity = await oauth_client.identify(code, verifier)
-                if identity.email.strip().casefold() not in oauth.allowed_emails:
+                try:
+                    identity = await oauth_client.identify(code, verifier)
+                except ValidationError:
+                    return error_response("Railway OAuth identity is invalid", 401)
+                if identity.email not in oauth.allowed_emails:
                     return error_response("Railway user is not allowed", 403)
-                _start_login(request, identity.subject)
+                _start_login(request, identity.sub)
                 return RedirectResponse("/", status_code=303, headers=NO_STORE)
 
         case _:

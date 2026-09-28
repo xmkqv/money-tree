@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal, TypedDict
 
 from alpaca.trading.models import Order
-from pydantic import Field, computed_field
+from pydantic import Field
 
 from mt.data.alpaca import AccountRead, Position
 from mt.exchange import TRADING_ZONE
@@ -24,12 +24,8 @@ class BotState(TypedDict):
 
 class SnapshotPosition(Position):
     unrealized_pnl_fraction: float = Field(exclude=True)
+    unrealized_pnl_percent: float
     weight: float
-
-    @computed_field
-    @property
-    def unrealized_pnl_percent(self) -> float:
-        return round(self.unrealized_pnl_fraction * 100, 2)
 
 
 class Snapshot(TypedDict):
@@ -61,20 +57,28 @@ def build_snapshot(read: AccountRead) -> Snapshot:
 
 
 def bot_state(state: State | None, heartbeat_timeout: timedelta) -> BotState:
-    silence = datetime.now(UTC) - state.heartbeat_at if state else None
-    stale = silence is None or silence > heartbeat_timeout
-    running = state is not None and state.status == "running" and not stale
+    if state is None:
+        return BotState(
+            status="unknown",
+            stale=True,
+            running=False,
+            reported=False,
+            reportedAgoMinutes=None,
+            strategies=[],
+            paused=[],
+            events=[],
+        )
+    silence = datetime.now(UTC) - state.heartbeat_at
+    stale = silence > heartbeat_timeout
     return BotState(
-        status=state.status if state else "unknown",
+        status=state.status,
         stale=stale,
-        running=running,
-        reported=state is not None,
-        reportedAgoMinutes=(
-            round(silence.total_seconds() / 60, 1) if silence is not None else None
-        ),
-        strategies=list(state.strategies) if state else [],
-        paused=list(state.paused) if state else [],
-        events=list(reversed(state.events)) if state else [],
+        running=state.status == "running" and not stale,
+        reported=True,
+        reportedAgoMinutes=round(silence.total_seconds() / 60, 1),
+        strategies=list(state.strategies),
+        paused=list(state.paused),
+        events=list(reversed(state.events)),
     )
 
 
@@ -89,6 +93,7 @@ def snapshot_positions(raw: list[Position], equity: float) -> list[SnapshotPosit
             value=round(abs(item.value), 2),
             unrealized_pnl=round(item.unrealized_pnl, 2),
             unrealized_pnl_fraction=item.unrealized_pnl_fraction,
+            unrealized_pnl_percent=round(item.unrealized_pnl_fraction * 100, 2),
             weight=round(abs(item.value) / equity * 100, 2) if equity else 0.0,
         )
         for item in raw

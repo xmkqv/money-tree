@@ -4,7 +4,7 @@ from typing import TypedDict, cast, get_args
 
 from pydantic.fields import FieldInfo
 
-from mt.exchange import TRADING_ZONE, upcoming_session_bounds
+from mt.exchange import today, upcoming_session_bounds
 from mt.rules.settings import RuleSettings
 from mt.rules.values import UNATTRIBUTED, SettingsSection, StrategyKey, Unattributed
 from mt.strategies.base import Strategy
@@ -32,7 +32,7 @@ UNITS = {
     "fraction": "",
     "fractions": "",
 }
-FRACTIONS = {"Fraction", "OptionalFraction"}
+FRACTIONS = {"Fraction"}
 NUMBERS = {"Count", "Amount", "int", "float"}
 TEXTS = {"Symbol", "str"}
 FLAGS = {"bool"}
@@ -69,23 +69,16 @@ EntryWindow = TypedDict("EntryWindow", {"from": str, "to": str})
 
 
 def entry_windows(rules: RuleSettings) -> dict[StrategyKey, EntryWindow]:
-    opens, closes = upcoming_session_bounds(datetime.now(TRADING_ZONE).date())
+    opens, closes = upcoming_session_bounds(today())
     return {
         cls.key: _window(*_described(cls, rules).entry_window(opens, closes)) for cls in STRATEGIES
     }
 
 
-def strategy_labels() -> list[StrategyLabel]:
-    labels = [
-        StrategyLabel(key=cls.key, short=cls.name(), label=f"{cls.name()} · {FAMILIES[cls.family]}")
-        for cls in STRATEGIES
-    ]
-    labels.append(
-        StrategyLabel(
-            key=UNATTRIBUTED, short="Unattributed", label=f"No {ORDER_PREFIX}- order code"
-        )
-    )
-    return labels
+STRATEGY_LABELS: list[StrategyLabel] = [
+    StrategyLabel(key=cls.key, short=cls.name(), label=f"{cls.name()} · {FAMILIES[cls.family]}")
+    for cls in STRATEGIES
+] + [StrategyLabel(key=UNATTRIBUTED, short="Unattributed", label=f"No {ORDER_PREFIX}- order code")]
 
 
 def strategy_rules(rules: RuleSettings, *, reported: bool) -> StrategyRules:
@@ -121,10 +114,12 @@ def _card(key: str, section: SettingsSection) -> ConfigCard:
     )
 
 
+CARD_NAMES: dict[str, str] = {cls.key: cls.name() for cls in STRATEGIES}
+
+
 def _card_name(key: str) -> str:
-    named = {cls.key: cls.name() for cls in STRATEGIES}
-    if key in named:
-        return named[key]
+    if key in CARD_NAMES:
+        return CARD_NAMES[key]
     if key in FAMILIES:
         return f"{key.capitalize()} family"
     return key.capitalize()
@@ -181,27 +176,33 @@ def _flag(value: object) -> str:
     return "yes" if value else "no"
 
 
+def _numeric(value: object) -> float:
+    if not isinstance(value, int | float):
+        raise TypeError(f"{value!r} is not a number")
+    return float(value)
+
+
 def _percent(value: object) -> str:
-    return f"{cast(float, value) * 100:.2f}".rstrip("0").rstrip(".") + "%"
+    return f"{_numeric(value) * 100:.2f}".rstrip("0").rstrip(".") + "%"
 
 
 def _number(value: object) -> str:
-    return f"{cast(float, value):g}"
+    return f"{_numeric(value):g}"
 
 
 def _money(value: object) -> str:
-    figure = cast(float, value)
+    figure = _numeric(value)
     if figure >= 1_000_000_000:
         return f"${figure / 1_000_000_000:g}B"
     return f"${figure / 1_000_000:g}M" if figure >= 1_000_000 else f"${figure:g}"
 
 
 def _described(cls: type[Strategy], rules: RuleSettings) -> type[Strategy]:
-    described = cast(type[Strategy], type(cls.__name__, (cls,), {}))
-    described.bind(getattr(rules, cls.key))
-    if issubclass(described, Breakout):
-        described.bind(rules.breakout)
-    return described
+    is_breakout = issubclass(cls, Breakout)
+    attributes: dict[str, object] = {"rules": getattr(rules, cls.key)}
+    if is_breakout:
+        attributes["family_rules"] = rules.breakout
+    return type(cls.__name__, (cls,), attributes)
 
 
 def _window(opens: datetime, closes: datetime) -> EntryWindow:
