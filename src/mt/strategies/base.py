@@ -134,10 +134,6 @@ class Strategy(ABC):
         return f"{cls.family.capitalize()} {cls.variation}"
 
     @classmethod
-    def symbols(cls) -> tuple[str, ...]:
-        return ()
-
-    @classmethod
     @abstractmethod
     def entry_window(cls, opens: datetime, closes: datetime) -> tuple[datetime, datetime]: ...
 
@@ -148,9 +144,6 @@ class Strategy(ABC):
     def manage(self, holding: Holding, session: Session) -> None: ...
 
     def begin(self, session_on: date) -> None:
-        return None
-
-    def prepare(self, now: datetime) -> None:
         return None
 
     def ladder(self, holding: Holding, quantity: float) -> Ladder | None:

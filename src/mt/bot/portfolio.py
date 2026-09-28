@@ -394,16 +394,7 @@ class Portfolio(LumibotStrategy):
         start = datetime.combine(first, time(), TRADING_ZONE)
         self._permissions = self._broker.assets()
         assets = self._given or self._universe(now)
-        fixed = {
-            Asset.from_symbol(symbol)
-            for strategy in self._strategies.values()
-            if strategy.key in self._selected
-            for symbol in strategy.symbols()
-        }
-        requested = sorted(
-            set(assets).union({self._benchmark}, self._holdings, fixed),
-            key=str,
-        )
+        requested = sorted(set(assets).union({self._benchmark}, self._holdings), key=str)
         frames: dict[Asset, DataFrame] = {}
         if self.is_backtesting and all(
             isinstance(self._strategies[key], Daily) for key in self._selected
@@ -429,9 +420,6 @@ class Portfolio(LumibotStrategy):
         }
         self._assets = list(assets)
         self._prepared_at = day
-        for strategy in self._strategies.values():
-            if self._is_runnable(strategy):
-                strategy.prepare(now)
 
     def _universe(self, now: datetime) -> list[Asset]:
         common_stocks = stocks()

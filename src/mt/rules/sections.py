@@ -19,7 +19,6 @@ from .values import (
     RequiredSecret,
     SettingsSection,
     SigningSecret,
-    Symbol,
     Timeframe,
 )
 
@@ -222,78 +221,6 @@ class Daily20SmaSection(StrategySection):
 class DailyTfbSection(DailyVariationSection):
     turnover_sessions: Count
     trend_lag_sessions: Count
-
-
-class IntradayMimSection(StrategySection):
-    long_symbol: Symbol
-    short_symbol: Symbol
-    first_minutes: Count
-    entry_minutes_before_close: Count
-    close_lead_minutes: Count
-    noise_sessions: Count
-    noise_multiple: Amount
-    stop_band_multiple: Amount
-    lookback_days: Count
-    holdings_max: Count
-
-    @model_validator(mode="after")
-    def check_window(self) -> Self:
-        if self.long_symbol == self.short_symbol:
-            raise ValueError("the long and short symbols must differ")
-        if self.close_lead_minutes >= self.entry_minutes_before_close:
-            raise ValueError("the entry must come before the closing lead")
-        return self
-
-
-class AllocationBaaSection(StrategySection):
-    canary_symbols: tuple[Symbol, ...] = Field(min_length=1)
-    offensive_symbols: tuple[Symbol, ...] = Field(min_length=1)
-    defensive_symbols: tuple[Symbol, ...] = Field(min_length=1)
-    cash_symbol: Symbol
-    offensive_top: Count
-    defensive_top: Count
-    breadth: Count
-    entry_minutes: Count
-    stop_fraction: Fraction
-    holdings_max: Count
-
-    @model_validator(mode="after")
-    def check_universes(self) -> Self:
-        if self.cash_symbol not in self.defensive_symbols:
-            raise ValueError("the cash symbol must be a defensive symbol")
-        if self.offensive_top > len(self.offensive_symbols):
-            raise ValueError("offensive picks must not exceed the offensive symbols")
-        if self.defensive_top > len(self.defensive_symbols):
-            raise ValueError("defensive picks must not exceed the defensive symbols")
-        if self.breadth > len(self.canary_symbols):
-            raise ValueError("breadth must not exceed the canary symbols")
-        if self.holdings_max < max(self.offensive_top, self.defensive_top):
-            raise ValueError("the holding cap must fit every pick")
-        return self
-
-
-class QualityGpSection(StrategySection):
-    universe_size: Count
-    keep_rank: Count
-    fundamentals_max_age_days: Count
-    excluded_industries: tuple[str, ...]
-    entry_minutes: Count
-    stop_fraction: Fraction
-    retry_minutes: Count
-    holdings_max: Count
-
-    @model_validator(mode="after")
-    def check_ranks(self) -> Self:
-        if self.keep_rank < self.holdings_max:
-            raise ValueError("the keep rank must cover every pick")
-        if self.universe_size < self.keep_rank:
-            raise ValueError("the universe must cover the keep rank")
-        return self
-
-
-class EdgarSection(SettingsSection):
-    user_agent: str = Field(min_length=1)
-    timeout: TimeoutSection
 
 
 class RequestSection(SettingsSection):

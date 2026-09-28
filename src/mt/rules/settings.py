@@ -5,7 +5,6 @@ from pydantic import Field
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .sections import (
-    AllocationBaaSection,
     BacktestSection,
     BarsSection,
     BreakoutSection,
@@ -18,14 +17,11 @@ from .sections import (
     DailyTfbSection,
     DashboardSection,
     EarningsSection,
-    EdgarSection,
     ExportSection,
     FinnhubSection,
     IndicatorsSection,
-    IntradayMimSection,
     LoginSection,
     PortfolioSection,
-    QualityGpSection,
     RedisSection,
     RequestSection,
     RiskSection,
@@ -54,9 +50,6 @@ class RuleSettings(Settings):
     daily_sma: DailySmaSection
     daily_tfb: DailyTfbSection
     daily_20sma: Daily20SmaSection
-    intraday_mim: IntradayMimSection
-    allocation_baa: AllocationBaaSection
-    quality_gp: QualityGpSection
 
 
 class SharedSettings(RuleSettings):
@@ -71,7 +64,6 @@ class BotSettings(Settings):
     strategies: Annotated[StrategySelection, NoDecode]
     portfolio: PortfolioSection
     backtest: BacktestSection
-    edgar: EdgarSection
 
 
 class WebSettings(Settings):

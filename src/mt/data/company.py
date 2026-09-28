@@ -27,7 +27,3 @@ def is_large_enough(asset: Asset, minimum: float, day: date) -> bool:
         return False
     found = _try_profile(asset.symbol, day)
     return found is not None and found.market_cap_musd * 1_000_000 >= minimum
-
-
-def industry(asset: Asset, day: date) -> str:
-    return _profile(asset.symbol, day).industry if asset.asset_type == AssetType.STOCK else ""
