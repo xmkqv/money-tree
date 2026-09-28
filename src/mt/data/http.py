@@ -116,7 +116,7 @@ def retry_at(response: httpx2.Response, fallback_seconds: int) -> float:
         except ValueError:
             try:
                 stamp = parsedate_to_datetime(value).timestamp()
-            except (ValueError, TypeError, OverflowError):
+            except ValueError, TypeError, OverflowError:
                 continue
         if math.isfinite(stamp) and stamp > now:
             times.append(stamp)

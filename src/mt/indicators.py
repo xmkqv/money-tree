@@ -62,7 +62,7 @@ def average_turnover_usd(frame: DataFrame, sessions: int) -> float:
     return traded if isfinite(traded) and traded > 0.0 else 0.0
 
 
-def finite_value(values: "Series[Any]", offset: int = -1) -> float | None:
+def finite_value(values: Series[Any], offset: int = -1) -> float | None:
     if len(values) < abs(offset):
         return None
     value = float(cast(float, values.iloc[offset]))

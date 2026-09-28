@@ -39,7 +39,7 @@ def does_signal_exit(frame: DataFrame) -> bool:
     return latest < latest_average or strength_now < settings.daily.exit_rsi_max
 
 
-def crossed_above_average(frame: DataFrame) -> "Series[Any] | None":
+def crossed_above_average(frame: DataFrame) -> Series[Any] | None:
     crossed = ta_cross(
         frame["close"], frame[f"SMA_{settings.daily.average_sessions}"], above=True, asint=False
     )

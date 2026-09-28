@@ -10,7 +10,7 @@ from mt.frames import regular_session
 from .base import Candidate, Holding, Portfolio, Session, Strategy
 
 
-def opening_moves(frame: DataFrame) -> "Series[float]":
+def opening_moves(frame: DataFrame) -> Series[float]:
     regular = regular_session(frame)
     if regular.empty:
         return Series(dtype=float)

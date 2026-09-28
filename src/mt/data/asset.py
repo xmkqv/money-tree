@@ -1,7 +1,7 @@
 from datetime import date
 from typing import Any, cast
 
-from lumibot.entities import Asset as LumibotAsset
+from lumibot.entities.asset import Asset as LumibotAsset
 from lumibot.tools import create_options_symbol
 from pydantic import BaseModel, ConfigDict
 
@@ -21,10 +21,10 @@ class Asset(BaseModel, frozen=True):
     multiplier: int = 1
     leverage: int = 1
     precision: str | None = None
-    underlying_asset: "Asset | None" = None
+    underlying_asset: Asset | None = None
 
     @classmethod
-    def from_symbol(cls, symbol: str) -> "Asset":
+    def from_symbol(cls, symbol: str) -> Asset:
         symbol = symbol.strip().upper()
         if not symbol:
             raise ValueError("asset symbol must not be empty")
@@ -36,11 +36,13 @@ class Asset(BaseModel, frozen=True):
         return cls.from_lumibot(LumibotAsset.symbol2asset(symbol))
 
     @classmethod
-    def from_lumibot(cls, asset: LumibotAsset) -> "Asset":
+    def from_lumibot(cls, asset: LumibotAsset) -> Asset:
         return cls.model_validate(asset.to_dict())
 
     def to_lumibot(self) -> LumibotAsset:
-        return LumibotAsset.from_dict(self.model_dump(mode="json"))
+        return LumibotAsset.from_dict(  # pyright: ignore[reportUnknownMemberType]
+            self.model_dump(mode="json")
+        )
 
     def __str__(self) -> str:
         if self.asset_type == AssetType.CRYPTO:

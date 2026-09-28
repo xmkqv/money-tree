@@ -47,7 +47,7 @@ class Ladder:
 
 @dataclass(slots=True)
 class Holding:
-    strategy: "Strategy"
+    strategy: Strategy
     asset: Asset
     direction: Direction
     entry: float
@@ -84,9 +84,9 @@ class Portfolio(Protocol):
 
     def holding_count(self, key: StrategyKey) -> int: ...
 
-    def is_taken(self, strategy: "Strategy", asset: Asset, day: date) -> bool: ...
+    def is_taken(self, strategy: Strategy, asset: Asset, day: date) -> bool: ...
 
-    def enter(self, strategy: "Strategy", candidate: Candidate, session: Session) -> bool: ...
+    def enter(self, strategy: Strategy, candidate: Candidate, session: Session) -> bool: ...
 
     def exit(
         self, holding: Holding, reason: OrderReason, quantity: float | None = None
@@ -94,7 +94,7 @@ class Portfolio(Protocol):
 
     def protect(self, holding: Holding, quantity: float | None = None) -> None: ...
 
-    def record(self, strategy: "Strategy", kind: str, level: EventLevel, message: str) -> None: ...
+    def record(self, strategy: Strategy, kind: str, level: EventLevel, message: str) -> None: ...
 
 
 class Strategy(ABC):
