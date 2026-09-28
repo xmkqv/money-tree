@@ -50,12 +50,9 @@ class Bars:
             frame = bar_set.df
             if frame.empty:
                 continue
-            for symbol in frame.index.get_level_values("symbol").unique():
-                series = frame.xs(symbol)
-                if not isinstance(series, DataFrame):
-                    raise TypeError(f"{symbol} bars are not a frame")
-                columns = series[["open", "high", "low", "close", "volume"]]
-                frames[by_symbol[symbol]] = columns.tz_convert(TRADING_ZONE).sort_index()
+            for symbol, group in frame.groupby(level="symbol"):
+                columns = group.droplevel("symbol")[["open", "high", "low", "close", "volume"]]
+                frames[by_symbol[str(symbol)]] = columns.tz_convert(TRADING_ZONE).sort_index()
         return frames
 
     def quotes(self, assets: list[Asset], now: datetime) -> dict[Asset, float]:

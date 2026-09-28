@@ -271,7 +271,7 @@ class Breakout(Strategy):
         hit = above | below
         if not hit.any():
             return None
-        index = int(hit.to_numpy().argmax())
+        index = int(hit.argmax())
         direction: Direction = 1 if above.iloc[index] else -1
         return index, direction, float(close.iloc[index])
 
