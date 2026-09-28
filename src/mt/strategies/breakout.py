@@ -55,42 +55,19 @@ def relative_volume(frame: DataFrame, day: date, clock: time) -> float | None:
     sessions = settings.breakout.lookback_sessions
     regular = regular_session(frame)
     index = cast(DatetimeIndex, regular.index)
-    pandas_index = cast(Any, index)
-    session_dates = cast(DatetimeIndex, pandas_index.normalize())
-    current_session = Timestamp(day, tz=TRADING_ZONE)
-    volume = regular["volume"]
-    aggregates = DataFrame(
-        {
-            "session_date": session_dates,
-            "cumulative_volume": cast(
-                Series,
-                cast(Any, volume).where(pandas_index.time <= clock, 0.0),
-            ),
-        },
-        index=index,
-    )
-    columns = ["cumulative_volume"]
-    relevant = cast(Any, session_dates) <= current_session
-    grouped = cast(
-        DataFrame,
-        cast(Any, aggregates).loc[relevant].groupby("session_date", sort=True)[columns].sum(),
-    )
-    if current_session not in grouped.index:
+    current = Timestamp(day, tz=TRADING_ZONE)
+    to_clock = regular[(index.normalize() <= current) & (index.time <= clock)]
+    daily = to_clock["volume"].groupby(cast(DatetimeIndex, to_clock.index).normalize()).sum()
+    if current not in daily.index:
         return None
-    grouped_index = cast(Any, cast(DatetimeIndex, grouped.index))
-    volumes = cast(
-        DataFrame,
-        cast(Any, grouped).loc[grouped_index < current_session].tail(sessions),
-    )
-    if len(volumes) != sessions:
+    history = daily.iloc[:-1].tail(sessions)
+    if len(history) != sessions:
         return None
-    clock_average = float(cast(Any, volumes["cumulative_volume"]).mean())
-    current = float(cast(Any, grouped).loc[current_session, "cumulative_volume"])
-    if not all(isfinite(value) for value in (clock_average, current)):
+    average = float(history.mean())
+    if not isfinite(average) or average <= 0:
         return None
-    if clock_average <= 0:
-        return None
-    return current / clock_average
+    value = float(daily.loc[current])
+    return value / average if isfinite(value) else None
 
 
 class Breakout(Strategy):
@@ -288,12 +265,15 @@ class Breakout(Strategy):
     def _first_break(
         self, bars: DataFrame, high: float, low: float
     ) -> tuple[int, Direction, float] | None:
-        for index, value in enumerate(bars["close"].tolist()):
-            close = float(value)
-            direction = range_break(high, low, close)
-            if direction is not None:
-                return index, direction, close
-        return None
+        close = bars["close"]
+        above = cast(Series, close > high)
+        below = cast(Series, close < low)
+        hit = above | below
+        if not hit.any():
+            return None
+        index = int(hit.to_numpy().argmax())
+        direction: Direction = 1 if above.iloc[index] else -1
+        return index, direction, float(close.iloc[index])
 
 
 class Breakout5m(Breakout):

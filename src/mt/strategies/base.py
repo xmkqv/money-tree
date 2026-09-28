@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
 from math import isfinite
-from typing import ClassVar, Protocol
+from typing import ClassVar, Protocol, get_type_hints
 
 from pandas import DataFrame
 
@@ -120,8 +120,7 @@ class Strategy(ABC):
 
     @classmethod
     def bind(cls, section: SettingsSection) -> set[str]:
-        declared = {name for owner in cls.__mro__ for name in getattr(owner, "__annotations__", {})}
-        bound = declared & set(type(section).model_fields)
+        bound = set(get_type_hints(cls)) & set(type(section).model_fields)
         for name in bound:
             setattr(cls, name, getattr(section, name))
         return bound

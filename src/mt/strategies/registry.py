@@ -46,17 +46,22 @@ def liquidate_code() -> str:
     return "-".join((ORDER_PREFIX, LIQUIDATE_CODE, uuid4().hex))
 
 
-def find_order_strategy_key(value: str) -> StrategyKey | None:
+def _order_parts(value: str) -> list[str] | None:
     parts = value.split("-")
-    if len(parts) < 3 or parts[0] != ORDER_PREFIX:
+    return parts if len(parts) >= 3 and parts[0] == ORDER_PREFIX else None
+
+
+def find_order_strategy_key(value: str) -> StrategyKey | None:
+    parts = _order_parts(value)
+    if parts is None:
         return None
     found = STRATEGIES_BY_CODE.get(parts[1])
     return None if found is None else found.key
 
 
 def find_order_reason(value: str) -> OrderReason | None:
-    parts = value.split("-")
-    if len(parts) < 3 or parts[0] != ORDER_PREFIX:
+    parts = _order_parts(value)
+    if parts is None:
         return None
     if parts[1] == LIQUIDATE_CODE:
         return "limit"

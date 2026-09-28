@@ -15,11 +15,10 @@ def opening_moves(frame: DataFrame) -> Series[float]:
     if regular.empty:
         return Series(dtype=float)
     index = cast(DatetimeIndex, regular.index)
-    sessions = cast(Any, index).normalize()
-    closes = regular["close"]
-    opening = cast(Any, index) == session_starts(index)
-    first = cast(Series, closes[opening].groupby(sessions[opening]).last())
-    last = cast(Series, cast(Any, closes).groupby(sessions).last())
+    sessions = index.normalize()
+    opening = index == session_starts(index)
+    first = regular.loc[opening, "close"].set_axis(sessions[opening])
+    last = regular["close"].groupby(sessions).last()
     prior = last.shift(1).reindex(first.index)
     return cast("Series[float]", (first / prior - 1.0).dropna())
 

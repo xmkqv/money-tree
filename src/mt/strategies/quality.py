@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from mt.data.asset import Asset
 from mt.data.company import industry
 
-from .base import Portfolio
+from .base import Portfolio, ranked
 from .monthly import Monthly
 
 
@@ -71,25 +71,23 @@ class Quality(Monthly):
             if found is None or found.period_end < oldest:
                 continue
             scored.append((found.gross_profitability, asset))
-        scored.sort(key=lambda row: (-row[0], str(row[1])))
-        ranked: list[tuple[float, Asset]] = []
+        scored = ranked(scored, symbol=lambda row: str(row[1]), turnover=lambda row: row[0])
+        kept: list[tuple[float, Asset]] = []
         for row in scored:
             if industry(row[1], day) in self.excluded_industries:
                 continue
-            ranked.append(row)
-            if len(ranked) == self.keep_rank:
+            kept.append(row)
+            if len(kept) == self.keep_rank:
                 break
-        if ranked:
-            picks = ", ".join(
-                f"{asset} {score:.2f}" for score, asset in ranked[: self.holdings_max]
-            )
+        if kept:
+            picks = ", ".join(f"{asset} {score:.2f}" for score, asset in kept[: self.holdings_max])
             self.portfolio.record(
                 self,
                 f"rank.read.{day}",
                 "info",
                 f"{self.name()} ranked {len(scored)} of {len(universe)} stocks; picks: {picks}",
             )
-        return tuple(asset for _, asset in ranked)
+        return tuple(asset for _, asset in kept)
 
 
 class QualityGp(Quality):
