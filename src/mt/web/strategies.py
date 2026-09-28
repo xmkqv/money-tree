@@ -15,9 +15,6 @@ from mt.strategies.registry import ORDER_PREFIX, STRATEGIES
 FAMILIES = {
     "breakout": "Intraday breakout",
     "daily": "Daily trend",
-    "intraday": "Intraday momentum",
-    "allocation": "Asset allocation",
-    "quality": "Monthly quality",
 }
 ACRONYMS = {"atr": "ATR", "adx": "ADX", "rsi": "RSI"}
 BOUNDS = {"max": "≤", "min": "≥"}
