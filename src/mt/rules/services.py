@@ -1,6 +1,6 @@
 from collections.abc import Iterator
+from enum import StrEnum
 from tomllib import loads
-from typing import Literal, TypeIs
 
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
@@ -8,16 +8,15 @@ from pydantic_settings import BaseSettings
 from .settings import BotSettings, DeploymentSettings, LoginSettings, SharedSettings, WebSettings
 
 
-type ServiceName = Literal["web", "bot"]
+class ServiceName(StrEnum):
+    WEB = "web"
+    BOT = "bot"
+
 
 SERVICE_SETTINGS: dict[ServiceName, tuple[type[BaseSettings], ...]] = {
-    "web": (SharedSettings, WebSettings, LoginSettings),
-    "bot": (SharedSettings, BotSettings),
+    ServiceName.WEB: (SharedSettings, WebSettings, LoginSettings),
+    ServiceName.BOT: (SharedSettings, BotSettings),
 }
-
-
-def is_service_name(value: str) -> TypeIs[ServiceName]:
-    return value in SERVICE_SETTINGS
 
 
 def secret_keys() -> set[str]:
