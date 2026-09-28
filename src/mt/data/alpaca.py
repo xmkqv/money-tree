@@ -1,14 +1,15 @@
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from typing import Literal
 
 import httpx2
-from alpaca.common.enums import BaseURL
-from alpaca.trading.models import Order
-from pydantic import Field, TypeAdapter
+from alpaca.trading.models import Asset as BrokerAssetProfile
+from alpaca.trading.models import Clock, Order
+from pydantic import AwareDatetime, Field, TypeAdapter
 
-from mt.exchange import TRADING_ZONE, upcoming_session_bounds
+from mt.exchange import XNYS, today
 from mt.rules.sections import BrokerSection, DashboardSection
 
 from .http import Payload, get_json
@@ -23,7 +24,7 @@ class Account(Payload):
 
 class Position(Payload):
     symbol: str
-    side: str
+    side: Literal["long", "short"]
     quantity: float = Field(validation_alias="qty")
     entry: float = Field(validation_alias="avg_entry_price")
     last: float = Field(validation_alias="current_price")
@@ -36,21 +37,7 @@ class AccountRead(Payload):
     account: Account
     positions: list[Position]
     orders: list[Order]
-    taken_at: tuple[datetime, datetime, datetime]
-
-    @property
-    def read_at(self) -> datetime:
-        return min(self.taken_at)
-
-
-class Clock(Payload):
-    is_open: bool
-    next_open: str
-    next_close: str
-
-
-class AssetProfile(Payload):
-    name: str
+    read_at: datetime
 
 
 class Fill(Payload):
@@ -58,20 +45,20 @@ class Fill(Payload):
     order_id: str
     symbol: str
     side: str
-    transaction_time: str
+    transaction_time: AwareDatetime
     quantity: float = Field(validation_alias="qty")
     price: float
 
 
 class ClosedOrder(Payload):
     id: str
-    submitted_at: str
+    submitted_at: AwareDatetime
     client_order_id: str | None = None
     order_type: str | None = Field(default=None, validation_alias="type")
 
 
 class EquityPoint(Payload):
-    timestamp: int
+    recorded_at: AwareDatetime = Field(alias="timestamp")
     equity: float
 
 
@@ -79,13 +66,13 @@ class EquityPoint(Payload):
 class History:
     fills: tuple[Fill, ...]
     orders: tuple[ClosedOrder, ...]
-    fill_at: datetime
-    order_at: datetime
-    session_at: date
+    last_fill_at: datetime
+    last_order_at: datetime
+    session_on: date
 
 
 class _PortfolioHistory(Payload):
-    timestamp: list[int]
+    timestamp: list[AwareDatetime]
     equity: list[float | None]
 
 
@@ -95,13 +82,8 @@ fills_adapter = TypeAdapter(list[Fill])
 closed_orders_adapter = TypeAdapter(list[ClosedOrder])
 
 
-def _upcoming_session() -> date:
-    return upcoming_session_bounds(datetime.now(TRADING_ZONE).date())[0].date()
-
-
-def trading_api_url(broker: BrokerSection) -> str:
-    target = BaseURL.TRADING_PAPER if broker.is_paper else BaseURL.TRADING_LIVE
-    return target.value
+def upcoming_session_on() -> date:
+    return XNYS.date_to_session(today(), direction="next").date()
 
 
 def credential_headers(broker: BrokerSection) -> dict[str, str]:
@@ -115,38 +97,34 @@ class TradingClientAlpaca:
         self._configuration = configuration
         self._history: History | None = None
         self._history_lock = asyncio.Lock()
-        self._daily: tuple[date, list[EquityPoint]] | None = None
-        self._daily_lock = asyncio.Lock()
 
     async def read(self) -> AccountRead:
-        async def observe[Value](read: Awaitable[Value]) -> tuple[Value, datetime]:
-            return await read, datetime.now(UTC)
-
+        read_at = datetime.now(UTC)
         async with asyncio.TaskGroup() as reads:
-            account = reads.create_task(observe(self.account()))
-            positions = reads.create_task(observe(self.positions()))
-            orders = reads.create_task(observe(self.open_orders()))
+            account = reads.create_task(self.account())
+            positions = reads.create_task(self.positions())
+            orders = reads.create_task(self.open_orders())
         return AccountRead(
-            account=account.result()[0],
-            positions=positions.result()[0],
-            orders=orders.result()[0],
-            taken_at=(account.result()[1], positions.result()[1], orders.result()[1]),
+            account=account.result(),
+            positions=positions.result(),
+            orders=orders.result(),
+            read_at=read_at,
         )
 
     async def history(self) -> History:
         async with self._history_lock:
             now = datetime.now(UTC)
-            session = _upcoming_session()
+            session = upcoming_session_on()
             prior = self._history
-            if prior is not None and prior.session_at != session:
+            if prior is not None and prior.session_on != session:
                 prior = None
             overlap = timedelta(days=self._configuration.history_overlap_days)
             async with asyncio.TaskGroup() as reads:
                 fills_read = reads.create_task(
-                    self.fills((prior.fill_at - overlap).isoformat() if prior else None)
+                    self.fills((prior.last_fill_at - overlap) if prior else None)
                 )
                 orders_read = reads.create_task(
-                    self.closed_orders((prior.order_at - overlap).isoformat() if prior else None)
+                    self.closed_orders((prior.last_order_at - overlap) if prior else None)
                 )
             fills = {row.id: row for row in prior.fills} if prior else {}
             orders = {row.id: row for row in prior.orders} if prior else {}
@@ -163,36 +141,11 @@ class TradingClientAlpaca:
             self._history = History(
                 tuple(fills.values()),
                 tuple(orders.values()),
-                max(
-                    (datetime.fromisoformat(row.transaction_time) for row in fills.values()),
-                    default=now,
-                ),
-                max(
-                    (datetime.fromisoformat(row.submitted_at) for row in orders.values()),
-                    default=now,
-                ),
+                max((row.transaction_time for row in fills.values()), default=now),
+                max((row.submitted_at for row in orders.values()), default=now),
                 session,
             )
             return self._history
-
-    async def daily_equity(self) -> list[EquityPoint]:
-        async with self._daily_lock:
-            today = datetime.now(TRADING_ZONE).date()
-            session = _upcoming_session()
-            if self._daily is None or self._daily[0] != session:
-                points = await self.equity(
-                    self._configuration.equity_daily_period,
-                    self._configuration.equity_daily_timeframe,
-                )
-                self._daily = (
-                    session,
-                    [
-                        point
-                        for point in points
-                        if datetime.fromtimestamp(point.timestamp, TRADING_ZONE).date() < today
-                    ],
-                )
-            return self._daily[1]
 
     async def account(self) -> Account:
         return Account.model_validate(await get_json(self._client, "/v2/account"))
@@ -218,9 +171,9 @@ class TradingClientAlpaca:
             payload = await get_json(self._client, f"/v2/assets/{symbol}")
         except httpx2.HTTPStatusError:
             return ""
-        return AssetProfile.model_validate(payload).name
+        return BrokerAssetProfile.model_validate(payload).name or ""
 
-    async def fills(self, after: str | None) -> list[Fill]:
+    async def fills(self, after: datetime | None) -> list[Fill]:
         return await self._pages(
             "/v2/account/activities",
             fills_adapter,
@@ -228,18 +181,18 @@ class TradingClientAlpaca:
             "page_token",
             activity_types="FILL",
             page_size=self._configuration.page_rows_max,
-            after=after,
+            after=after.isoformat() if after is not None else None,
         )
 
-    async def closed_orders(self, after: str | None) -> list[ClosedOrder]:
+    async def closed_orders(self, after: datetime | None) -> list[ClosedOrder]:
         return await self._pages(
             "/v2/orders",
             closed_orders_adapter,
-            lambda order: order.submitted_at,
+            lambda order: order.submitted_at.isoformat(),
             "until",
             status="closed",
             limit=self._configuration.page_rows_max,
-            after=after,
+            after=after.isoformat() if after is not None else None,
         )
 
     async def equity(self, period: str, timeframe: str) -> list[EquityPoint]:

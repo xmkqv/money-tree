@@ -1,12 +1,12 @@
+import itertools
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 import httpx2
-from alpaca.common.enums import BaseURL
-from pandas import DataFrame, to_datetime
-from pydantic import Field
+from pandas import DataFrame, DatetimeIndex
+from pydantic import AwareDatetime, Field
 
 from mt.exchange import TRADING_ZONE
-from mt.frames import normalize_ohlcv
 from mt.rules.sections import BarsSection
 from mt.rules.values import Timeframe
 
@@ -15,7 +15,7 @@ from .http import Payload, get_json
 
 
 class Bar(Payload):
-    opened_at: str = Field(alias="t")
+    opened_at: AwareDatetime = Field(alias="t")
     open: float = Field(alias="o")
     high: float = Field(alias="h")
     low: float = Field(alias="l")
@@ -23,21 +23,10 @@ class Bar(Payload):
     volume: float = Field(alias="v", default=0.0)
 
 
-class Trade(Payload):
-    traded_at: str = Field(alias="t")
-    price: float = Field(alias="p")
-
-
 class _BarsPage(Payload):
     bars: dict[str, list[Bar]] | None = None
     next_page_token: str | None = None
 
-
-class _TradesPage(Payload):
-    trades: dict[str, Trade] | None = None
-
-
-TRADE_PATH = "/v2/stocks/trades/latest"
 
 BAR_PATHS: dict[AssetType, str] = {
     AssetType.STOCK: "/v2/stocks/bars",
@@ -51,16 +40,11 @@ def check_supported_asset(asset: Asset) -> None:
         raise ValueError(f"historical bars do not support {asset.asset_type}")
 
 
-def bars_api_url() -> str:
-    return BaseURL.DATA.value
-
-
 def bar_frame(bars: list[Bar]) -> DataFrame:
-    frame = DataFrame(
-        [bar.model_dump() for bar in bars], columns=["open", "high", "low", "close", "volume"]
-    ).astype(float)
-    frame.index = to_datetime([bar.opened_at for bar in bars], utc=True).tz_convert(TRADING_ZONE)
-    return normalize_ohlcv(frame, {"open", "high", "low", "close", "volume"})
+    frame = DataFrame([bar.model_dump() for bar in bars]).set_index("opened_at")
+    index = cast(DatetimeIndex, frame.index).tz_convert(TRADING_ZONE)
+    columns = frame.set_axis(index)[["open", "high", "low", "close", "volume"]]
+    return columns.astype(float).sort_index()
 
 
 class BarsClientAlpaca:
@@ -78,19 +62,12 @@ class BarsClientAlpaca:
         limit: int,
         pages_max: int | None = None,
     ) -> dict[Asset, list[Bar]]:
-        if limit <= 0 or (pages_max is not None and pages_max <= 0):
-            raise ValueError("bar and page limits must be positive")
         groups: dict[AssetType, dict[str, Asset]] = {}
         rows: dict[Asset, list[Bar]] = {asset: [] for asset in assets}
         for asset in rows:
             check_supported_asset(asset)
             symbols = groups.setdefault(asset.asset_type, {})
-            symbol = str(asset)
-            if symbol in symbols and symbols[symbol] != asset:
-                raise ValueError(f"ambiguous asset identity for {symbol}")
-            symbols[symbol] = asset
-        start = _utc(start)
-        end = None if end is None else _utc(end)
+            symbols[str(asset)] = asset
         for asset_type, symbols in groups.items():
             params: dict[str, object] = {
                 "timeframe": timeframe,
@@ -121,18 +98,13 @@ class BarsClientAlpaca:
                     continue
                 params["end"] = until.isoformat()
             requested = list(symbols)
-            for offset in range(0, len(requested), batch_size):
-                batch = {
-                    symbol: symbols[symbol] for symbol in requested[offset : offset + batch_size]
-                }
+            for batch in itertools.batched(requested, batch_size, strict=False):
                 query = {**params, "symbols": ",".join(batch)}
                 page_count = 0
                 while True:
                     page = _BarsPage.model_validate(await get_json(self._client, path, query))
                     for symbol, bars in (page.bars or {}).items():
-                        if symbol not in batch:
-                            raise ValueError(f"unexpected bars for {symbol}")
-                        rows[batch[symbol]].extend(bars)
+                        rows[symbols[symbol]].extend(bars)
                     page_count += 1
                     if not page.next_page_token:
                         break
@@ -140,22 +112,6 @@ class BarsClientAlpaca:
                         raise httpx2.HTTPError("Bars exceed the configured page limit")
                     query["page_token"] = page.next_page_token
         return rows
-
-    async def latest_trades(self, assets: list[Asset]) -> dict[Asset, Trade]:
-        if any(asset.asset_type != AssetType.STOCK for asset in assets):
-            raise ValueError("latest trades support stocks only")
-        symbols = {str(asset): asset for asset in assets}
-        requested = list(symbols)
-        batch_size = self._configuration.symbols_per_request
-        trades: dict[Asset, Trade] = {}
-        for offset in range(0, len(requested), batch_size):
-            query = {
-                "symbols": ",".join(requested[offset : offset + batch_size]),
-                "feed": self._configuration.intraday_feed,
-            }
-            page = _TradesPage.model_validate(await get_json(self._client, TRADE_PATH, query))
-            trades.update((symbols[symbol], trade) for symbol, trade in (page.trades or {}).items())
-        return trades
 
     async def series(
         self,
@@ -169,7 +125,3 @@ class BarsClientAlpaca:
     ) -> list[Bar]:
         rows = await self.bars([asset], timeframe, start, end, limit=limit, pages_max=pages_max)
         return rows[asset]
-
-
-def _utc(value: datetime) -> datetime:
-    return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)

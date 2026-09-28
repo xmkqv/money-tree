@@ -1,8 +1,9 @@
-from typing import Protocol, cast
+from typing import Protocol
 from uuid import uuid4
 
+from alpaca.common.types import RawData
 from alpaca.trading.client import TradingClient
-from alpaca.trading.enums import AssetStatus, QueryOrderStatus
+from alpaca.trading.enums import AssetClass, AssetStatus, OrderSide, QueryOrderStatus
 from alpaca.trading.models import Asset as BrokerAsset
 from alpaca.trading.models import Order
 from alpaca.trading.models import Position as BrokerPosition
@@ -10,8 +11,12 @@ from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest
 
 from mt.rules.bot import settings as bot_settings
 from mt.rules.shared import settings
+from mt.rules.values import LIQUIDATE_CODE, ORDER_PREFIX
 
 from .asset import Asset
+
+
+LIQUIDATE_PREFIX = f"{ORDER_PREFIX}-{LIQUIDATE_CODE}-"
 
 
 class Broker(Protocol):
@@ -21,7 +26,7 @@ class Broker(Protocol):
 
     def positions(self) -> list[BrokerPosition]: ...
 
-    def ordered(self) -> set[Asset]: ...
+    def ordered(self, positions: dict[Asset, float]) -> set[Asset]: ...
 
 
 class BrokerAlpaca:
@@ -32,39 +37,55 @@ class BrokerAlpaca:
         orders = self._open_orders()
         closing: set[Asset] = set()
         for order in orders:
-            if str(order.client_order_id).startswith("mt-liquidate-"):
-                closing.add(Asset.from_symbol(str(order.symbol)))
+            if order.symbol is None or not order.client_order_id.startswith(LIQUIDATE_PREFIX):
+                self._api.cancel_order_by_id(order.id)
             else:
-                self._api.cancel_order_by_id(str(order.id))
+                closing.add(Asset.from_symbol(order.symbol))
         return closing
 
     def assets(self) -> dict[Asset, BrokerAsset]:
-        request = GetAssetsRequest(status=AssetStatus.ACTIVE)
+        request = GetAssetsRequest(status=AssetStatus.ACTIVE, asset_class=AssetClass.US_EQUITY)
         return {
             Asset.from_symbol(asset.symbol): asset
-            for asset in cast(list[BrokerAsset], self._api.get_all_assets(request))
+            for asset in _listed(self._api.get_all_assets(request))
             if asset.tradable and asset.fractionable
         }
 
     def positions(self) -> list[BrokerPosition]:
-        return cast(list[BrokerPosition], self._api.get_all_positions())
+        return _listed(self._api.get_all_positions())
 
-    def ordered(self) -> set[Asset]:
-        return {Asset.from_symbol(str(order.symbol)) for order in self._open_orders()}
+    def ordered(self, positions: dict[Asset, float]) -> set[Asset]:
+        closing: set[Asset] = set()
+        for order in self._open_orders():
+            if order.symbol is None or order.side is None:
+                continue
+            asset = Asset.from_symbol(order.symbol)
+            quantity = positions.get(asset)
+            if quantity is None:
+                continue
+            closing_side = OrderSide.SELL if quantity > 0 else OrderSide.BUY
+            if order.side == closing_side:
+                closing.add(asset)
+        return closing
 
     def _open_orders(self) -> list[Order]:
-        orders = cast(
-            list[Order],
+        orders = _listed(
             self._api.get_orders(
                 filter=GetOrdersRequest(
                     status=QueryOrderStatus.OPEN,
                     limit=bot_settings.portfolio.orders_per_request,
                 )
-            ),
+            )
         )
         if len(orders) >= bot_settings.portfolio.orders_per_request:
             raise RuntimeError("open orders reach the request limit")
         return orders
+
+
+def _listed[Item](result: list[Item] | RawData) -> list[Item]:
+    if not isinstance(result, list):
+        raise TypeError("the broker returned raw data instead of models")
+    return result
 
 
 class BrokerEngine:
@@ -85,5 +106,5 @@ class BrokerEngine:
     def positions(self) -> list[BrokerPosition]:
         return []
 
-    def ordered(self) -> set[Asset]:
+    def ordered(self, positions: dict[Asset, float]) -> set[Asset]:
         return set()

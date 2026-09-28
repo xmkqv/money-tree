@@ -2736,7 +2736,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "alpaca-py" },
-    { name = "anyio" },
     { name = "authlib" },
     { name = "cachetools" },
     { name = "exchange-calendars" },
@@ -2765,7 +2764,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alpaca-py", specifier = ">=0.44" },
-    { name = "anyio", specifier = ">=4.15" },
     { name = "authlib", specifier = ">=1.8" },
     { name = "cachetools", specifier = ">=7.2" },
     { name = "exchange-calendars", specifier = ">=4.13" },

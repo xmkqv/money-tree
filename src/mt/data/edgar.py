@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 from datetime import date
+from http import HTTPStatus
 
 import httpx2
 from pydantic import Field, TypeAdapter
 
 from mt.rules.bot import settings as bot_settings
 
-from .http import Payload, fetch_json, http_timeout
+from .http import Payload, http_timeout
 
 
 FRAMES_URL = "https://data.sec.gov/api/xbrl/frames/us-gaap/{concept}/USD/{period}.json"
@@ -20,7 +21,6 @@ REVENUES = (
 COSTS = ("CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold")
 ASSETS = "Assets"
 YEARS = 3
-NOT_FOUND = 404
 CLIENT = httpx2.Client(
     timeout=http_timeout(bot_settings.edgar.timeout),
     follow_redirects=True,
@@ -58,7 +58,7 @@ tickers_adapter = TypeAdapter(dict[str, Ticker])
 
 
 def ciks() -> dict[str, int]:
-    payload = tickers_adapter.validate_python(fetch_json(CLIENT, TICKERS_URL))
+    payload = tickers_adapter.validate_json(CLIENT.get(TICKERS_URL).raise_for_status().content)
     found: dict[str, int] = {}
     for row in payload.values():
         found.setdefault(row.ticker.upper().replace("-", "."), row.cik)
@@ -66,13 +66,14 @@ def ciks() -> dict[str, int]:
 
 
 def fundamentals(day: date) -> dict[int, Fundamentals]:
+    years = range(day.year, day.year - YEARS, -1)
     flows: dict[int, tuple[date, float]] = {}
-    for year in range(day.year, day.year - YEARS, -1):
+    for year in years:
         for cik, (end, value) in _gross_profits(f"CY{year}").items():
             if end <= day and (cik not in flows or end > flows[cik][0]):
                 flows[cik] = end, value
     balances: dict[tuple[int, date], float] = {}
-    for year in range(day.year, day.year - YEARS, -1):
+    for year in years:
         for quarter in range(4, 0, -1):
             if date(year, 3 * quarter - 2, 1) > day:
                 continue
@@ -109,7 +110,7 @@ def _first(concepts: tuple[str, ...], period: str) -> dict[int, Fact]:
 
 def _facts(concept: str, period: str) -> dict[int, Fact]:
     response = CLIENT.get(FRAMES_URL.format(concept=concept, period=period))
-    if response.status_code == NOT_FOUND:
+    if response.status_code == HTTPStatus.NOT_FOUND:
         return {}
     response.raise_for_status()
-    return {fact.cik: fact for fact in _Frame.model_validate(response.json()).data}
+    return {fact.cik: fact for fact in _Frame.model_validate_json(response.content).data}

@@ -32,12 +32,6 @@ async def get_json(
     return response.json()
 
 
-def fetch_json(client: httpx2.Client, url: str, params: Mapping[str, str] | None = None) -> Any:
-    response = client.get(url, params=params)
-    response.raise_for_status()
-    return response.json()
-
-
 def http_timeout(timeout: TimeoutSection) -> httpx2.Timeout:
     return httpx2.Timeout(
         connect=timeout.connect_seconds,
@@ -49,7 +43,7 @@ def http_timeout(timeout: TimeoutSection) -> httpx2.Timeout:
 
 class RequestTransport(httpx2.AsyncHTTPTransport):
     def __init__(self, allowance: int, concurrency: asyncio.Semaphore, pause_seconds: int) -> None:
-        super().__init__(retries=0)
+        super().__init__()
         self._allowance = RateLimitItemPerMinute(allowance)
         self._limiter = MovingWindowRateLimiter(MemoryStorage())
         self._concurrency = concurrency
@@ -60,15 +54,12 @@ class RequestTransport(httpx2.AsyncHTTPTransport):
         while True:
             if time.time() < self._resume_at:
                 return self._limited()
-            if not await self._limiter.test(self._allowance):
-                reset_at = (await self._limiter.get_window_stats(self._allowance)).reset_time
-                await asyncio.sleep(max(0, reset_at - time.time()))
-                continue
             async with self._concurrency:
                 if time.time() < self._resume_at:
                     return self._limited()
-                if not await self._limiter.hit(self._allowance):
-                    continue
+                while not await self._limiter.hit(self._allowance):
+                    reset_at = (await self._limiter.get_window_stats(self._allowance)).reset_time
+                    await asyncio.sleep(max(0, reset_at - time.time()))
                 started = time.monotonic()
                 response = None
                 try:
@@ -88,7 +79,7 @@ class RequestTransport(httpx2.AsyncHTTPTransport):
                     logger.info(
                         "endpoint=%s operation=%s status=%s duration=%.3f "
                         "attempts=1 remaining=%s reset=%s",
-                        re.sub(r"(/stocks|/orders)/[^/]+", r"\1/{id}", request.url.path),
+                        re.sub(r"(/orders|/assets)/[^/]+", r"\1/{id}", request.url.path),
                         request.method,
                         response.status_code if response else "failed",
                         time.monotonic() - started,

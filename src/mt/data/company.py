@@ -11,23 +11,19 @@ from .finnhub import Profile, profile
 
 
 @lru_cache(maxsize=settings.company.profile_cache_max)
-def _profile(symbol: str, day: date) -> Profile:
+def profile_on(symbol: str, day: date) -> Profile:
     return profile(symbol)
-
-
-def _try_profile(symbol: str, day: date) -> Profile | None:
-    try:
-        return _profile(symbol, day)
-    except httpx2.HTTPError, ValidationError:
-        return None
 
 
 def is_large_enough(asset: Asset, minimum: float, day: date) -> bool:
     if asset.asset_type != AssetType.STOCK:
         return False
-    found = _try_profile(asset.symbol, day)
-    return found is not None and found.market_cap_musd * 1_000_000 >= minimum
+    try:
+        found = profile_on(asset.symbol, day)
+    except httpx2.HTTPError, ValidationError:
+        return False
+    return found.market_cap_musd * 1_000_000 >= minimum
 
 
 def industry(asset: Asset, day: date) -> str:
-    return _profile(asset.symbol, day).industry if asset.asset_type == AssetType.STOCK else ""
+    return profile_on(asset.symbol, day).industry if asset.asset_type == AssetType.STOCK else ""

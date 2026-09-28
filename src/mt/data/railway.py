@@ -1,10 +1,10 @@
 from types import TracebackType
-from typing import NamedTuple, Protocol, Self, cast
+from typing import Annotated, NamedTuple, Protocol, Self, cast
 
 import httpx2
 from authlib.common.security import generate_token
 from authlib.integrations.httpx_client import AsyncOAuth2Client
-from pydantic import TypeAdapter
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from mt.rules.sections import LoginSection
 
@@ -15,8 +15,6 @@ AUTHORIZATION_URL = "https://backboard.railway.com/oauth/auth"
 TOKEN_URL = "https://backboard.railway.com/oauth/token"
 IDENTITY_URL = "https://backboard.railway.com/oauth/me"
 
-claims_adapter = TypeAdapter(dict[str, object])
-
 
 class AuthorizationRequest(NamedTuple):
     url: str
@@ -24,9 +22,11 @@ class AuthorizationRequest(NamedTuple):
     verifier: str
 
 
-class RailwayIdentity(NamedTuple):
-    subject: str
-    email: str
+class Identity(BaseModel):
+    model_config = ConfigDict(extra="ignore", frozen=True, str_strip_whitespace=True)
+
+    sub: str = Field(min_length=1)
+    email: Annotated[str, AfterValidator(str.casefold)] = Field(min_length=1)
 
 
 class _OAuthClient(Protocol):
@@ -70,19 +70,9 @@ class RailwayOAuthClient:
             url, state = client.create_authorization_url(AUTHORIZATION_URL, code_verifier=verifier)
         return AuthorizationRequest(url, state, verifier)
 
-    async def identify(self, code: str, verifier: str) -> RailwayIdentity:
+    async def identify(self, code: str, verifier: str) -> Identity:
         async with self._client() as client:
             await client.fetch_token(TOKEN_URL, code=code, code_verifier=verifier)
             identity = await client.get(IDENTITY_URL)
             identity.raise_for_status()
-            claims = claims_adapter.validate_python(identity.json())
-            subject = claims.get("sub")
-            email = claims.get("email")
-        if (
-            not isinstance(subject, str)
-            or not subject.strip()
-            or not isinstance(email, str)
-            or not email.strip()
-        ):
-            raise ValueError("Railway OAuth identity lacks a subject or an email")
-        return RailwayIdentity(subject, email)
+            return Identity.model_validate_json(identity.content)
