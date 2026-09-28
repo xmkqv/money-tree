@@ -411,7 +411,7 @@ def _position_rows(
 ) -> list[PositionRow]:
     return [
         PositionRow(
-            **position.model_dump(),
+            **dict(position),
             strategy_key=held["strategy_key"]
             if (held := open_trades.get(position.symbol))
             else UNATTRIBUTED,
