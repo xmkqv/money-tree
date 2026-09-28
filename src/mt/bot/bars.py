@@ -3,7 +3,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from functools import partial
 
-import httpx
+import httpx2
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 from pandas import DataFrame
 
@@ -19,7 +19,7 @@ from mt.rules.values import Timeframe
 class Bars:
     def __init__(self, portal: BlockingPortal) -> None:
         self._portal = portal
-        self._http: httpx.AsyncClient | None = None
+        self._http: httpx2.AsyncClient | None = None
         self._client: BarsClientAlpaca | None = None
 
     def bars(
@@ -38,7 +38,7 @@ class Bars:
 
     def _connected(self) -> BarsClientAlpaca:
         if self._client is None:
-            self._http = httpx.AsyncClient(
+            self._http = httpx2.AsyncClient(
                 base_url=bars_api_url(),
                 headers=credential_headers(settings.broker),
                 timeout=http_timeout(settings.bars.timeout),

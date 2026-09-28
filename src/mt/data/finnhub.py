@@ -1,6 +1,6 @@
 from datetime import date
 
-import httpx
+import httpx2
 from pydantic import Field, TypeAdapter
 
 from mt.rules.shared import settings
@@ -10,7 +10,7 @@ from .http import Payload, fetch_json, http_timeout
 
 API_URL = "https://finnhub.io/api/v1"
 COMMON_STOCK = "Common Stock"
-CLIENT = httpx.Client(
+CLIENT = httpx2.Client(
     base_url=API_URL,
     timeout=http_timeout(settings.finnhub.timeout),
     follow_redirects=True,

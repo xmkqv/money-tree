@@ -1,7 +1,7 @@
 from datetime import date, datetime, timedelta
 from typing import ClassVar
 
-import httpx
+import httpx2
 from pydantic import ValidationError
 
 from mt.data.asset import Asset
@@ -36,7 +36,7 @@ class Quality(Monthly):
         self._tried_at = now
         try:
             ranked = self._rank(now.date())
-        except (httpx.HTTPError, ValidationError) as error:
+        except (httpx2.HTTPError, ValidationError) as error:
             self.portfolio.record(
                 self,
                 f"rank.failed.{now:%Y-%m-%dT%H:%M}",

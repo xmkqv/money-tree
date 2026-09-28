@@ -60,7 +60,7 @@ class RailwayOAuthClient:
                 scope="openid email",
                 redirect_uri=self._redirect_uri,
                 code_challenge_method="S256",
-                timeout=httpx2.Timeout(**http_timeout(self._login.timeout).as_dict()),
+                timeout=http_timeout(self._login.timeout),
             ),
         )
 

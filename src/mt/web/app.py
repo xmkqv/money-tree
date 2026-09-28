@@ -5,7 +5,6 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import assert_never, cast
 
-import httpx
 import httpx2
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
@@ -80,7 +79,7 @@ def create_app() -> FastAPI:
             AsyncRedis.from_url(  # pyright: ignore[reportUnknownMemberType]
                 str(settings.redis.url), decode_responses=True
             ) as state,
-            httpx.AsyncClient(
+            httpx2.AsyncClient(
                 transport=RequestTransport(
                     requests.web_reads_per_minute, concurrency, requests.pause_seconds
                 ),
@@ -88,7 +87,7 @@ def create_app() -> FastAPI:
                 headers=credentials,
                 timeout=http_timeout(settings.broker.timeout),
             ) as trading,
-            httpx.AsyncClient(
+            httpx2.AsyncClient(
                 transport=RequestTransport(
                     requests.web_market_data_per_minute, concurrency, requests.pause_seconds
                 ),
@@ -123,9 +122,8 @@ def create_app() -> FastAPI:
     )
 
     @app.exception_handler(httpx2.HTTPError)
-    @app.exception_handler(httpx.HTTPError)
     async def upstream_failed(_: Request, error: Exception) -> JSONResponse:
-        if not isinstance(error, httpx.HTTPStatusError) or error.response.status_code != 429:
+        if not isinstance(error, httpx2.HTTPStatusError) or error.response.status_code != 429:
             return error_response("Upstream read failed", 502)
         retry_after = error.response.headers["Retry-After"]
         return error_response("Alpaca read limit was reached", 503, {"Retry-After": retry_after})
@@ -142,13 +140,13 @@ def create_app() -> FastAPI:
             return [group]
 
         errors = leaves(error)
-        if not all(isinstance(item, httpx.HTTPError) for item in errors):
+        if not all(isinstance(item, httpx2.HTTPError) for item in errors):
             raise error
         limited = next(
             (
                 item
                 for item in errors
-                if isinstance(item, httpx.HTTPStatusError) and item.response.status_code == 429
+                if isinstance(item, httpx2.HTTPStatusError) and item.response.status_code == 429
             ),
             None,
         )

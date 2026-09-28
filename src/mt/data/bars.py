@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-import httpx
+import httpx2
 from alpaca.common.enums import BaseURL
 from pandas import DataFrame, DatetimeIndex
 from pydantic import Field
@@ -69,7 +69,7 @@ def bar_frame(bars: list[Bar]) -> DataFrame:
 
 
 class BarsClientAlpaca:
-    def __init__(self, client: httpx.AsyncClient, configuration: BarsSection) -> None:
+    def __init__(self, client: httpx2.AsyncClient, configuration: BarsSection) -> None:
         self._client = client
         self._configuration = configuration
 
@@ -142,7 +142,7 @@ class BarsClientAlpaca:
                     if not page.next_page_token:
                         break
                     if pages_max is not None and page_count >= pages_max:
-                        raise httpx.HTTPError("Bars exceed the configured page limit")
+                        raise httpx2.HTTPError("Bars exceed the configured page limit")
                     query["page_token"] = page.next_page_token
         return rows
 

@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from email.utils import parsedate_to_datetime
 from typing import Any
 
-import httpx
+import httpx2
 from limits import RateLimitItemPerMinute
 from limits.aio.storage import MemoryStorage
 from limits.aio.strategies import MovingWindowRateLimiter
@@ -24,7 +24,7 @@ class Payload(BaseModel):
 
 
 async def get_json(
-    client: httpx.AsyncClient, path: str, params: Mapping[str, object] | None = None
+    client: httpx2.AsyncClient, path: str, params: Mapping[str, object] | None = None
 ) -> Any:
     query = {key: str(value) for key, value in (params or {}).items() if value is not None}
     response = await client.get(path, params=query)
@@ -32,14 +32,14 @@ async def get_json(
     return response.json()
 
 
-def fetch_json(client: httpx.Client, url: str, params: Mapping[str, str] | None = None) -> Any:
+def fetch_json(client: httpx2.Client, url: str, params: Mapping[str, str] | None = None) -> Any:
     response = client.get(url, params=params)
     response.raise_for_status()
     return response.json()
 
 
-def http_timeout(timeout: TimeoutSection) -> httpx.Timeout:
-    return httpx.Timeout(
+def http_timeout(timeout: TimeoutSection) -> httpx2.Timeout:
+    return httpx2.Timeout(
         connect=timeout.connect_seconds,
         read=timeout.read_seconds,
         write=timeout.write_seconds,
@@ -47,7 +47,7 @@ def http_timeout(timeout: TimeoutSection) -> httpx.Timeout:
     )
 
 
-class RequestTransport(httpx.AsyncHTTPTransport):
+class RequestTransport(httpx2.AsyncHTTPTransport):
     def __init__(self, allowance: int, concurrency: asyncio.Semaphore, pause_seconds: int) -> None:
         super().__init__(retries=0)
         self._allowance = RateLimitItemPerMinute(allowance)
@@ -56,7 +56,7 @@ class RequestTransport(httpx.AsyncHTTPTransport):
         self._pause_seconds = pause_seconds
         self._resume_at = 0.0
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         while True:
             if time.time() < self._resume_at:
                 return self._limited()
@@ -96,13 +96,13 @@ class RequestTransport(httpx.AsyncHTTPTransport):
                         response.headers.get("X-RateLimit-Reset") if response else None,
                     )
 
-    def _limited(self) -> httpx.Response:
-        return httpx.Response(
+    def _limited(self) -> httpx2.Response:
+        return httpx2.Response(
             429, headers={"Retry-After": str(max(1, math.ceil(self._resume_at - time.time())))}
         )
 
 
-def retry_at(response: httpx.Response, fallback_seconds: int) -> float:
+def retry_at(response: httpx2.Response, fallback_seconds: int) -> float:
     now = time.time()
     times: list[float] = []
     retry = response.headers.get("Retry-After")

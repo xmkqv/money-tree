@@ -1,7 +1,7 @@
 from datetime import date
 from functools import lru_cache
 
-import httpx
+import httpx2
 from pydantic import ValidationError
 
 from mt.rules.shared import settings
@@ -18,7 +18,7 @@ def _profile(symbol: str, day: date) -> Profile:
 def _try_profile(symbol: str, day: date) -> Profile | None:
     try:
         return _profile(symbol, day)
-    except (httpx.HTTPError, ValidationError):
+    except httpx2.HTTPError, ValidationError:
         return None
 
 

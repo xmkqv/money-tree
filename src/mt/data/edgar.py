@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import date
 
-import httpx
+import httpx2
 from pydantic import Field, TypeAdapter
 
 from mt.rules.bot import settings as bot_settings
@@ -21,7 +21,7 @@ COSTS = ("CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold")
 ASSETS = "Assets"
 YEARS = 3
 NOT_FOUND = 404
-CLIENT = httpx.Client(
+CLIENT = httpx2.Client(
     timeout=http_timeout(bot_settings.edgar.timeout),
     follow_redirects=True,
     headers={"User-Agent": bot_settings.edgar.user_agent},

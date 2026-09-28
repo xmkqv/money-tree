@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
-import httpx
+import httpx2
 from alpaca.common.enums import BaseURL
 from alpaca.trading.models import Order
 from pydantic import Field, TypeAdapter
@@ -110,7 +110,7 @@ def credential_headers(broker: BrokerSection) -> dict[str, str]:
 
 
 class TradingClientAlpaca:
-    def __init__(self, client: httpx.AsyncClient, configuration: DashboardSection) -> None:
+    def __init__(self, client: httpx2.AsyncClient, configuration: DashboardSection) -> None:
         self._client = client
         self._configuration = configuration
         self._history: History | None = None
@@ -216,7 +216,7 @@ class TradingClientAlpaca:
     async def asset_name(self, symbol: str) -> str:
         try:
             payload = await get_json(self._client, f"/v2/assets/{symbol}")
-        except httpx.HTTPStatusError:
+        except httpx2.HTTPStatusError:
             return ""
         return AssetProfile.model_validate(payload).name
 
@@ -276,8 +276,8 @@ class TradingClientAlpaca:
                 break
             next_token = cursor(page[-1])
             if next_token == token:
-                raise httpx.HTTPError("Account history pagination did not advance")
+                raise httpx2.HTTPError("Account history pagination did not advance")
             token = next_token
         else:
-            raise httpx.HTTPError("Account history exceeds the configured page limit")
+            raise httpx2.HTTPError("Account history exceeds the configured page limit")
         return collected
