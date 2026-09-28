@@ -1,5 +1,4 @@
-from decimal import ROUND_DOWN, Decimal
-from math import ceil, floor
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from typing import Literal
 
 from mt.rules.shared import settings
@@ -15,9 +14,9 @@ def entry_quantity(
     direction: Direction,
 ) -> Decimal:
     risk = settings.risk
-    capital, last, distance, allocation, per_trade, minimum, maximum = map(
-        lambda value: Decimal(str(value)),
-        (
+    capital, last, distance, allocation, per_trade, minimum, maximum = (
+        Decimal(str(value))
+        for value in (
             equity,
             price,
             stop_distance,
@@ -25,7 +24,7 @@ def entry_quantity(
             risk.per_trade,
             risk.notional_usd_min,
             risk.notional_usd_max,
-        ),
+        )
     )
     quantity = round_quantity(
         min(capital * allocation / last, capital * per_trade / distance, maximum / last),
@@ -44,5 +43,5 @@ def next_stop(direction: Direction, active: float, candidate: float) -> float:
 
 
 def round_stop(direction: Direction, stop: float) -> float:
-    pennies = round(stop * 100.0, 6)
-    return (floor(pennies) if direction == 1 else ceil(pennies)) / 100.0
+    rounding = ROUND_DOWN if direction == 1 else ROUND_UP
+    return float(Decimal(str(stop)).quantize(Decimal("0.01"), rounding=rounding))

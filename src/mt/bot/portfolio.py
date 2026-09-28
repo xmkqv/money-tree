@@ -138,8 +138,9 @@ class Portfolio(LumibotStrategy):
         if pending is not None and ("buy" if pending.holding.direction == 1 else "sell") in side:
             holding = pending.holding
             first_fill = pending.filled_quantity == 0
-            pending.filled_quantity += abs(float(quantity))
-            pending.filled_value += abs(float(quantity)) * price
+            filled = abs(float(quantity))
+            pending.filled_quantity += filled
+            pending.filled_value += filled * price
             holding.entry = pending.filled_value / pending.filled_quantity
             if not holding.strategy.is_stop_resting:
                 holding.stop = holding.entry - holding.direction * holding.stop_distance
@@ -147,7 +148,7 @@ class Portfolio(LumibotStrategy):
             holding.lowest = price if first_fill else min(holding.lowest, price)
             holding.ladder = holding.strategy.ladder(holding, pending.filled_quantity)
             self._holdings[asset] = holding
-            pending.notional = max(0.0, pending.notional - abs(float(quantity)) * price)
+            pending.notional = max(0.0, pending.notional - filled * price)
             if complete:
                 self._pending.pop(asset)
             if self._is_locked():
