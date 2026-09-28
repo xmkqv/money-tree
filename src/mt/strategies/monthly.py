@@ -35,18 +35,15 @@ class Monthly(Strategy):
 
     def run(self, session: Session) -> None:
         now = session.now
-        start, until = self.entry_window(session.opens, session.closes)
-        if not start <= now < until:
-            return
         self.rebalance(now)
         if self._month != (now.year, now.month):
             return
         for asset in self.entries():
-            if self.portfolio.is_taken(self, asset, now.date()):
+            if self.portfolio.is_taken(self, asset):
                 continue
             if self.is_capped(now):
                 return
-            price = self.price(asset)
+            price = self.portfolio.quote(asset)
             if price is None:
                 continue
             candidate = Candidate(asset, price, price * (1 - self.stop_fraction))
@@ -54,7 +51,7 @@ class Monthly(Strategy):
 
     def manage(self, holding: Holding, session: Session) -> None:
         now = session.now
-        price = self.price(holding.asset)
+        price = self.portfolio.quote(holding.asset)
         if price is None:
             return
         if price <= holding.stop:

@@ -3,14 +3,13 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from math import isfinite
-from typing import ClassVar, Protocol, get_type_hints
+from typing import ClassVar, Protocol
 
 from pandas import DataFrame
 
 from mt.data.asset import Asset
 from mt.rules.shared import settings
-from mt.rules.values import TARGET_REASONS, OrderReason, SettingsSection, StrategyKey
+from mt.rules.values import TARGET_REASONS, OrderReason, StrategyKey
 from mt.sizing import Direction, next_stop, round_quantity
 from mt.state import EventLevel
 
@@ -36,9 +35,9 @@ class Ladder:
     targets: tuple[float, ...]
     stage: int = 0
 
-    def step(self, fraction: float, *, whole: bool = False) -> tuple[Decimal, OrderReason]:
+    def step(self, fraction: float, *, is_whole: bool = False) -> tuple[Decimal, OrderReason]:
         quantity = round_quantity(
-            Decimal(str(self.original_quantity)) * Decimal(str(fraction)), whole=whole
+            Decimal(str(self.original_quantity)) * Decimal(str(fraction)), is_whole=is_whole
         )
         reason = TARGET_REASONS[self.stage]
         self.stage += 1
@@ -59,7 +58,7 @@ class Holding:
     ladder: Ladder | None = None
     stop_reason: OrderReason = "stop"
 
-    def raise_stop(self, stop: float, reason: OrderReason) -> None:
+    def tighten_stop(self, stop: float, reason: OrderReason) -> None:
         raised = next_stop(self.direction, self.stop, stop)
         if raised != self.stop:
             self.stop, self.stop_reason = raised, reason
@@ -70,21 +69,15 @@ class Portfolio(Protocol):
 
     def daily_frame(self, asset: Asset) -> DataFrame | None: ...
 
-    def benchmark_frame(self) -> DataFrame | None: ...
-
-    def minute_frames(
+    def frames(
         self, assets: list[Asset], start: datetime, now: datetime, minutes: int
     ) -> dict[Asset, DataFrame]: ...
 
-    def hour_frames(
-        self, assets: list[Asset], start: datetime, now: datetime, hours: int
-    ) -> dict[Asset, DataFrame]: ...
-
-    def last_price(self, asset: Asset) -> float | None: ...
+    def quote(self, asset: Asset) -> float | None: ...
 
     def holding_count(self, key: StrategyKey) -> int: ...
 
-    def is_taken(self, strategy: Strategy, asset: Asset, day: date) -> bool: ...
+    def is_taken(self, strategy: Strategy, asset: Asset) -> bool: ...
 
     def enter(self, strategy: Strategy, candidate: Candidate, session: Session) -> bool: ...
 
@@ -102,7 +95,7 @@ class Strategy(ABC):
     code: ClassVar[str]
     family: ClassVar[str]
     variation: ClassVar[str]
-    is_paused: ClassVar[bool] = False
+    is_paused: ClassVar[bool]
     is_stop_resting: ClassVar[bool] = False
     holdings_max: ClassVar[int] = settings.risk.strategy_holdings_max
 
@@ -113,17 +106,6 @@ class Strategy(ABC):
         cls.family = family
         if "variation" not in cls.__dict__:
             cls.variation = variation.upper() if variation.isalpha() else variation
-        section: SettingsSection = getattr(settings, cls.key)
-        missing = sorted(set(type(section).model_fields) - cls.bind(section))
-        if missing:
-            raise ValueError(f"{cls.__name__} must declare {cls.key} settings: {missing}")
-
-    @classmethod
-    def bind(cls, section: SettingsSection) -> set[str]:
-        bound = set(get_type_hints(cls)) & set(type(section).model_fields)
-        for name in bound:
-            setattr(cls, name, getattr(section, name))
-        return bound
 
     def __init__(self, portfolio: Portfolio) -> None:
         self.portfolio = portfolio
@@ -167,15 +149,11 @@ class Strategy(ABC):
             )
         return True
 
-    def price(self, asset: Asset) -> float | None:
-        price = self.portfolio.last_price(asset)
-        return price if price is not None and isfinite(price) and price > 0 else None
-
 
 def ranked[Item](
     items: Iterable[Item],
     *,
     symbol: Callable[[Item], str],
-    turnover: Callable[[Item], float],
+    score: Callable[[Item], float],
 ) -> list[Item]:
-    return sorted(items, key=lambda item: (-turnover(item), symbol(item)))
+    return sorted(items, key=lambda item: (-score(item), symbol(item)))

@@ -2,7 +2,7 @@ from typing import ClassVar
 
 from pandas import DataFrame
 
-from mt.indicators import finite_row, finite_value
+from mt.rules.sections import DailySmaSection, DailyVariationSection
 from mt.rules.shared import settings
 
 from .daily import Daily, crossed_above_average
@@ -11,38 +11,37 @@ from .daily import Daily, crossed_above_average
 class DailySma(Daily):
     key = "daily_sma"
     code = "s"
-    trend_sessions_long: ClassVar[int]
-    rsi_min: ClassVar[float]
+    rules: ClassVar[DailyVariationSection] = settings.daily_sma
+    holdings_max = rules.holdings_max
+    is_paused = rules.is_paused
 
     @classmethod
     def sma_lengths(cls) -> tuple[int, ...]:
-        return (*super().sma_lengths(), cls.trend_sessions_long)
+        return (*super().sma_lengths(), cls._rules().trend_sessions_long)
+
+    @classmethod
+    def _rules(cls) -> DailySmaSection:
+        rules = cls.rules
+        if not isinstance(rules, DailySmaSection):
+            raise TypeError(f"{cls.name()} needs its daily-SMA rules")
+        return rules
 
     @classmethod
     def does_enter(cls, frame: DataFrame) -> bool:
+        if frame.empty:
+            return False
+        rules = cls._rules()
         period = settings.indicators.period
-        close = frame["close"]
         crossed = crossed_above_average(frame)
         if crossed is None:
             return False
-        row = finite_row(
-            [
-                finite_value(close),
-                finite_value(close, -2),
-                finite_value(frame[f"SMA_{cls.trend_sessions}"]),
-                finite_value(frame[f"SMA_{cls.trend_sessions_long}"]),
-                finite_value(crossed),
-                finite_value(frame[f"RSI_{period}"]),
-                finite_value(frame[f"ADX_{period}"]),
-            ]
+        close = frame["close"]
+        signal = (
+            crossed
+            & (close > close.shift(1))
+            & (close > frame[f"SMA_{rules.trend_sessions}"])
+            & (frame[f"SMA_{rules.trend_sessions}"] > frame[f"SMA_{rules.trend_sessions_long}"])
+            & (frame[f"RSI_{period}"] >= rules.rsi_min)
+            & (frame[f"ADX_{period}"] >= rules.adx_min)
         )
-        if row is None:
-            return False
-        latest, previous, trend, trend_long, crossing, strength_now, directional_now = row
-        return (
-            bool(crossing)
-            and latest > previous
-            and latest > trend > trend_long
-            and strength_now >= cls.rsi_min
-            and directional_now >= cls.adx_min
-        )
+        return bool(signal.iloc[-1])

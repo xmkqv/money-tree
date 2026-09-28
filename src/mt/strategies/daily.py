@@ -1,6 +1,6 @@
 from abc import abstractmethod
 from datetime import date, datetime
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from pandas import DataFrame, Series
 from pandas_ta_classic.utils import cross as ta_cross
@@ -8,35 +8,31 @@ from pandas_ta_classic.utils import cross as ta_cross
 from mt.data.asset import Asset
 from mt.data.earnings import is_earnings_blocked, is_earnings_exit_due
 from mt.exchange import TRADING_ZONE
-from mt.frames import frame_since, last_close
-from mt.indicators import finite_row, finite_value, latest_atr, latest_turnover_usd
+from mt.frames import last_close
+from mt.indicators import latest_atr, latest_turnover_usd
+from mt.rules.sections import DailyAtrSection, DailyVariationSection
 from mt.rules.shared import settings
 
 from .base import Candidate, Holding, Portfolio, Session, Strategy, ranked
 
 
 def is_market_favorable(frame: DataFrame) -> bool:
-    row = finite_row(
-        [
-            finite_value(frame["close"]),
-            finite_value(frame[f"SMA_{settings.daily.average_sessions}"]),
-        ]
-    )
-    return row is not None and row[0] > row[1]
+    if frame.empty:
+        return False
+    signal = frame["close"] > frame[f"SMA_{settings.daily.average_sessions}"]
+    return bool(signal.iloc[-1])
 
 
 def does_signal_exit(frame: DataFrame) -> bool:
-    row = finite_row(
-        [
-            finite_value(frame["close"]),
-            finite_value(frame[f"SMA_{settings.daily.average_sessions}"]),
-            finite_value(frame[f"RSI_{settings.indicators.period}"]),
-        ]
-    )
-    if row is None:
+    if frame.empty:
         return False
-    latest, latest_average, strength_now = row
-    return latest < latest_average or strength_now < settings.daily.exit_rsi_max
+    average = f"SMA_{settings.daily.average_sessions}"
+    strength = f"RSI_{settings.indicators.period}"
+    inputs = frame[["close", average, strength]]
+    if inputs.iloc[-1].isna().any():
+        return False
+    signal = (frame["close"] < frame[average]) | (frame[strength] < settings.daily.exit_rsi_max)
+    return bool(signal.iloc[-1])
 
 
 def crossed_above_average(frame: DataFrame) -> Series[Any] | None:
@@ -47,19 +43,15 @@ def crossed_above_average(frame: DataFrame) -> Series[Any] | None:
 
 
 class Daily(Strategy):
-    stop_atr_multiple: ClassVar[float]
-    does_heed_earnings: ClassVar[bool]
-    trend_sessions: ClassVar[int]
-    adx_min: ClassVar[float]
+    rules: ClassVar[DailyVariationSection]
 
     @classmethod
     def sma_lengths(cls) -> tuple[int, ...]:
-        return (settings.daily.average_sessions, cls.trend_sessions)
+        return (settings.daily.average_sessions, cls.rules.trend_sessions)
 
     def __init__(self, portfolio: Portfolio) -> None:
         super().__init__(portfolio)
-        self._candidates: list[Candidate] = []
-        self._scanned_at: date | None = None
+        self._candidates: list[Candidate] | None = None
 
     @classmethod
     def entry_window(cls, opens: datetime, closes: datetime) -> tuple[datetime, datetime]:
@@ -73,10 +65,11 @@ class Daily(Strategy):
     def does_clear(cls, frame: DataFrame) -> bool:
         return True
 
+    def begin(self, session_on: date) -> None:
+        self._candidates = None
+
     def run(self, session: Session) -> None:
-        if not session.opens <= session.now < session.closes:
-            return
-        benchmark = self.portfolio.benchmark_frame()
+        benchmark = self.portfolio.daily_frame(Asset.from_symbol(settings.benchmark_symbol))
         if benchmark is None:
             return
         if not is_market_favorable(benchmark):
@@ -95,9 +88,9 @@ class Daily(Strategy):
         for candidate in self.candidates(session):
             if self.is_capped(now):
                 return
-            if self.portfolio.is_taken(self, candidate.asset, now.date()):
+            if self.portfolio.is_taken(self, candidate.asset):
                 continue
-            price = self.price(candidate.asset)
+            price = self.portfolio.quote(candidate.asset)
             if price is None:
                 continue
             refreshed = self.refreshed(candidate, price)
@@ -105,9 +98,7 @@ class Daily(Strategy):
                 self.portfolio.enter(self, refreshed, session)
 
     def candidates(self, session: Session) -> list[Candidate]:
-        day = session.now.date()
-        if self._scanned_at != day:
-            self._scanned_at = day
+        if self._candidates is None:
             self._candidates = self.scan(session)
         return self._candidates
 
@@ -130,11 +121,18 @@ class Daily(Strategy):
     def does_qualify(self, asset: Asset, frame: DataFrame, day: date) -> bool:
         if not self.does_clear(frame) or not self.does_enter(frame):
             return False
-        return not (self.does_heed_earnings and is_earnings_blocked(asset, day))
+        return not (self.rules.does_heed_earnings and is_earnings_blocked(asset, day))
+
+    def _atr_rules(self) -> DailyAtrSection:
+        rules = self.rules
+        if not isinstance(rules, DailyAtrSection):
+            raise TypeError(f"{self.name()} needs an ATR-based stop rule")
+        return rules
 
     def candidate(self, asset: Asset, frame: DataFrame) -> Candidate:
         last = last_close(frame)
-        distance = self.stop_atr_multiple * latest_atr(frame, settings.indicators.period)
+        period = settings.indicators.period
+        distance = self._atr_rules().stop_atr_multiple * latest_atr(frame, period)
         return Candidate(asset, last, last - distance)
 
     def refreshed(self, candidate: Candidate, price: float) -> Candidate | None:
@@ -146,21 +144,25 @@ class Daily(Strategy):
     def manage(self, holding: Holding, session: Session) -> None:
         now = session.now
         if (
-            self.does_heed_earnings
+            self.rules.does_heed_earnings
             and session.opens <= now < session.closes
             and is_earnings_exit_due(holding.asset, now.date())
         ):
             self.portfolio.exit(holding, "earnings")
             return
+        self._manage(holding, session)
+
+    def _manage(self, holding: Holding, session: Session) -> None:
         frame = self.portfolio.daily_frame(holding.asset)
         if frame is None or len(frame) < settings.daily.average_sessions:
             return
-        since = frame_since(frame, holding.entered_at.astimezone(TRADING_ZONE))
+        since = frame.loc[holding.entered_at.astimezone(TRADING_ZONE) :]
         last = last_close(frame)
         if len(since):
-            holding.highest = max(holding.highest, float(cast(Any, since["close"]).max()))
-        distance = self.stop_atr_multiple * latest_atr(frame, settings.indicators.period)
-        holding.raise_stop(holding.highest - distance, "trail")
+            holding.highest = max(holding.highest, float(since["close"].max()))
+        period = settings.indicators.period
+        distance = self._atr_rules().stop_atr_multiple * latest_atr(frame, period)
+        holding.tighten_stop(holding.highest - distance, "trail")
         if last < holding.stop:
             self.portfolio.exit(holding, holding.stop_reason)
         elif does_signal_exit(frame):
@@ -175,5 +177,5 @@ class Daily(Strategy):
         return ranked(
             rows,
             symbol=lambda row: str(row[0]),
-            turnover=lambda row: latest_turnover_usd(row[1]),
+            score=lambda row: latest_turnover_usd(row[1]),
         )

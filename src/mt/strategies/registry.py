@@ -1,6 +1,13 @@
 from uuid import uuid4
 
-from mt.rules.values import STRATEGY_KEYS, OrderReason, StrategyKey, is_order_reason
+from mt.rules.values import (
+    LIQUIDATE_CODE,
+    ORDER_PREFIX,
+    STRATEGY_KEYS,
+    OrderReason,
+    StrategyKey,
+    is_order_reason,
+)
 
 from .allocation import AllocationBaa
 from .base import Strategy
@@ -11,9 +18,6 @@ from .daily_tfb import DailyTfb
 from .intraday import IntradayMim
 from .quality import QualityGp
 
-
-ORDER_PREFIX = "mt"
-LIQUIDATE_CODE = "liquidate"
 
 STRATEGIES: tuple[type[Strategy], ...] = (
     Breakout5m,
@@ -38,8 +42,8 @@ for _strategy in STRATEGIES:
         raise ValueError(f"{_strategy.__name__} order code must be one character")
 
 
-def order_code(strategy_key: StrategyKey, reason: OrderReason) -> str:
-    return "-".join((ORDER_PREFIX, STRATEGIES_BY_KEY[strategy_key].code, reason, uuid4().hex[:8]))
+def order_code(code: str, reason: OrderReason) -> str:
+    return "-".join((ORDER_PREFIX, code, reason, uuid4().hex[:8]))
 
 
 def liquidate_code() -> str:

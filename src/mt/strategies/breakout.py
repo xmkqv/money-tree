@@ -1,14 +1,15 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from math import isfinite
-from typing import Any, ClassVar, cast
+from typing import ClassVar, cast
 
-from pandas import DataFrame, DatetimeIndex, Series, Timestamp
+from pandas import DataFrame, DatetimeIndex, Timestamp
 
 from mt.data.asset import Asset
 from mt.exchange import TRADING_ZONE
-from mt.frames import frame_between, frame_since, frame_until, regular_session
+from mt.frames import regular_session
 from mt.indicators import latest_atr, latest_turnover_usd
+from mt.rules.sections import BreakoutSection, BreakoutVariationSection
 from mt.rules.shared import settings
 from mt.rules.values import TARGET_REASONS
 from mt.sizing import Direction
@@ -72,11 +73,8 @@ def relative_volume(frame: DataFrame, day: date, clock: time) -> float | None:
 
 class Breakout(Strategy):
     is_stop_resting = True
-    opening_minutes: ClassVar[int]
-    volume_multiple: ClassVar[float]
-    target_multiples: ClassVar[tuple[float, float, float]]
-    entry_extension_max: ClassVar[float | None]
-    scan_minutes: ClassVar[int] = settings.breakout.scan_minutes
+    rules: ClassVar[BreakoutVariationSection]
+    family_rules: ClassVar[BreakoutSection] = settings.breakout
 
     def __init__(self, portfolio: Portfolio) -> None:
         super().__init__(portfolio)
@@ -85,8 +83,8 @@ class Breakout(Strategy):
     @classmethod
     def entry_window(cls, opens: datetime, closes: datetime) -> tuple[datetime, datetime]:
         return (
-            opens + timedelta(minutes=cls.opening_minutes),
-            min(closes, opens + timedelta(minutes=cls.scan_minutes)),
+            opens + timedelta(minutes=cls.rules.opening_minutes),
+            min(closes, opens + timedelta(minutes=cls.family_rules.scan_minutes)),
         )
 
     @classmethod
@@ -94,7 +92,7 @@ class Breakout(Strategy):
         cls, entry: float, stop: float, direction: Direction
     ) -> tuple[float, float, float]:
         stop_distance = abs(entry - stop)
-        first, second, third = cls.target_multiples
+        first, second, third = cls.rules.target_multiples
         return (
             entry + direction * stop_distance * first,
             entry + direction * stop_distance * second,
@@ -110,28 +108,28 @@ class Breakout(Strategy):
 
     def run(self, session: Session) -> None:
         now = session.now
-        opening_end, scan_end = self.entry_window(session.opens, session.closes)
-        if now.minute % self.opening_minutes or not opening_end <= now <= scan_end:
+        opening_end, _ = self.entry_window(session.opens, session.closes)
+        if now.minute % self.rules.opening_minutes:
             return
         if self.is_capped(now):
             return
         assets = self._unscanned(now.date())
         if not assets:
             return
-        frames = self.portfolio.minute_frames(assets, session.opens, now, self.opening_minutes)
+        frames = self.portfolio.frames(assets, session.opens, now, self.rules.opening_minutes)
         signals = self._signals(frames, session, opening_end)
         if not signals:
             return
         signals = ranked(
             signals,
             symbol=lambda found: str(found.asset),
-            turnover=lambda found: self._turnover(found.asset),
+            score=lambda found: self._turnover(found.asset),
         )
-        histories = self.portfolio.minute_frames(
+        histories = self.portfolio.frames(
             [found.asset for found in signals],
-            now - timedelta(days=settings.breakout.confirm_lookback_days),
+            now - timedelta(days=self.family_rules.confirm_lookback_days),
             now,
-            self.opening_minutes,
+            self.rules.opening_minutes,
         )
         for found in signals:
             if self.is_capped():
@@ -139,9 +137,9 @@ class Breakout(Strategy):
             frame = histories.get(found.asset)
             if frame is None:
                 continue
-            if not self.is_confirmed(frame_until(frame, found.signal_at), now):
+            if not self.is_confirmed(frame.loc[: found.signal_at], now):
                 continue
-            price = self.price(found.asset)
+            price = self.portfolio.quote(found.asset)
             if price is None:
                 continue
             if self.is_overextended(found, price):
@@ -150,7 +148,7 @@ class Breakout(Strategy):
                     f"entry.overextended.{found.asset}.{now.date()}",
                     "warning",
                     f"{found.asset} entry skipped: price is more than "
-                    f"{self.entry_extension_max:g} times the opening range size beyond "
+                    f"{self.rules.entry_extension_max:g} times the opening range size beyond "
                     "the breakout level",
                 )
                 continue
@@ -161,10 +159,10 @@ class Breakout(Strategy):
 
     def manage(self, holding: Holding, session: Session) -> None:
         now = session.now
-        if now >= session.closes - timedelta(minutes=settings.breakout.close_lead_minutes):
+        if now >= session.closes - timedelta(minutes=self.family_rules.close_lead_minutes):
             self.portfolio.exit(holding, "close")
             return
-        price = self.price(holding.asset)
+        price = self.portfolio.quote(holding.asset)
         if price is None:
             return
         holding.highest = max(holding.highest, price)
@@ -172,38 +170,40 @@ class Breakout(Strategy):
         ladder = holding.ladder
         if ladder is None:
             return
-        reached = (
+        is_reached = (
             price >= ladder.targets[ladder.stage]
             if holding.direction == 1
             else price <= ladder.targets[ladder.stage]
         )
-        if reached:
-            fractions = settings.breakout.target_fractions
+        if is_reached:
+            fractions = self.family_rules.target_fractions
             if ladder.stage == len(fractions) - 1:
                 self.portfolio.exit(holding, TARGET_REASONS[ladder.stage])
                 return
-            quantity, reason = ladder.step(fractions[ladder.stage], whole=holding.direction == -1)
-            holding.raise_stop(holding.entry, "breakeven")
+            quantity, reason = ladder.step(
+                fractions[ladder.stage], is_whole=holding.direction == -1
+            )
+            holding.tighten_stop(holding.entry, "breakeven")
             if quantity > 0:
                 self.portfolio.exit(holding, reason, float(quantity))
             self.portfolio.protect(holding)
             return
         if ladder.stage == 0:
             return
-        holding.raise_stop(self._trailed_stop(holding, now), "trail")
+        holding.tighten_stop(self._trailed_stop(holding, now), "trail")
         self.portfolio.protect(holding)
 
     def _trailed_stop(self, holding: Holding, now: datetime) -> float:
-        recent = self.portfolio.minute_frames(
+        recent = self.portfolio.frames(
             [holding.asset],
-            now - timedelta(days=settings.breakout.trail_lookback_days),
+            now - timedelta(days=self.family_rules.trail_lookback_days),
             now,
-            self.opening_minutes,
+            self.rules.opening_minutes,
         ).get(holding.asset)
         frame = None if recent is None else regular_session(recent)
-        if frame is None or len(frame) < settings.breakout.trail_bars_min:
+        if frame is None or len(frame) < self.family_rules.trail_bars_min:
             return holding.entry
-        trail = settings.breakout.trail_atr_multiple * latest_atr(frame, settings.indicators.period)
+        trail = self.family_rules.trail_atr_multiple * latest_atr(frame, settings.indicators.period)
         if holding.direction == 1:
             return max(holding.entry, holding.highest - trail)
         return min(holding.entry, holding.lowest + trail)
@@ -213,10 +213,10 @@ class Breakout(Strategy):
             return False
         clock = cast(Timestamp, frame.index[-1]).time()
         ratio = relative_volume(frame, now.date(), clock)
-        return ratio is not None and ratio >= self.volume_multiple
+        return ratio is not None and ratio >= self.rules.volume_multiple
 
     def is_overextended(self, found: Signal, price: float) -> bool:
-        limit = self.entry_extension_max
+        limit = self.rules.entry_extension_max
         if limit is None:
             return False
         span = found.high - found.low
@@ -228,7 +228,7 @@ class Breakout(Strategy):
         return [
             asset
             for asset in self.portfolio.assets()
-            if asset not in self._scanned and not self.portfolio.is_taken(self, asset, day)
+            if asset not in self._scanned and not self.portfolio.is_taken(self, asset)
         ]
 
     def _turnover(self, asset: Asset) -> float:
@@ -242,14 +242,14 @@ class Breakout(Strategy):
         for asset, frame in frames.items():
             if frame.empty:
                 continue
-            opening = frame_between(frame, session.opens, opening_end)
-            after = frame_since(frame, opening_end)
+            index = cast(DatetimeIndex, frame.index)
+            inside = (index >= Timestamp(session.opens)) & (index < Timestamp(opening_end))
+            opening = frame[inside]
+            after = frame.loc[opening_end:]
             if opening.empty or after.empty:
                 continue
-            high = float(cast(Any, opening["high"]).max())
-            low = float(cast(Any, opening["low"]).min())
-            if not all(isfinite(value) for value in (high, low)):
-                continue
+            high = float(opening["high"].max())
+            low = float(opening["low"].min())
             found = self._first_break(after, high, low)
             if found is None:
                 continue
@@ -257,7 +257,7 @@ class Breakout(Strategy):
             self._scanned.add(asset)
             if not is_setup_ready(high, low, close):
                 continue
-            if len(after) - index > settings.breakout.signal_bars_max:
+            if len(after) - index > self.family_rules.signal_bars_max:
                 continue
             signals.append(Signal(asset, direction, high, low, cast(Timestamp, after.index[index])))
         return signals
@@ -266,8 +266,8 @@ class Breakout(Strategy):
         self, bars: DataFrame, high: float, low: float
     ) -> tuple[int, Direction, float] | None:
         close = bars["close"]
-        above = cast(Series, close > high)
-        below = cast(Series, close < low)
+        above = close > high
+        below = close < low
         hit = above | below
         if not hit.any():
             return None
@@ -279,13 +279,19 @@ class Breakout(Strategy):
 class Breakout5m(Breakout):
     key = "breakout_5m"
     code = "o"
+    rules: ClassVar[BreakoutVariationSection] = settings.breakout_5m
+    is_paused = settings.breakout_5m.is_paused
 
 
 class Breakout10m(Breakout):
     key = "breakout_10m"
     code = "m"
+    rules: ClassVar[BreakoutVariationSection] = settings.breakout_10m
+    is_paused = settings.breakout_10m.is_paused
 
 
 class Breakout15m(Breakout):
     key = "breakout_15m"
     code = "f"
+    rules: ClassVar[BreakoutVariationSection] = settings.breakout_15m
+    is_paused = settings.breakout_15m.is_paused
