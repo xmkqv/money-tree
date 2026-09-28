@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from redis.asyncio import Redis as AsyncRedis
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from mt.data.alpaca import (
@@ -38,8 +39,8 @@ class LoginGuardMiddleware:
         if scope["type"] != "http" or scope["path"] in PUBLIC_PATHS:
             await self._app(scope, receive, send)
             return
-        session = scope.get("session", {})
-        if not isinstance(subject := session.get("user_sub"), str) or not subject:
+        connection = HTTPConnection(scope)
+        if not isinstance(subject := connection.session.get("user_sub"), str) or not subject:
             redirects = scope["method"] in {"GET", "HEAD"} and not scope["path"].startswith("/api/")
             rejection: Response = (
                 RedirectResponse("/login", status_code=303, headers=NO_STORE)
@@ -49,10 +50,10 @@ class LoginGuardMiddleware:
             await rejection(scope, receive, send)
             return
         if scope["method"] not in SAFE_METHODS:
-            csrf_token = session.get("csrf_token")
-            request_token = dict(scope["headers"]).get(b"x-csrf-token", b"")
+            csrf_token = connection.session.get("csrf_token")
+            request_token = connection.headers.get("x-csrf-token", "")
             if not isinstance(csrf_token, str) or not hmac.compare_digest(
-                csrf_token.encode(), request_token
+                csrf_token, request_token
             ):
                 response = error_response("CSRF token is invalid", 403)
                 await response(scope, receive, send)
