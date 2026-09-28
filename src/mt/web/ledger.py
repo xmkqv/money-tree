@@ -7,13 +7,10 @@ from datetime import UTC, date, datetime, timedelta
 from itertools import dropwhile
 from typing import TypedDict
 
-from mt.data.alpaca import (
-    AccountRead,
-    ClosedOrder,
-    EquityPoint,
-    Fill,
-    TradingClientAlpaca,
-)
+from alpaca.trading.enums import OrderType
+from alpaca.trading.models import Order
+
+from mt.data.alpaca import AccountRead, EquityPoint, Fill, TradingClientAlpaca
 from mt.data.asset import Asset
 from mt.data.bars import BarsClientAlpaca
 from mt.exchange import TRADING_ZONE, today
@@ -134,25 +131,27 @@ class _Tally:
     order_id: str | None = None
 
 
-STOP_ORDER_TYPES = frozenset({"stop", "stop_limit", "trailing_stop"})
+STOP_ORDER_TYPES = frozenset({OrderType.STOP, OrderType.STOP_LIMIT, OrderType.TRAILING_STOP})
 
 
-def order_reason(order: ClosedOrder) -> OrderReason | None:
-    found = find_order_reason(order.client_order_id or "")
-    if found is None and order.order_type in STOP_ORDER_TYPES:
+def order_reason(order: Order) -> OrderReason | None:
+    found = find_order_reason(order.client_order_id)
+    if found is None and order.type in STOP_ORDER_TYPES:
         return "stop"
     return found
 
 
 def match_trades(
     fills: tuple[Fill, ...],
-    orders: tuple[ClosedOrder, ...],
+    orders: tuple[Order, ...],
     flat_quantity_max: float,
 ) -> tuple[list[Trade], dict[str, OpenTrade]]:
     strategies: dict[str, StrategyKey | None] = {
-        order.id: find_order_strategy_key(order.client_order_id or "") for order in orders
+        str(order.id): find_order_strategy_key(order.client_order_id) for order in orders
     }
-    reasons: dict[str, OrderReason | None] = {order.id: order_reason(order) for order in orders}
+    reasons: dict[str, OrderReason | None] = {
+        str(order.id): order_reason(order) for order in orders
+    }
     held: defaultdict[str, float] = defaultdict(float)
     tallies: dict[str, _Tally] = {}
     trades: list[Trade] = []

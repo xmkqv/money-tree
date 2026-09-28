@@ -50,13 +50,6 @@ class Fill(Payload):
     price: float
 
 
-class ClosedOrder(Payload):
-    id: str
-    submitted_at: AwareDatetime
-    client_order_id: str | None = None
-    order_type: str | None = Field(default=None, validation_alias="type")
-
-
 class EquityPoint(Payload):
     recorded_at: AwareDatetime = Field(alias="timestamp")
     equity: float
@@ -65,7 +58,7 @@ class EquityPoint(Payload):
 @dataclass(frozen=True)
 class History:
     fills: tuple[Fill, ...]
-    orders: tuple[ClosedOrder, ...]
+    orders: tuple[Order, ...]
     last_fill_at: datetime
     last_order_at: datetime
     session_on: date
@@ -79,7 +72,6 @@ class _PortfolioHistory(Payload):
 orders_adapter = TypeAdapter(list[Order])
 positions_adapter = TypeAdapter(list[Position])
 fills_adapter = TypeAdapter(list[Fill])
-closed_orders_adapter = TypeAdapter(list[ClosedOrder])
 
 
 def upcoming_session_on() -> date:
@@ -127,16 +119,16 @@ class TradingClientAlpaca:
                     self.closed_orders((prior.last_order_at - overlap) if prior else None)
                 )
             fills = {row.id: row for row in prior.fills} if prior else {}
-            orders = {row.id: row for row in prior.orders} if prior else {}
+            orders = {str(row.id): row for row in prior.orders} if prior else {}
             fills.update((row.id, row) for row in fills_read.result())
-            orders.update((row.id, row) for row in orders_read.result())
+            orders.update((str(row.id), row) for row in orders_read.result())
             async with asyncio.TaskGroup() as reads:
                 missing = {
                     order_id: reads.create_task(get_json(self._client, f"/v2/orders/{order_id}"))
                     for order_id in {row.order_id for row in fills.values()} - orders.keys()
                 }
             orders.update(
-                (key, ClosedOrder.model_validate(read.result())) for key, read in missing.items()
+                (key, Order.model_validate(read.result())) for key, read in missing.items()
             )
             self._history = History(
                 tuple(fills.values()),
@@ -184,10 +176,10 @@ class TradingClientAlpaca:
             after=after.isoformat() if after is not None else None,
         )
 
-    async def closed_orders(self, after: datetime | None) -> list[ClosedOrder]:
+    async def closed_orders(self, after: datetime | None) -> list[Order]:
         return await self._pages(
             "/v2/orders",
-            closed_orders_adapter,
+            orders_adapter,
             lambda order: order.submitted_at.isoformat(),
             "until",
             status="closed",

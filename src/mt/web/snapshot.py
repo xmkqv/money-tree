@@ -86,7 +86,7 @@ def snapshot_positions(raw: list[Position], equity: float) -> list[SnapshotPosit
     rows = [
         SnapshotPosition(
             symbol=item.symbol,
-            side="long" if item.side == "long" else "short",
+            side=item.side,
             quantity=round(abs(item.quantity), 4),
             entry=round(item.entry, 4),
             last=round(item.last, 4),
