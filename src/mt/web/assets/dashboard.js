@@ -1,4 +1,4 @@
-import { html, render, repeat, nothing, ref } from "/assets/lit.min.js";
+import { html, render, repeat, nothing, classMap, styleMap } from "/assets/lit.min.js";
 
 
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
@@ -28,23 +28,14 @@ const onPhone = () => token("--is-phone") === "1";
 
 const strategyHue = key => "var(--s-" + key.replaceAll("_", "-") + "-h)";
 
-function setHue(element, hue) {
-  if (hue) element.style.setProperty("--strategy-h", hue);
-  else element.style.removeProperty("--strategy-h");
-}
-
 function strategyChip(hue) {
-  return html`<span class=${"chip" + (hue ? "" : " plain")}
-    ${ref(element => { if (element) setHue(element, hue); })}></span>`;
+  return html`<span class=${classMap({ chip: true, plain: !hue })}
+    style=${styleMap({ "--strategy-h": hue || null })}></span>`;
 }
 
 function meterBar(fill, extraClass = "", hue) {
-  return html`<div class=${"meter " + extraClass}
-    ${ref(element => {
-      if (!element) return;
-      element.style.setProperty("--meter-fill", fill);
-      setHue(element, hue);
-    })}><i></i></div>`;
+  return html`<div class=${classMap({ meter: true, [extraClass]: Boolean(extraClass) })}
+    style=${styleMap({ "--meter-fill": fill, "--strategy-h": hue || null })}><i></i></div>`;
 }
 
 const clockLabel = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
@@ -388,7 +379,7 @@ function symbolCell(symbol, side, trade) {
     ${trade ? html`<button class="sym linked" type="button" title="Chart this trade"
       @click=${() => openTradeChart(trade.open ? positionTrade(OPEN_POSITIONS.find(pos => pos.symbol === symbol)) : trade, currentView)}>${symbol}</button>`
       : html`<span class="sym">${symbol}</span>`}
-    <span class=${"side" + (side === "short" ? " short" : "")}
+    <span class=${classMap({ side: true, short: side === "short" })}
       title=${side === "short" ? "Short" : "Long"}>${side === "short" ? "S" : "L"}</span>
   </span>` };
 }
@@ -405,10 +396,11 @@ function buildTable(table, headers, rows, rightFrom, rowClass) {
     const key = Math.max(0, row.findIndex(cell => cell.symbol));
     const lead = headers.findIndex(header => /^(p&l|unrealized)/i.test(header));
     return html`<tr class=${rowClass?.(row, index) || ""}>${row.map((cell, column) => html`
-      <td data-label=${headers[column]} class=${[
-        cell.r ? "r" : "", cell.cls, cell.dim ? "flat" : "",
-        column === key ? "key" : column === (lead < 0 ? row.length - 1 : lead) ? "lead" : "",
-      ].filter(Boolean).join(" ")}>${cell.node ?? cell.t}</td>`)}</tr>`;
+      <td data-label=${headers[column]} class=${classMap({
+        r: Boolean(cell.r), flat: Boolean(cell.dim), [cell.cls]: Boolean(cell.cls),
+        key: column === key,
+        lead: column !== key && column === (lead < 0 ? row.length - 1 : lead),
+      })}>${cell.node ?? cell.t}</td>`)}</tr>`;
   };
   const retained = table.id === "pf-open-table" || table.id === "today-table" && todayTab === "open";
   render(html`<thead><tr>${headers.map((header, index) => html`
@@ -444,8 +436,8 @@ function renderAccount() {
     <div class="winrate-bar" role="img"
       aria-label=${"Win rate " + TOTALS.winRate.toFixed(1) + " percent: " + TOTALS.wins + " wins and " +
         TOTALS.losses + " losses across " + TOTALS.n + " closed trades"}>
-      <span class="w" ${ref(element => { if (element) element.style.flex = TOTALS.wins; })}></span>
-      <span class="l" ${ref(element => { if (element) element.style.flex = TOTALS.losses; })}></span></div>
+      <span class="w" style=${styleMap({ flex: TOTALS.wins })}></span>
+      <span class="l" style=${styleMap({ flex: TOTALS.losses })}></span></div>
     <div class="winrate-legend"><span>${TOTALS.wins} wins</span><span>${TOTALS.losses} losses</span></div>`,
     document.getElementById("performance"));
 }
@@ -546,7 +538,7 @@ function windowLabel(strategy_key) {
 
 function stateBadge(kind, key, table, extra, stale) {
   const notes = [table[key].hint, extra, stale ? STALE_HINT : ""].filter(Boolean);
-  return html`<span class=${"run-state " + kind + " is-" + key + (stale ? " stale" : "")}
+  return html`<span class=${classMap({ "run-state": true, [kind]: true, ["is-" + key]: true, stale: Boolean(stale) })}
     title=${notes[0] + (notes.length > 1 ? " (" + notes.slice(1).join("; ") + ")" : "")}
     >${table[key].label}</span>`;
 }
@@ -1066,7 +1058,7 @@ function renderCalendar() {
 
   render(rows.map(row => html`<tr>
     ${row.cells.map(cell => html`<td>${dayCell(cell, peak, tip)}</td>`)}
-    <td><div class=${"cell total " + (row.any ? row.pnl >= 0 ? "gain" : "loss" : "")}>
+    <td><div class=${classMap({ cell: true, total: true, gain: row.any && row.pnl >= 0, loss: row.any && row.pnl < 0 })}>
       <span class="d">Week</span><span class=${"p " + (row.any ? tone(row.pnl) : "flat")}>
         ${row.any ? signedMoney(row.pnl) : "—"}</span><span class="q">${row.any ? signedPct(row.pct) : ""}</span>
     </div></td></tr>`), body);
@@ -1094,11 +1086,12 @@ function dayCell(cell, peak, tip) {
     tip.style.top = "0px";
   };
 
-  return html`<div class=${"cell has " + (cell.pnl >= 0 ? "gain" : "loss") +
-    (calY === todaySel.y && calM === todaySel.m && cell.day === todaySel.day ? " sel" : "")}
-    tabindex="0" role="button" ${ref(element => {
-      if (element) element.style.setProperty("--depth", (Math.abs(cell.pnl) / peak).toFixed(4));
+  return html`<div class=${classMap({
+      cell: true, has: true, gain: cell.pnl >= 0, loss: cell.pnl < 0,
+      sel: calY === todaySel.y && calM === todaySel.m && cell.day === todaySel.day,
     })}
+    tabindex="0" role="button"
+    style=${styleMap({ "--depth": (Math.abs(cell.pnl) / peak).toFixed(4) })}
     @click=${() => selectDay(calY, calM, cell.day)}
     @keydown=${event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectDay(calY, calM, cell.day); } }}
     @pointerenter=${event => show(event.currentTarget)} @focus=${event => show(event.currentTarget)}
@@ -1125,7 +1118,7 @@ function renderPortfolio() {
   }), document.getElementById("pf-alloc"));
 
   render(repeat(OPEN_POSITIONS, position => position.symbol, position => html`
-    <div class=${"weight-row" + (position.value >= ACCOUNT.positionCapUsd - .5 ? " near" : "")}>
+    <div class=${classMap({ "weight-row": true, near: position.value >= ACCOUNT.positionCapUsd - .5 })}>
       <div class="nm">${position.symbol}</div><div class="gap">${position.weight.toFixed(1)}% · ${money(position.value)}</div>
       ${meterBar(clamp(position.value / ACCOUNT.positionCapUsd, .03, 1))}</div>`), document.getElementById("pf-weights"));
 
@@ -1185,7 +1178,7 @@ function renderOverview() {
   const peak = Math.max(...SESSIONS.map(m => Math.abs(m.pnl)));
   render(SESSIONS.map(session => {
     const fill = html`<div class="fill" title=${session.long + " · " + signedMoney(session.pnl)}
-      ${ref(element => { if (element) element.style.height = Math.max(2, Math.abs(session.pnl) / peak * 100) + "%"; })}></div>`;
+      style=${styleMap({ height: Math.max(2, Math.abs(session.pnl) / peak * 100) + "%" })}></div>`;
     return html`<div class="ybar"><div class="track"><div class="up">${session.pnl >= 0 ? fill : nothing}</div>
       <div class="down">${session.pnl < 0 ? fill : nothing}</div></div><div class="lab">${session.label}</div></div>`;
   }), document.getElementById("hs-strip"));
@@ -1197,7 +1190,7 @@ function renderOverview() {
 
   render(STRATEGIES.map(st => {
     const stats = statsFor(ALL_TRADES.filter(t => t.strategy_key === st.key));
-    return html`<div class=${"strat-cell" + (stats.n ? "" : " idle")}>
+    return html`<div class=${classMap({ "strat-cell": true, idle: !stats.n })}>
       ${stratCell(st.key).node}
       <span class=${"v " + tone(stats.net_pnl)}>${signedMoney(stats.net_pnl)}</span>
       <span class="sub">${stats.n
@@ -1426,15 +1419,11 @@ function averageColor(index) {
 }
 
 function railToggle(key, label, averageIndex, enabled, why) {
-  return html`<label class=${"tc-toggle" + (enabled ? "" : " off")} title=${why || nothing}>
+  return html`<label class=${classMap({ "tc-toggle": true, off: !enabled })} title=${why || nothing}>
     <input type="checkbox" .checked=${enabled && TC_SHOW[key]} ?disabled=${!enabled}
       @change=${event => { TC_SHOW[key] = event.target.checked; queueTradeChart(); }}>
-    <span class=${"tc-swatch" + (averageIndex === null ? " plain" : "")}
-      ${ref(element => {
-        if (!element) return;
-        if (averageIndex === null) element.style.removeProperty("--sma-h");
-        else element.style.setProperty("--sma-h", "var(" + averageColor(averageIndex) + ")");
-      })}></span>
+    <span class=${classMap({ "tc-swatch": true, plain: averageIndex === null })}
+      style=${styleMap({ "--sma-h": averageIndex === null ? null : "var(" + averageColor(averageIndex) + ")" })}></span>
     <span>${label}</span></label>`;
 }
 
@@ -1897,7 +1886,7 @@ function parkMark(el, mark, geo, pad, side) {
 
 function partMarks(placed, host, geo, pad) {
   const settled = [];
-  for (const item of [...placed].sort((a, b) => a.mark.x - b.mark.x)) {
+  for (const item of placed.toSorted((a, b) => a.mark.x - b.mark.x)) {
     const clash = () => settled.find(other => overlapping(other.el, item.el));
     const first = clash();
     if (first) {
@@ -2114,7 +2103,7 @@ function configRow(row) {
 function configCard(card) {
   const isStrategy = Boolean(STRAT_BY_KEY?.[card.key]);
   const idle = isStrategy && switchState(card.key) !== "online";
-  return html`<section class=${"panel config-card" + (idle ? " is-idle" : "")}>
+  return html`<section class=${classMap({ panel: true, "config-card": true, "is-idle": idle })}>
     <div class="panel-head">
       <h2>${isStrategy ? strategyChip(strategyHue(card.key)) : nothing}<span>${card.name}</span></h2>
       ${isStrategy ? stateBadges(card.key) : nothing}
