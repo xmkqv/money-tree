@@ -4,7 +4,6 @@ from math import isfinite
 from typing import Any, TypedDict, cast
 
 from pandas import DatetimeIndex, Series, Timedelta, Timestamp
-from pandas_ta_classic.overlap.sma import sma
 
 from mt.data.bars import Bar, bar_frame
 from mt.exchange import TRADING_ZONE, session_starts
@@ -82,9 +81,10 @@ def bar_averages(bars: list[Bar], lengths: tuple[int, ...]) -> list[Average]:
     return [
         Average(
             length=length,
-            values=[float(value) if isfinite(value) else None for value in values]
-            if isinstance(values := sma(close, length=length, talib=False), Series)
-            else [None] * len(bars),
+            values=[
+                float(value) if isfinite(value) else None
+                for value in close.rolling(length, min_periods=length).mean()
+            ],
         )
         for length in lengths
     ]

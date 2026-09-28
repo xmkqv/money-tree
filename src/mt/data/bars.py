@@ -2,10 +2,10 @@ from datetime import UTC, datetime, timedelta
 
 import httpx2
 from alpaca.common.enums import BaseURL
-from pandas import DataFrame, DatetimeIndex
+from pandas import DataFrame, to_datetime
 from pydantic import Field
 
-from mt.exchange import TRADING_ZONE, trading_time
+from mt.exchange import TRADING_ZONE
 from mt.frames import normalize_ohlcv
 from mt.rules.sections import BarsSection
 from mt.rules.values import Timeframe
@@ -56,15 +56,10 @@ def bars_api_url() -> str:
 
 
 def bar_frame(bars: list[Bar]) -> DataFrame:
-    frame = (
-        DataFrame(
-            [bar.model_dump() for bar in bars],
-            columns=["opened_at", "open", "high", "low", "close", "volume"],
-        )
-        .drop(columns="opened_at")
-        .astype(float)
-    )
-    frame.index = DatetimeIndex([trading_time(bar.opened_at) for bar in bars], tz=TRADING_ZONE)
+    frame = DataFrame(
+        [bar.model_dump() for bar in bars], columns=["open", "high", "low", "close", "volume"]
+    ).astype(float)
+    frame.index = to_datetime([bar.opened_at for bar in bars], utc=True).tz_convert(TRADING_ZONE)
     return normalize_ohlcv(frame, {"open", "high", "low", "close", "volume"})
 
 

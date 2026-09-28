@@ -36,6 +36,6 @@ def _bounds(session: Any) -> tuple[datetime, datetime]:
 
 
 def _session_stamps(index: DatetimeIndex, table: Any) -> DatetimeIndex:
-    sessions = cast(Any, index).tz_convert(TRADING_ZONE).normalize().tz_localize(None)
+    sessions = index.tz_convert(TRADING_ZONE).normalize().tz_localize(None)
     stamps = DatetimeIndex(table.reindex(sessions).to_numpy(), tz=UTC)
-    return cast(DatetimeIndex, cast(Any, stamps).tz_convert(TRADING_ZONE))
+    return stamps.tz_convert(TRADING_ZONE)

@@ -1,10 +1,9 @@
 from collections.abc import Collection, Sequence
 from math import isfinite, nan
-from typing import Any, cast
+from typing import Any
 
 from pandas import DataFrame, Series
 from pandas_ta_classic.momentum.rsi import rsi as ta_rsi
-from pandas_ta_classic.overlap.sma import sma as ta_sma
 from pandas_ta_classic.trend.adx import adx as ta_adx
 from pandas_ta_classic.volatility.atr import atr as ta_atr
 
@@ -14,7 +13,7 @@ from mt.frames import last_close
 def daily_indicators(frame: DataFrame, lengths: Collection[int], period: int) -> DataFrame:
     close = frame["close"]
     columns: dict[str, object] = {
-        f"SMA_{length}": ta_sma(close, length=length, talib=False) for length in lengths
+        f"SMA_{length}": close.rolling(length).mean() for length in lengths
     }
     columns[f"RSI_{period}"] = ta_rsi(close, length=period, talib=False)
     columns[f"ATRr_{period}"] = ta_atr(
@@ -65,9 +64,10 @@ def average_turnover_usd(frame: DataFrame, sessions: int) -> float:
 def finite_value(values: Series[Any], offset: int = -1) -> float | None:
     if len(values) < abs(offset):
         return None
-    value = float(cast(float, values.iloc[offset]))
+    value = float(values.iloc[offset])
     return value if isfinite(value) else None
 
 
 def finite_row(values: Sequence[float | None]) -> list[float] | None:
-    return None if any(value is None for value in values) else cast(list[float], list(values))
+    found = [value for value in values if value is not None]
+    return found if len(found) == len(values) else None
