@@ -1,71 +1,76 @@
-from collections.abc import Generator
-from contextlib import contextmanager
-from datetime import datetime, timedelta
+import itertools
+import re
+from datetime import UTC, datetime, timedelta
+from typing import cast
 
-import httpx2
-from anyio.from_thread import BlockingPortal, start_blocking_portal
+from alpaca.data.enums import Adjustment, DataFeed
+from alpaca.data.historical.stock import StockHistoricalDataClient
+from alpaca.data.models.bars import BarSet
+from alpaca.data.models.trades import Trade
+from alpaca.data.requests import StockBarsRequest, StockLatestTradeRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from pandas import DataFrame
 
-from mt.data.alpaca import credential_headers
 from mt.data.asset import Asset
-from mt.data.bars import BarsClientAlpaca, Trade, bar_frame, bars_api_url
-from mt.data.http import http_timeout
-from mt.exchange import trading_time
+from mt.exchange import TRADING_ZONE
 from mt.rules.shared import settings
 from mt.rules.values import Timeframe
 
 
 class Bars:
-    def __init__(self, portal: BlockingPortal) -> None:
-        self._portal = portal
-        self._http: httpx2.AsyncClient | None = None
-        self._client: BarsClientAlpaca | None = None
+    def __init__(self) -> None:
+        self._api = StockHistoricalDataClient(*settings.broker.key_pair)
 
     def bars(
         self, assets: list[Asset], timeframe: Timeframe, start: datetime, end: datetime
     ) -> dict[Asset, DataFrame]:
-        return self._portal.call(self._frames, assets, timeframe, start, end)
-
-    def prices(self, assets: list[Asset], now: datetime) -> dict[Asset, float]:
-        trades = self._portal.call(self._trades, assets)
-        oldest = now - timedelta(seconds=settings.bars.trade_max_age_seconds)
-        return {
-            asset: trade.price
-            for asset, trade in trades.items()
-            if trading_time(trade.traded_at) >= oldest and trade.price > 0
-        }
-
-    def _connected(self) -> BarsClientAlpaca:
-        if self._client is None:
-            self._http = httpx2.AsyncClient(
-                base_url=bars_api_url(),
-                headers=credential_headers(settings.broker),
-                timeout=http_timeout(settings.bars.timeout),
+        match = re.fullmatch(r"(\d+)(Min|Hour|Day)", timeframe)
+        if match is None:
+            raise ValueError(f"unsupported timeframe: {timeframe}")
+        amount, unit = match.groups()
+        feed = settings.bars.daily_feed if unit == "Day" else settings.bars.intraday_feed
+        if feed == "sip":
+            end = min(end, datetime.now(UTC) - timedelta(minutes=settings.bars.sip_delay_minutes))
+        if end < start:
+            return {}
+        by_symbol = {str(asset): asset for asset in assets}
+        frames: dict[Asset, DataFrame] = {}
+        for batch in itertools.batched(assets, settings.bars.symbols_per_request, strict=False):
+            request = StockBarsRequest(
+                symbol_or_symbols=[str(asset) for asset in batch],
+                timeframe=TimeFrame(int(amount), TimeFrameUnit(unit)),
+                start=start,
+                end=end,
+                feed=DataFeed(feed),
+                adjustment=Adjustment.ALL,
             )
-            self._client = BarsClientAlpaca(self._http, settings.bars)
-        return self._client
+            bar_set = self._api.get_stock_bars(request)
+            if not isinstance(bar_set, BarSet):
+                raise TypeError(f"expected a BarSet, got {type(bar_set)}")
+            frame = bar_set.df
+            if frame.empty:
+                continue
+            for symbol in frame.index.get_level_values("symbol").unique():
+                series = frame.xs(symbol)
+                if not isinstance(series, DataFrame):
+                    raise TypeError(f"{symbol} bars are not a frame")
+                columns = series[["open", "high", "low", "close", "volume"]]
+                frames[by_symbol[symbol]] = columns.tz_convert(TRADING_ZONE).sort_index()
+        return frames
 
-    async def _frames(
-        self, assets: list[Asset], timeframe: Timeframe, start: datetime, end: datetime
-    ) -> dict[Asset, DataFrame]:
-        rows = await self._connected().bars(
-            assets, timeframe, start, end, limit=settings.bars.bars_per_request
-        )
-        return {asset: bar_frame(bars) for asset, bars in rows.items() if bars}
-
-    async def _trades(self, assets: list[Asset]) -> dict[Asset, Trade]:
-        return await self._connected().latest_trades(assets)
-
-    async def aclose(self) -> None:
-        if self._http is not None:
-            await self._http.aclose()
-
-
-@contextmanager
-def bars_client() -> Generator[Bars]:
-    with start_blocking_portal() as portal:
-        bars = Bars(portal)
-        try:
-            yield bars
-        finally:
-            portal.call(bars.aclose)
+    def quotes(self, assets: list[Asset], now: datetime) -> dict[Asset, float]:
+        if not assets:
+            return {}
+        oldest = now - timedelta(seconds=settings.bars.trade_max_age_seconds)
+        by_symbol = {str(asset): asset for asset in assets}
+        prices: dict[Asset, float] = {}
+        for batch in itertools.batched(assets, settings.bars.symbols_per_request, strict=False):
+            request = StockLatestTradeRequest(
+                symbol_or_symbols=[str(asset) for asset in batch],
+                feed=DataFeed(settings.bars.intraday_feed),
+            )
+            trades = cast(dict[str, Trade], self._api.get_stock_latest_trade(request))
+            for symbol, trade in trades.items():
+                if trade.timestamp >= oldest and trade.price > 0:
+                    prices[by_symbol[symbol]] = trade.price
+        return prices

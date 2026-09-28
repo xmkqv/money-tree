@@ -1,6 +1,4 @@
-import contextlib
 import logging
-import queue
 import threading
 from datetime import UTC, datetime
 from typing import Literal
@@ -33,13 +31,12 @@ class StateExporter:
             rules=rules,
             events=[],
         )
-        self.pending: queue.Queue[State] = queue.Queue(maxsize=1)
-        self.stopping = threading.Event()
-        self.lock = threading.Lock()
-        self.thread = threading.Thread(target=self._export, name="state-exporter", daemon=True)
+        self._stopping = threading.Event()
+        self._lock = threading.Lock()
+        self._thread = threading.Thread(target=self._export, name="state-exporter", daemon=True)
 
     def start(self) -> None:
-        self.thread.start()
+        self._thread.start()
 
     def publish(
         self,
@@ -50,76 +47,54 @@ class StateExporter:
         *,
         strategy_key: StrategyKey | None = None,
     ) -> None:
-        with self.lock:
-            if self.stopping.is_set():
+        with self._lock:
+            if self._stopping.is_set():
                 return
-            if self._publish(
-                status,
-                StateEvent(
-                    kind=kind,
-                    occurred_at=datetime.now(UTC),
-                    level=level,
-                    message=message,
-                    strategy_key=strategy_key,
-                ),
-            ):
-                self._enqueue()
+            self._merge(status, self._event(kind, level, message, strategy_key=strategy_key))
 
     def close(self, status: Literal["stopped", "failed"], message: str) -> None:
-        with self.lock:
-            if self.stopping.is_set():
+        with self._lock:
+            if self._stopping.is_set():
                 return
-            now = datetime.now(UTC)
-            if not self._publish(
-                status,
-                StateEvent(
-                    kind=f"run.{status}",
-                    occurred_at=now,
-                    level="info" if status == "stopped" else "error",
-                    message=message,
-                ),
-            ):
-                self._state = _build_state(self._state, now, bot_settings.export.events_max)
-            self._enqueue()
-            self.stopping.set()
-        self.thread.join(timeout=bot_settings.export.close_timeout_seconds)
+            level: EventLevel = "info" if status == "stopped" else "error"
+            self._merge(status, self._event(f"run.{status}", level, message))
+            self._stopping.set()
+        self._thread.join(timeout=bot_settings.export.close_timeout_seconds)
 
-    def _publish(self, status: RunStatus, event: StateEvent) -> bool:
-        if self._state.status in {"stopped", "failed"} and status != "failed":
-            return False
-        self._state = _build_state(
-            self._state,
-            event.occurred_at,
-            bot_settings.export.events_max,
-            status=status,
-            event=event,
+    def _event(
+        self,
+        kind: str,
+        level: EventLevel,
+        message: str,
+        *,
+        strategy_key: StrategyKey | None = None,
+    ) -> StateEvent:
+        return StateEvent(
+            kind=kind,
+            occurred_at=datetime.now(UTC),
+            level=level,
+            message=message,
+            strategy_key=strategy_key,
         )
-        return True
 
-    def _enqueue(self) -> None:
-        with contextlib.suppress(queue.Empty):
-            self.pending.get_nowait()
-        self.pending.put_nowait(self._state)
+    def _merge(self, status: RunStatus, event: StateEvent) -> None:
+        if self._state.status in {"stopped", "failed"} and status != "failed":
+            return
+        self._state = _build_state(self._state, event.occurred_at, status=status, event=event)
+
+    def _heartbeat(self) -> State:
+        with self._lock:
+            self._state = _build_state(self._state, datetime.now(UTC))
+            return self._state
 
     def _export(self) -> None:
         with Redis.from_url(  # pyright: ignore[reportUnknownMemberType]
             str(settings.redis.url)
         ) as client:
             while True:
-                try:
-                    state = self.pending.get(timeout=bot_settings.export.interval_seconds)
-                except queue.Empty:
-                    with self.lock:
-                        if self.stopping.is_set() and self.pending.empty():
-                            return
-                        try:
-                            state = self.pending.get_nowait()
-                        except queue.Empty:
-                            state = self._state = _build_state(
-                                self._state, datetime.now(UTC), bot_settings.export.events_max
-                            )
-                self._send(client, state)
-                if self.stopping.is_set() and self.pending.empty():
+                stopped = self._stopping.wait(bot_settings.export.interval_seconds)
+                self._send(client, self._heartbeat())
+                if stopped:
                     return
 
     def _send(self, client: Redis, state: State) -> None:
@@ -132,7 +107,6 @@ class StateExporter:
 def _build_state(
     previous: State,
     heartbeat_at: datetime,
-    events_max: int,
     *,
     event: StateEvent | None = None,
     status: RunStatus | None = None,
@@ -142,6 +116,6 @@ def _build_state(
         update={
             "status": previous.status if status is None else status,
             "heartbeat_at": heartbeat_at,
-            "events": events[-events_max:],
+            "events": events[-bot_settings.export.events_max :],
         }
     )

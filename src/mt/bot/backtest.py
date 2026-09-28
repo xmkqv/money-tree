@@ -8,7 +8,6 @@ from mt.rules.values import StrategyKey
 from mt.strategies.breakout import Breakout
 from mt.strategies.registry import STRATEGIES_BY_KEY
 
-from .bars import bars_client
 from .broker import broker_credentials
 
 
@@ -36,28 +35,27 @@ def report(strategy_key: StrategyKey, assets: list[Asset], start: datetime, end:
     datasource_options: dict[str, object] = {}
     if issubclass(STRATEGIES_BY_KEY[strategy_key], Breakout):
         datasource = AlpacaBacktesting
-        datasource_configuration = broker_credentials(paper=True)
+        datasource_configuration = broker_credentials(is_paper=True)
         datasource_options = {
             "timestep": "minute",
             "warm_up_trading_days": bot_settings.backtest.warm_up_days,
         }
-    with bars_client() as bars:
-        Portfolio.backtest(
-            datasource,
-            start,
-            end,
-            config=datasource_configuration,
-            parameters={"strategies": [strategy_key], "assets": assets, "bars": bars},
-            benchmark_asset=settings.benchmark_symbol,
-            budget=bot_settings.backtest.budget_usd,
-            show_plot=True,
-            show_tearsheet=False,
-            show_indicators=True,
-            show_progress_bar=False,
-            save_tearsheet=False,
-            save_logfile=True,
-            quiet_logs=False,
-            **datasource_options,
-            **{key: str(output_dir / name) for key, name in ARTIFACT_NAMES.items()},
-        )
+    Portfolio.backtest(
+        datasource,
+        start,
+        end,
+        config=datasource_configuration,
+        parameters={"strategies": [strategy_key], "assets": assets},
+        benchmark_asset=settings.benchmark_symbol,
+        budget=bot_settings.backtest.budget_usd,
+        show_plot=True,
+        show_tearsheet=False,
+        show_indicators=True,
+        show_progress_bar=False,
+        save_tearsheet=False,
+        save_logfile=True,
+        quiet_logs=False,
+        **datasource_options,
+        **{key: str(output_dir / name) for key, name in ARTIFACT_NAMES.items()},
+    )
     return output_dir
