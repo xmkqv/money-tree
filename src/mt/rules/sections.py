@@ -15,7 +15,6 @@ from .values import (
     EquityTimeframe,
     Fraction,
     MaxAge,
-    OptionalFraction,
     RequiredSecret,
     SettingsSection,
     SigningSecret,
@@ -54,7 +53,6 @@ class FinnhubSection(SettingsSection):
 class BarsSection(SettingsSection):
     symbols_per_request: Count
     options_per_request: Count
-    bars_per_request: Count
     intraday_feed: DataFeedName
     daily_feed: DataFeedName
     sip_delay_minutes: MaxAge
@@ -68,14 +66,6 @@ class RiskSection(SettingsSection):
     notional_usd_min: Amount
     notional_usd_max: Amount
     quantity_decimal_places: Count
-
-    @property
-    def per_trade(self) -> float:
-        return self.per_day_max / self.positions_max
-
-    @property
-    def allocation(self) -> float:
-        return 1.0 / self.positions_max
 
     @property
     def strategy_holdings_max(self) -> int:
@@ -169,7 +159,7 @@ class BreakoutVariationSection(StrategySection):
     opening_minutes: Count
     volume_multiple: Amount
     target_multiples: tuple[float, float, float]
-    entry_extension_max: OptionalFraction
+    entry_extension_max: Fraction | None
 
 
 class DailySection(SettingsSection):
@@ -180,25 +170,24 @@ class DailySection(SettingsSection):
 class DailyVariationSection(StrategySection):
     trend_sessions: Count
     adx_min: Amount
-    stop_atr_multiple: Amount
     does_heed_earnings: bool
     holdings_max: Count
 
 
-class DailySmaSection(DailyVariationSection):
+class DailyAtrSection(DailyVariationSection):
+    stop_atr_multiple: Amount
+
+
+class DailySmaSection(DailyAtrSection):
     trend_sessions_long: Count
     rsi_min: Amount
 
 
-class Daily20SmaSection(StrategySection):
-    trend_sessions: Count
+class Daily20SmaSection(DailyVariationSection):
     trend_sessions_long: Count
     rsi_min: Amount
     rsi_max: Amount
-    adx_min: Amount
-    does_heed_earnings: bool
     market_cap_usd_min: Amount
-    holdings_max: Count
     entry_minutes: Count
     stop_fraction: Fraction
     breakeven_gain: Fraction
@@ -219,7 +208,7 @@ class Daily20SmaSection(StrategySection):
         return self
 
 
-class DailyTfbSection(DailyVariationSection):
+class DailyTfbSection(DailyAtrSection):
     turnover_sessions: Count
     trend_lag_sessions: Count
 
@@ -297,33 +286,10 @@ class EdgarSection(SettingsSection):
 
 
 class RequestSection(SettingsSection):
-    trading_per_minute: Count
-    market_data_per_minute: Count
-    bot_replicas: Count
-    web_replicas: Count
-    bot_reads_per_minute: Count
-    bot_actions_per_minute: Count
-    bot_market_data_per_minute: Count
     web_reads_per_minute: Count
     web_market_data_per_minute: Count
     web_concurrency_max: Count
     pause_seconds: Count
-
-    @model_validator(mode="after")
-    def check_allocations(self) -> Self:
-        if (
-            self.bot_replicas * (self.bot_reads_per_minute + self.bot_actions_per_minute)
-            + self.web_replicas * self.web_reads_per_minute
-            > self.trading_per_minute
-        ):
-            raise ValueError("trading allocations exceed the provider allowance")
-        if (
-            self.bot_replicas * self.bot_market_data_per_minute
-            + self.web_replicas * self.web_market_data_per_minute
-            > self.market_data_per_minute
-        ):
-            raise ValueError("market data allocations exceed the provider allowance")
-        return self
 
 
 class WebSection(SettingsSection):
@@ -341,7 +307,6 @@ class ChartTimeframeSection(SettingsSection):
 
 class DashboardSection(SettingsSection):
     history_overlap_days: Count
-    history_cache_max: Count
     ledger_ttl_seconds: Count
     snapshot_ttl_seconds: Count
     chart_ttl_seconds: Count
@@ -362,6 +327,7 @@ class DashboardSection(SettingsSection):
     flat_quantity_max: Amount
     equity_daily_period: EquityPeriod
     equity_daily_timeframe: EquityTimeframe
+    equity_daily_ttl_seconds: Count
     equity_intraday_period: EquityPeriod
     equity_intraday_timeframe: EquityTimeframe
     sma_lengths: tuple[Count, ...] = Field(min_length=1)

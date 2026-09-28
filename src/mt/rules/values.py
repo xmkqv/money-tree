@@ -28,6 +28,9 @@ type Unattributed = Literal["unattributed"]
 UNATTRIBUTED: Unattributed = "unattributed"
 STRATEGY_KEYS: tuple[StrategyKey, ...] = get_args(StrategyKey.__value__)
 
+ORDER_PREFIX = "mt"
+LIQUIDATE_CODE = "liquidate"
+
 type OrderReason = Literal[
     "entry",
     "stop",
@@ -44,10 +47,6 @@ type OrderReason = Literal[
 
 ORDER_REASONS: tuple[OrderReason, ...] = get_args(OrderReason.__value__)
 TARGET_REASONS: tuple[OrderReason, ...] = ("target_1", "target_2", "target_3")
-
-
-def parse_none(value: object) -> object:
-    return None if value == "none" else value
 
 
 def split_keys(value: object) -> object:
@@ -73,7 +72,6 @@ def is_order_reason(value: str) -> TypeIs[OrderReason]:
 type Count = Annotated[int, Field(gt=0)]
 type Amount = Annotated[float, Field(gt=0)]
 type Fraction = Annotated[float, Field(gt=0, le=1)]
-type OptionalFraction = Annotated[Fraction | None, BeforeValidator(parse_none)]
 type MaxAge = Annotated[int, Field(ge=0)]
 type Symbol = Annotated[str, Field(min_length=1)]
 type CssToken = Annotated[str, Field(pattern=r"^--[a-z0-9-]+$")]

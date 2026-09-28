@@ -1,7 +1,7 @@
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .sections import (
@@ -36,7 +36,9 @@ from .values import Mode, StrategySelection, Symbol
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_nested_delimiter="__", extra="ignore", frozen=True)
+    model_config = SettingsConfigDict(
+        env_nested_delimiter="__", extra="ignore", frozen=True, env_parse_none_str="none"
+    )
 
 
 class RuleSettings(Settings):
@@ -57,6 +59,20 @@ class RuleSettings(Settings):
     intraday_mim: IntradayMimSection
     allocation_baa: AllocationBaaSection
     quality_gp: QualityGpSection
+
+    @model_validator(mode="after")
+    def check_strategy_holdings(self) -> Self:
+        capped = (
+            self.daily_sma,
+            self.daily_tfb,
+            self.daily_20sma,
+            self.intraday_mim,
+            self.allocation_baa,
+            self.quality_gp,
+        )
+        if any(section.holdings_max > self.risk.strategy_holdings_max for section in capped):
+            raise ValueError("a strategy holding cap exceeds the risk holdings cap")
+        return self
 
 
 class SharedSettings(RuleSettings):

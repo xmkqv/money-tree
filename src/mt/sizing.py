@@ -14,27 +14,29 @@ def entry_quantity(
     direction: Direction,
 ) -> Decimal:
     risk = settings.risk
-    capital, last, distance, allocation, per_trade, minimum, maximum = (
+    per_trade = risk.per_day_max / risk.positions_max
+    allocation = 1 / risk.positions_max
+    capital, last, distance, allocation_d, per_trade_d, minimum, maximum = (
         Decimal(str(value))
         for value in (
             equity,
             price,
             stop_distance,
-            risk.allocation,
-            risk.per_trade,
+            allocation,
+            per_trade,
             risk.notional_usd_min,
             risk.notional_usd_max,
         )
     )
     quantity = round_quantity(
-        min(capital * allocation / last, capital * per_trade / distance, maximum / last),
-        whole=direction == -1,
+        min(capital * allocation_d / last, capital * per_trade_d / distance, maximum / last),
+        is_whole=direction == -1,
     )
     return quantity if quantity * last >= minimum else Decimal(0)
 
 
-def round_quantity(quantity: float | Decimal, *, whole: bool = False) -> Decimal:
-    precision = Decimal(1).scaleb(0 if whole else -settings.risk.quantity_decimal_places)
+def round_quantity(quantity: float | Decimal, *, is_whole: bool = False) -> Decimal:
+    precision = Decimal(1).scaleb(0 if is_whole else -settings.risk.quantity_decimal_places)
     return Decimal(str(quantity)).quantize(precision, rounding=ROUND_DOWN)
 
 

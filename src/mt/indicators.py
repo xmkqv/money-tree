@@ -1,4 +1,4 @@
-from collections.abc import Collection, Sequence
+from collections.abc import Collection
 from math import isfinite, nan
 from typing import Any
 
@@ -12,21 +12,18 @@ from mt.frames import last_close
 
 def daily_indicators(frame: DataFrame, lengths: Collection[int], period: int) -> DataFrame:
     close = frame["close"]
-    columns: dict[str, object] = {
+    rsi = ta_rsi(close, length=period, talib=False)
+    atr = ta_atr(frame["high"], frame["low"], close, length=period, talib=False)
+    directional = ta_adx(frame["high"], frame["low"], frame["close"], length=period, talib=False)
+    columns: dict[str, Series | float] = {
         f"SMA_{length}": close.rolling(length).mean() for length in lengths
     }
-    columns[f"RSI_{period}"] = ta_rsi(close, length=period, talib=False)
-    columns[f"ATRr_{period}"] = ta_atr(
-        frame["high"], frame["low"], close, length=period, talib=False
-    )
-    directional = ta_adx(frame["high"], frame["low"], frame["close"], length=period, talib=False)
+    columns[f"RSI_{period}"] = rsi if isinstance(rsi, Series) else nan
+    columns[f"ATRr_{period}"] = atr if isinstance(atr, Series) else nan
     columns[f"ADX_{period}"] = (
         directional[f"ADX_{period}"] if isinstance(directional, DataFrame) else nan
     )
-    prepared: dict[str, Any] = {
-        name: value if isinstance(value, Series) else nan for name, value in columns.items()
-    }
-    return frame.assign(**prepared)
+    return frame.assign(**columns)
 
 
 def latest_atr(frame: DataFrame, period: int) -> float:
@@ -53,21 +50,15 @@ def latest_turnover_usd(frame: DataFrame) -> float:
 
 
 def average_turnover_usd(frame: DataFrame, sessions: int) -> float:
-    closes = frame["close"].tail(sessions)
-    volumes = frame["volume"].tail(sessions)
-    if closes.count() < sessions or volumes.count() < sessions:
+    traded = (frame["close"] * frame["volume"]).tail(sessions)
+    if traded.count() < sessions:
         return 0.0
-    traded = float((closes * volumes).mean())
-    return traded if isfinite(traded) and traded > 0.0 else 0.0
+    average = float(traded.mean())
+    return average if isfinite(average) and average > 0.0 else 0.0
 
 
-def finite_value(values: Series[Any], offset: int = -1) -> float | None:
-    if len(values) < abs(offset):
+def finite_value(values: Series[Any]) -> float | None:
+    if values.empty:
         return None
-    value = float(values.iloc[offset])
+    value = float(values.iloc[-1])
     return value if isfinite(value) else None
-
-
-def finite_row(values: Sequence[float | None]) -> list[float] | None:
-    found = [value for value in values if value is not None]
-    return found if len(found) == len(values) else None
