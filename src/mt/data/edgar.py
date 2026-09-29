@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import date
+from functools import lru_cache
 from http import HTTPStatus
 
 import httpx2
@@ -21,11 +22,15 @@ REVENUES = (
 COSTS = ("CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold")
 ASSETS = "Assets"
 YEARS = 3
-CLIENT = httpx2.Client(
-    timeout=http_timeout(bot_settings.edgar.timeout),
-    follow_redirects=True,
-    headers={"User-Agent": bot_settings.edgar.user_agent},
-)
+
+
+@lru_cache(maxsize=1)
+def client() -> httpx2.Client:
+    return httpx2.Client(
+        timeout=http_timeout(bot_settings.edgar.timeout),
+        follow_redirects=True,
+        headers={"User-Agent": bot_settings.edgar.user_agent},
+    )
 
 
 class Fact(Payload):
@@ -58,7 +63,7 @@ tickers_adapter = TypeAdapter(dict[str, Ticker])
 
 
 def ciks() -> dict[str, int]:
-    payload = tickers_adapter.validate_json(CLIENT.get(TICKERS_URL).raise_for_status().content)
+    payload = tickers_adapter.validate_json(client().get(TICKERS_URL).raise_for_status().content)
     found: dict[str, int] = {}
     for row in payload.values():
         found.setdefault(row.ticker.upper().replace("-", "."), row.cik)
@@ -109,7 +114,7 @@ def _first(concepts: tuple[str, ...], period: str) -> dict[int, Fact]:
 
 
 def _facts(concept: str, period: str) -> dict[int, Fact]:
-    response = CLIENT.get(FRAMES_URL.format(concept=concept, period=period))
+    response = client().get(FRAMES_URL.format(concept=concept, period=period))
     if response.status_code == HTTPStatus.NOT_FOUND:
         return {}
     response.raise_for_status()

@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from http import HTTPStatus
 from typing import Literal
 
 import httpx2
@@ -12,7 +13,7 @@ from pydantic import AwareDatetime, Field, TypeAdapter
 from mt.exchange import XNYS, today
 from mt.rules.sections import BrokerSection, DashboardSection
 
-from .http import Payload, get_json
+from .http import PaginationError, Payload, get_bytes
 
 
 class Account(Payload):
@@ -37,7 +38,7 @@ class AccountRead(Payload):
     account: Account
     positions: list[Position]
     orders: list[Order]
-    read_at: datetime
+    read_at: AwareDatetime
 
 
 class Fill(Payload):
@@ -51,7 +52,7 @@ class Fill(Payload):
 
 
 class EquityPoint(Payload):
-    recorded_at: AwareDatetime = Field(alias="timestamp")
+    recorded_at: AwareDatetime = Field(validation_alias="timestamp")
     equity: float
 
 
@@ -81,6 +82,10 @@ def upcoming_session_on() -> date:
 def credential_headers(broker: BrokerSection) -> dict[str, str]:
     key, secret = broker.key_pair
     return {"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret}
+
+
+def _submitted_cursor(order: Order) -> str:
+    return order.submitted_at.isoformat()
 
 
 class TradingClientAlpaca:
@@ -124,11 +129,11 @@ class TradingClientAlpaca:
             orders.update((str(row.id), row) for row in orders_read.result())
             async with asyncio.TaskGroup() as reads:
                 missing = {
-                    order_id: reads.create_task(get_json(self._client, f"/v2/orders/{order_id}"))
+                    order_id: reads.create_task(get_bytes(self._client, f"/v2/orders/{order_id}"))
                     for order_id in {row.order_id for row in fills.values()} - orders.keys()
                 }
             orders.update(
-                (key, Order.model_validate(read.result())) for key, read in missing.items()
+                (key, Order.model_validate_json(read.result())) for key, read in missing.items()
             )
             self._history = History(
                 tuple(fills.values()),
@@ -140,30 +145,32 @@ class TradingClientAlpaca:
             return self._history
 
     async def account(self) -> Account:
-        return Account.model_validate(await get_json(self._client, "/v2/account"))
+        return Account.model_validate_json(await get_bytes(self._client, "/v2/account"))
 
     async def positions(self) -> list[Position]:
-        return positions_adapter.validate_python(await get_json(self._client, "/v2/positions"))
+        return positions_adapter.validate_json(await get_bytes(self._client, "/v2/positions"))
 
     async def open_orders(self) -> list[Order]:
         return await self._pages(
             "/v2/orders",
             orders_adapter,
-            lambda order: str(order.id),
-            "before_order_id",
+            _submitted_cursor,
+            "until",
             status="open",
             limit=self._configuration.page_rows_max,
         )
 
     async def clock(self) -> Clock:
-        return Clock.model_validate(await get_json(self._client, "/v2/clock"))
+        return Clock.model_validate_json(await get_bytes(self._client, "/v2/clock"))
 
     async def asset_name(self, symbol: str) -> str:
         try:
-            payload = await get_json(self._client, f"/v2/assets/{symbol}")
-        except httpx2.HTTPStatusError:
+            payload = await get_bytes(self._client, f"/v2/assets/{symbol}")
+        except httpx2.HTTPStatusError as error:
+            if error.response.status_code != HTTPStatus.NOT_FOUND:
+                raise
             return ""
-        return BrokerAssetProfile.model_validate(payload).name or ""
+        return BrokerAssetProfile.model_validate_json(payload).name or ""
 
     async def fills(self, after: datetime | None) -> list[Fill]:
         return await self._pages(
@@ -180,7 +187,7 @@ class TradingClientAlpaca:
         return await self._pages(
             "/v2/orders",
             orders_adapter,
-            lambda order: order.submitted_at.isoformat(),
+            _submitted_cursor,
             "until",
             status="closed",
             limit=self._configuration.page_rows_max,
@@ -191,12 +198,12 @@ class TradingClientAlpaca:
         params: dict[str, object] = {"period": period, "timeframe": timeframe}
         if timeframe != "1D":
             params["intraday_reporting"] = "market_hours"
-        history = _PortfolioHistory.model_validate(
-            await get_json(self._client, "/v2/account/portfolio/history", params)
+        history = _PortfolioHistory.model_validate_json(
+            await get_bytes(self._client, "/v2/account/portfolio/history", params)
         )
         return [
-            EquityPoint(timestamp=timestamp, equity=equity)
-            for timestamp, equity in zip(history.timestamp, history.equity, strict=True)
+            EquityPoint(recorded_at=recorded_at, equity=equity)
+            for recorded_at, equity in zip(history.timestamp, history.equity, strict=True)
             if equity is not None
         ]
 
@@ -211,8 +218,8 @@ class TradingClientAlpaca:
         collected: list[Row] = []
         token: str | None = None
         for _ in range(self._configuration.pages_max):
-            page = adapter.validate_python(
-                await get_json(
+            page = adapter.validate_json(
+                await get_bytes(
                     self._client, path, {**params, "direction": "desc", token_name: token}
                 )
             )
@@ -221,8 +228,8 @@ class TradingClientAlpaca:
                 break
             next_token = cursor(page[-1])
             if next_token == token:
-                raise httpx2.HTTPError("Account history pagination did not advance")
+                raise PaginationError("Account history pagination did not advance")
             token = next_token
         else:
-            raise httpx2.HTTPError("Account history exceeds the configured page limit")
+            raise PaginationError("Account history exceeds the configured page limit")
         return collected

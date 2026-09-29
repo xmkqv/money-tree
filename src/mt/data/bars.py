@@ -1,6 +1,5 @@
 import itertools
 from datetime import UTC, datetime, timedelta
-from typing import cast
 
 import httpx2
 from pandas import DataFrame, DatetimeIndex
@@ -8,10 +7,10 @@ from pydantic import AwareDatetime, Field
 
 from mt.exchange import TRADING_ZONE
 from mt.rules.sections import BarsSection
-from mt.rules.values import Timeframe
+from mt.rules.values import DataFeedName, Timeframe
 
 from .asset import Asset, AssetType
-from .http import Payload, get_json
+from .http import PaginationError, Payload, get_bytes
 
 
 class Bar(Payload):
@@ -40,9 +39,19 @@ def check_supported_asset(asset: Asset) -> None:
         raise ValueError(f"historical bars do not support {asset.asset_type}")
 
 
+def stock_feed(configuration: BarsSection, timeframe: Timeframe) -> DataFeedName:
+    return configuration.daily_feed if timeframe.endswith("Day") else configuration.intraday_feed
+
+
+def feed_end(configuration: BarsSection, feed: DataFeedName, end: datetime) -> datetime:
+    if feed != "sip":
+        return end
+    return min(end, datetime.now(UTC) - timedelta(minutes=configuration.sip_delay_minutes))
+
+
 def bar_frame(bars: list[Bar]) -> DataFrame:
     frame = DataFrame([bar.model_dump() for bar in bars]).set_index("opened_at")
-    index = cast(DatetimeIndex, frame.index).tz_convert(TRADING_ZONE)
+    index = DatetimeIndex(frame.index).tz_convert(TRADING_ZONE)
     columns = frame.set_axis(index)[["open", "high", "low", "close", "volume"]]
     return columns.astype(float).sort_index()
 
@@ -79,37 +88,28 @@ class BarsClientAlpaca:
             path = BAR_PATHS[asset_type]
             batch_size = self._configuration.symbols_per_request
             if asset_type == AssetType.STOCK:
-                feed = (
-                    self._configuration.daily_feed
-                    if timeframe.endswith("Day")
-                    else self._configuration.intraday_feed
-                )
+                feed = stock_feed(self._configuration, timeframe)
                 params.update(feed=feed, adjustment="all")
-                if feed == "sip" and until is not None:
-                    until = min(
-                        until,
-                        datetime.now(UTC)
-                        - timedelta(minutes=self._configuration.sip_delay_minutes),
-                    )
+                if until is not None:
+                    until = feed_end(self._configuration, feed, until)
             elif asset_type == AssetType.OPTION:
                 batch_size = min(batch_size, self._configuration.options_per_request)
             if until is not None:
                 if until < start:
                     continue
                 params["end"] = until.isoformat()
-            requested = list(symbols)
-            for batch in itertools.batched(requested, batch_size, strict=False):
+            for batch in itertools.batched(symbols, batch_size, strict=False):
                 query = {**params, "symbols": ",".join(batch)}
                 page_count = 0
                 while True:
-                    page = _BarsPage.model_validate(await get_json(self._client, path, query))
+                    page = _BarsPage.model_validate_json(await get_bytes(self._client, path, query))
                     for symbol, bars in (page.bars or {}).items():
                         rows[symbols[symbol]].extend(bars)
                     page_count += 1
                     if not page.next_page_token:
                         break
                     if pages_max is not None and page_count >= pages_max:
-                        raise httpx2.HTTPError("Bars exceed the configured page limit")
+                        raise PaginationError("Bars exceed the configured page limit")
                     query["page_token"] = page.next_page_token
         return rows
 

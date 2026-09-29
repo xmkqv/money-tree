@@ -1,17 +1,16 @@
 import itertools
 import re
-from datetime import UTC, datetime, timedelta
-from typing import cast
+from datetime import datetime, timedelta
 
 from alpaca.data.enums import Adjustment, DataFeed
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.models.bars import BarSet
-from alpaca.data.models.trades import Trade
 from alpaca.data.requests import StockBarsRequest, StockLatestTradeRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from pandas import DataFrame
 
 from mt.data.asset import Asset
+from mt.data.bars import feed_end, stock_feed
 from mt.exchange import TRADING_ZONE
 from mt.rules.shared import settings
 from mt.rules.values import Timeframe
@@ -28,9 +27,8 @@ class Bars:
         if match is None:
             raise ValueError(f"unsupported timeframe: {timeframe}")
         amount, unit = match.groups()
-        feed = settings.bars.daily_feed if unit == "Day" else settings.bars.intraday_feed
-        if feed == "sip":
-            end = min(end, datetime.now(UTC) - timedelta(minutes=settings.bars.sip_delay_minutes))
+        feed = stock_feed(settings.bars, timeframe)
+        end = feed_end(settings.bars, feed, end)
         if end < start:
             return {}
         by_symbol = {str(asset): asset for asset in assets}
@@ -66,8 +64,7 @@ class Bars:
                 symbol_or_symbols=[str(asset) for asset in batch],
                 feed=DataFeed(settings.bars.intraday_feed),
             )
-            trades = cast(dict[str, Trade], self._api.get_stock_latest_trade(request))
-            for symbol, trade in trades.items():
+            for symbol, trade in self._api.get_stock_latest_trade(request).items():
                 if trade.timestamp >= oldest and trade.price > 0:
                     prices[by_symbol[symbol]] = trade.price
         return prices

@@ -5,7 +5,6 @@ import re
 import time
 from collections.abc import Mapping
 from email.utils import parsedate_to_datetime
-from typing import Any
 
 import httpx2
 from limits import RateLimitItemPerMinute
@@ -23,13 +22,16 @@ class Payload(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True, validate_by_name=True)
 
 
-async def get_json(
+class PaginationError(httpx2.HTTPError):
+    pass
+
+
+async def get_bytes(
     client: httpx2.AsyncClient, path: str, params: Mapping[str, object] | None = None
-) -> Any:
+) -> bytes:
     query = {key: str(value) for key, value in (params or {}).items() if value is not None}
     response = await client.get(path, params=query)
-    response.raise_for_status()
-    return response.json()
+    return response.raise_for_status().content
 
 
 def http_timeout(timeout: TimeoutSection) -> httpx2.Timeout:
@@ -51,41 +53,35 @@ class RequestTransport(httpx2.AsyncHTTPTransport):
         self._resume_at = 0.0
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
-        while True:
+        if time.time() < self._resume_at:
+            return self._limited()
+        while not await self._limiter.hit(self._allowance):
+            reset_at = (await self._limiter.get_window_stats(self._allowance)).reset_time
+            await asyncio.sleep(max(0, reset_at - time.time()))
+        async with self._concurrency:
             if time.time() < self._resume_at:
                 return self._limited()
-            async with self._concurrency:
-                if time.time() < self._resume_at:
-                    return self._limited()
-                while not await self._limiter.hit(self._allowance):
-                    reset_at = (await self._limiter.get_window_stats(self._allowance)).reset_time
-                    await asyncio.sleep(max(0, reset_at - time.time()))
-                started = time.monotonic()
-                response = None
-                try:
-                    response = await super().handle_async_request(request)
-                    await response.aread()
-                    if response.status_code == 429:
-                        self._resume_at = max(
-                            self._resume_at, retry_at(response, self._pause_seconds)
-                        )
-                        response.headers["Retry-After"] = str(
-                            math.ceil(self._resume_at - time.time())
-                        )
-                    return response
-                finally:
-                    if response is not None:
-                        await response.aclose()
-                    logger.info(
-                        "endpoint=%s operation=%s status=%s duration=%.3f "
-                        "attempts=1 remaining=%s reset=%s",
-                        re.sub(r"(/orders|/assets)/[^/]+", r"\1/{id}", request.url.path),
-                        request.method,
-                        response.status_code if response else "failed",
-                        time.monotonic() - started,
-                        response.headers.get("X-RateLimit-Remaining") if response else None,
-                        response.headers.get("X-RateLimit-Reset") if response else None,
-                    )
+            started = time.monotonic()
+            response = None
+            try:
+                response = await super().handle_async_request(request)
+                await response.aread()
+                if response.status_code == 429:
+                    self._resume_at = max(self._resume_at, retry_at(response, self._pause_seconds))
+                    response.headers["Retry-After"] = str(math.ceil(self._resume_at - time.time()))
+                return response
+            finally:
+                if response is not None:
+                    await response.aclose()
+                logger.info(
+                    "endpoint=%s operation=%s status=%s duration=%.3f remaining=%s reset=%s",
+                    re.sub(r"(/orders|/assets)/[^/]+", r"\1/{id}", request.url.path),
+                    request.method,
+                    response.status_code if response else "failed",
+                    time.monotonic() - started,
+                    response.headers.get("X-RateLimit-Remaining") if response else None,
+                    response.headers.get("X-RateLimit-Reset") if response else None,
+                )
 
     def _limited(self) -> httpx2.Response:
         return httpx2.Response(
