@@ -1,9 +1,9 @@
 import asyncio
 from bisect import bisect_left
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from itertools import dropwhile
 from typing import TypedDict
 
@@ -13,7 +13,7 @@ from alpaca.trading.models import Order
 from mt.data.alpaca import AccountRead, EquityPoint, Fill, TradingClientAlpaca
 from mt.data.asset import Asset
 from mt.data.bars import BarsClientAlpaca
-from mt.exchange import TRADING_ZONE, today
+from mt.exchange import TRADING_ZONE, midnight, previous_session_on, today_on
 from mt.rules.sections import DashboardSection
 from mt.rules.values import UNATTRIBUTED, OrderReason, StrategyKey, Symbol, Unattributed
 from mt.sizing import Direction
@@ -50,12 +50,8 @@ class Trade(Attribution):
     duration_minutes: int
 
 
-class OpenTrade(Attribution):
-    pass
-
-
 class Totals(TypedDict):
-    n: int
+    trade_count: int
     wins: int
     net_pnl: float
     gross_profit: float
@@ -67,7 +63,7 @@ class Day(TypedDict):
     pnl: float
     trades: int
     wins: int
-    before: float
+    before: float | None
 
 
 class PositionRow(SnapshotPosition):
@@ -78,11 +74,6 @@ class PositionRow(SnapshotPosition):
 
 class EquityDay(TypedDict):
     date: str
-    equity: float
-
-
-class IntradayPoint(TypedDict):
-    t: str
     equity: float
 
 
@@ -102,20 +93,16 @@ class Ledger(Snapshot):
     periods: dict[str, Period]
     today: str
     accountNumber: str
-    marketOpen: bool
-    nextOpen: str
-    nextClose: str
-    invested: float
-    funded: str
+    isMarketOpen: bool
+    nextOpenAt: str
+    nextCloseAt: str
+    invested: float | None
     strategies: list[StrategyLabel]
     trades: list[Trade]
     days: list[Day]
     totals: Totals
     equityDaily: list[EquityDay]
-    intraday: list[IntradayPoint]
-    intradayDate: str
     benchmarkSymbol: str
-    benchmark: list[BenchmarkClose]
 
 
 @dataclass(slots=True)
@@ -134,23 +121,83 @@ class _Tally:
 STOP_ORDER_TYPES = frozenset({OrderType.STOP, OrderType.STOP_LIMIT, OrderType.TRAILING_STOP})
 
 
-def order_reason(order: Order) -> OrderReason | None:
+async def build_ledger(
+    read: AccountRead,
+    trading: TradingClientAlpaca,
+    bars_client: BarsClientAlpaca,
+    benchmark: Symbol,
+    dashboard: DashboardSection,
+    daily: list[EquityPoint],
+) -> Ledger:
+    async with asyncio.TaskGroup() as reads:
+        history_read = reads.create_task(trading.history())
+        clock_read = reads.create_task(trading.clock())
+
+    account = read.account
+    snapshot = build_snapshot(read)
+    clock = clock_read.result()
+    current_on = today_on()
+
+    history = history_read.result()
+    trades, open_trades = _match_trades(history.fills, history.orders, dashboard.flat_quantity_max)
+    settled = list(dropwhile(lambda row: not row["equity"], _equity_series(daily, current_on)))
+    invested = settled[0]["equity"] if settled else None
+    closes = {row["date"]: row["equity"] for row in settled}
+    equity_days = [*settled, EquityDay(date=current_on.isoformat(), equity=snapshot["equity"])]
+
+    starts_on = _period_starts(current_on)
+    benchmark_bars = await bars_client.series(
+        Asset.from_symbol(benchmark),
+        "1Day",
+        midnight(previous_session_on(min(starts_on.values()))),
+        limit=dashboard.bars_max,
+        pages_max=dashboard.pages_max,
+    )
+    benchmark_closes = [
+        BenchmarkClose(
+            date=bar.opened_at.astimezone(TRADING_ZONE).date().isoformat(), close=bar.close
+        )
+        for bar in benchmark_bars
+    ]
+    return {
+        **snapshot,
+        "periods": {
+            key: _period(start_on, equity_days, benchmark_closes)
+            for key, start_on in starts_on.items()
+        },
+        "today": current_on.isoformat(),
+        "accountNumber": account.account_number,
+        "isMarketOpen": clock.is_open,
+        "nextOpenAt": clock.next_open.astimezone(TRADING_ZONE).isoformat(),
+        "nextCloseAt": clock.next_close.astimezone(TRADING_ZONE).isoformat(),
+        "invested": invested,
+        "strategies": STRATEGY_LABELS,
+        "positions": _position_rows(snapshot["positions"], open_trades),
+        "trades": trades,
+        "days": _days(trades, closes, invested),
+        "totals": _totals(trades),
+        "equityDaily": equity_days,
+        "benchmarkSymbol": benchmark,
+    }
+
+
+def _order_reason(order: Order) -> OrderReason | None:
     found = find_order_reason(order.client_order_id)
     if found is None and order.type in STOP_ORDER_TYPES:
         return "stop"
     return found
 
 
-def match_trades(
+def _match_trades(
     fills: tuple[Fill, ...],
     orders: tuple[Order, ...],
     flat_quantity_max: float,
-) -> tuple[list[Trade], dict[str, OpenTrade]]:
+) -> tuple[list[Trade], dict[str, Attribution]]:
     strategies: dict[str, StrategyKey | None] = {
         str(order.id): find_order_strategy_key(order.client_order_id) for order in orders
     }
     reasons: dict[str, OrderReason | None] = {
-        str(order.id): order_reason(order) for order in orders
+        str(order.id): _order_reason(order) for order in orders
     }
     held: defaultdict[str, float] = defaultdict(float)
     tallies: dict[str, _Tally] = {}
@@ -180,15 +227,19 @@ def match_trades(
                 strategy_key=strategies.get(fill.order_id),
             )
 
-        entering = (signed > 0) == (trade.direction > 0)
-        side = "in" if entering else "out"
+        is_entering = (signed > 0) == (trade.direction > 0)
+        side = "in" if is_entering else "out"
         latest = trade.fills[-1] if trade.fills else None
         if latest is not None and trade.order_id == fill.order_id and latest["side"] == side:
             merged = latest["quantity"] + quantity
-            latest["price"] = round(
-                (latest["price"] * latest["quantity"] + price * quantity) / merged, 4
+            trade.fills[-1] = FillRow(
+                date=latest["date"],
+                minute=latest["minute"],
+                price=round((latest["price"] * latest["quantity"] + price * quantity) / merged, 4),
+                quantity=round(merged, 4),
+                side=latest["side"],
+                reason=latest["reason"],
             )
-            latest["quantity"] = round(merged, 4)
         else:
             trade.fills.append(
                 FillRow(
@@ -201,7 +252,7 @@ def match_trades(
                 )
             )
         trade.order_id = fill.order_id
-        if entering:
+        if is_entering:
             trade.in_quantity += quantity
             trade.in_value += quantity * price
             if trade.strategy_key is None:
@@ -235,7 +286,7 @@ def match_trades(
         held[symbol] = 0.0
 
     still_open = {
-        symbol: OpenTrade(
+        symbol: Attribution(
             strategy_key=trade.strategy_key or UNATTRIBUTED,
             entered_at=trade.entered_at.isoformat(),
             fills=trade.fills,
@@ -245,11 +296,11 @@ def match_trades(
     return trades, still_open
 
 
-def totals(trades: list[Trade]) -> Totals:
+def _totals(trades: list[Trade]) -> Totals:
     wins = [trade for trade in trades if trade["pnl"] > 0]
     losses = [trade for trade in trades if trade["pnl"] <= 0]
     return Totals(
-        n=len(trades),
+        trade_count=len(trades),
         wins=len(wins),
         net_pnl=round(sum(trade["pnl"] for trade in trades), 2),
         gross_profit=round(sum(trade["pnl"] for trade in wins), 2),
@@ -257,172 +308,86 @@ def totals(trades: list[Trade]) -> Totals:
     )
 
 
-def days(trades: list[Trade], closes: dict[str, float], opening: float) -> list[Day]:
+def _days(trades: list[Trade], closes: dict[str, float], opening: float | None) -> list[Day]:
     grouped: defaultdict[str, list[Trade]] = defaultdict(list)
     for trade in trades:
         grouped[trade["date"]].append(trade)
 
     ordered = sorted(closes)
-    rows: list[Day] = []
-    for day in sorted(grouped):
+
+    def before(day: str) -> float | None:
         index = bisect_left(ordered, day)
-        before = closes[ordered[index - 1]] if index else opening
-        rows.append(
-            Day(
-                date=day,
-                pnl=round(sum(trade["pnl"] for trade in grouped[day]), 2),
-                trades=len(grouped[day]),
-                wins=sum(1 for trade in grouped[day] if trade["pnl"] > 0),
-                before=round(before, 2),
-            )
+        value = closes[ordered[index - 1]] if index else opening
+        return None if value is None else round(value, 2)
+
+    return [
+        Day(
+            date=day,
+            pnl=round(sum(trade["pnl"] for trade in grouped[day]), 2),
+            trades=len(grouped[day]),
+            wins=sum(1 for trade in grouped[day] if trade["pnl"] > 0),
+            before=before(day),
         )
-    return rows
+        for day in sorted(grouped)
+    ]
 
 
 def _clock_minute(when: datetime) -> int:
     return when.hour * 60 + when.minute
 
 
-async def build_ledger(
-    read: AccountRead,
-    trading: TradingClientAlpaca,
-    bars_client: BarsClientAlpaca,
-    benchmark: Symbol,
-    dashboard: DashboardSection,
-    daily: list[EquityPoint],
-) -> Ledger:
-    async with asyncio.TaskGroup() as reads:
-        history_read = reads.create_task(trading.history())
-        intraday_read = reads.create_task(
-            trading.equity(dashboard.equity_intraday_period, dashboard.equity_intraday_timeframe)
-        )
-        clock_read = reads.create_task(trading.clock())
+def _period_starts(current_on: date) -> dict[str, date]:
+    return {"W": current_on - timedelta(days=current_on.weekday()), "M": current_on.replace(day=1)}
 
-    account = read.account
-    snapshot = build_snapshot(read)
-    clock = clock_read.result()
-    today_on = today()
 
-    history = history_read.result()
-    trades, open_trades = match_trades(history.fills, history.orders, dashboard.flat_quantity_max)
-    equity_daily = _equity_series(daily, today_on)
-    intraday_points, intraday_date = _intraday_series(intraday_read.result())
-
-    equity_daily = list(dropwhile(lambda row: not row["equity"], equity_daily))
-    first_funded = equity_daily[0] if equity_daily else None
-    invested = first_funded["equity"] if first_funded is not None else account.equity
-    funded = first_funded["date"] if first_funded is not None else ""
-    equity = snapshot["equity"]
-    closes = {row["date"]: row["equity"] for row in equity_daily}
-
-    today_iso = today_on.isoformat()
-    periods_equity = list(equity_daily)
-    if not equity_daily or equity_daily[-1]["date"] != today_iso:
-        equity_daily.append(EquityDay(date=today_iso, equity=equity))
-
-    rows = _position_rows(snapshot["positions"], open_trades)
-    benchmark_start = funded or today_iso
-
-    bars = await bars_client.series(
-        Asset.from_symbol(benchmark),
-        "1Day",
-        datetime.fromisoformat(benchmark_start).replace(tzinfo=UTC),
-        limit=dashboard.bars_max,
-        pages_max=1,
+def _period(start_on: date, equity: list[EquityDay], benchmark: list[BenchmarkClose]) -> Period:
+    start = start_on.isoformat()
+    index = _baseline_index([row["date"] for row in equity], start)
+    baseline = _known_baseline(equity[index]["equity"])
+    benchmark_baseline = _known_baseline(
+        benchmark[_baseline_index([row["date"] for row in benchmark], start)]["close"]
+        if benchmark
+        else None
+    )
+    return Period(
+        start=start,
+        baseline=baseline,
+        equityIndex=index,
+        benchmarkPct=None
+        if benchmark_baseline is None
+        else (benchmark[-1]["close"] / benchmark_baseline - 1) * 100,
     )
 
-    benchmark_closes = [
-        BenchmarkClose(
-            date=bar.opened_at.astimezone(TRADING_ZONE).date().isoformat(), close=bar.close
-        )
-        for bar in bars
-    ]
-    return {
-        **snapshot,
-        "periods": calendar_periods(today_on, periods_equity, benchmark_closes),
-        "today": today_iso,
-        "accountNumber": account.account_number,
-        "marketOpen": clock.is_open,
-        "nextOpen": clock.next_open.astimezone(TRADING_ZONE).strftime("%H:%M ET"),
-        "nextClose": clock.next_close.astimezone(TRADING_ZONE).strftime("%H:%M ET"),
-        "invested": invested,
-        "funded": datetime.fromisoformat(funded).strftime("%-d %b %Y") if funded else "—",
-        "strategies": STRATEGY_LABELS,
-        "positions": rows,
-        "trades": trades,
-        "days": days(trades, closes, invested),
-        "totals": totals(trades),
-        "equityDaily": equity_daily,
-        "intraday": intraday_points,
-        "intradayDate": intraday_date,
-        "benchmarkSymbol": benchmark,
-        "benchmark": benchmark_closes,
-    }
+
+def _baseline_index(dates: list[str], start: str) -> int:
+    return max(0, bisect_left(dates, start) - 1)
 
 
-def _baseline[Row](
-    rows: list[Row], dates: list[str], start: str, *, key: Callable[[Row], float]
-) -> tuple[int, float | None]:
-    index = max(0, bisect_left(dates, start) - 1)
-    return index, key(rows[index]) if rows else None
-
-
-def calendar_periods(
-    today: date, equity: list[EquityDay], benchmark: list[BenchmarkClose]
-) -> dict[str, Period]:
-    opened_on = {"W": today - timedelta(days=today.weekday()), "M": today.replace(day=1)}
-    equity_dates = [row["date"] for row in equity]
-    benchmark_dates = [row["date"] for row in benchmark]
-    periods: dict[str, Period] = {}
-    for period_key, opened in opened_on.items():
-        start = opened.isoformat()
-        index, baseline = _baseline(equity, equity_dates, start, key=lambda row: row["equity"])
-        _, benchmark_baseline = _baseline(
-            benchmark, benchmark_dates, start, key=lambda row: row["close"]
-        )
-        periods[period_key] = Period(
-            start=start,
-            baseline=baseline,
-            equityIndex=index,
-            benchmarkPct=(benchmark[-1]["close"] / benchmark_baseline - 1) * 100
-            if benchmark_baseline
-            else None,
-        )
-    return periods
-
-
-def _zoned_points(points: list[EquityPoint]) -> list[tuple[datetime, float]]:
-    return [(point.recorded_at.astimezone(TRADING_ZONE), point.equity) for point in points]
+def _known_baseline(value: float | None) -> float | None:
+    return value or None
 
 
 def _equity_series(points: list[EquityPoint], before: date) -> list[EquityDay]:
+    zoned = [(point.recorded_at.astimezone(TRADING_ZONE), point.equity) for point in points]
     return [
         EquityDay(date=when.date().isoformat(), equity=round(value, 2))
-        for when, value in _zoned_points(points)
+        for when, value in zoned
         if when.date() < before
     ]
 
 
-def _intraday_series(points: list[EquityPoint]) -> tuple[list[IntradayPoint], str]:
-    zoned = _zoned_points(points)
-    rows = [
-        IntradayPoint(t=when.strftime("%H:%M"), equity=round(value, 2)) for when, value in zoned
-    ]
-    return rows, zoned[0][0].date().isoformat() if zoned else ""
-
-
 def _position_rows(
-    raw: Sequence[SnapshotPosition],
-    open_trades: dict[str, OpenTrade],
+    raw: Sequence[SnapshotPosition], open_trades: dict[str, Attribution]
 ) -> list[PositionRow]:
-    return [
-        PositionRow(
-            **dict(position),
-            strategy_key=held["strategy_key"]
-            if (held := open_trades.get(position.symbol))
-            else UNATTRIBUTED,
-            entered_at=held["entered_at"] if held else None,
-            fills=held["fills"] if held else [],
-        )
-        for position in raw
-    ]
+    return [_position_row(position, open_trades.get(position["symbol"])) for position in raw]
+
+
+def _position_row(position: SnapshotPosition, held: Attribution | None) -> PositionRow:
+    if held is None:
+        return PositionRow(**position, strategy_key=UNATTRIBUTED, entered_at=None, fills=[])
+    return PositionRow(
+        **position,
+        strategy_key=held["strategy_key"],
+        entered_at=held["entered_at"],
+        fills=held["fills"],
+    )

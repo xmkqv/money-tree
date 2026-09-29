@@ -58,11 +58,11 @@
 
       <section class="panel">
         <div class="panel-head"><h2>Account value</h2><span class="eyebrow">USD</span></div>
-        <div class="panel-body"></div>
+        <div class="panel-body" id="account-body"></div>
       </section>
 
       <section class="panel">
-        <div class="panel-head"><h2>Performance</h2><span class="eyebrow">All time</span></div>
+        <div class="panel-head"><h2>Performance</h2></div>
         <div class="panel-body">
           <div id="performance"></div>
 
@@ -83,10 +83,8 @@
         <div class="panel-head">
           <h2>Strategies</h2>
           <div class="segmented" id="strat-range" role="group" aria-label="Strategy period">
-            <button type="button" data-range="D" aria-pressed="true">D</button>
-            <button type="button" data-range="W" aria-pressed="false">W</button>
+            <button type="button" data-range="W" aria-pressed="true">W</button>
             <button type="button" data-range="M" aria-pressed="false">M</button>
-            <button type="button" data-range="ALL" aria-pressed="false">ALL</button>
           </div>
         </div>
         <div class="panel-body">
@@ -103,6 +101,43 @@
         </div>
       </section>
 
+      <section class="panel">
+        <div class="panel-head"><h2>Orders</h2><span class="eyebrow">Open</span></div>
+        <div class="today-wrap">
+          <table class="trades" data-cards>
+            <thead>
+              <tr>
+                <th scope="col">Symbol</th>
+                <th scope="col">Side</th>
+                <th scope="col" class="r">Qty</th>
+                <th scope="col">Type</th>
+                <th scope="col" class="r">Limit / stop</th>
+                <th scope="col">Status</th>
+                <th scope="col">Strategy</th>
+              </tr>
+            </thead>
+            <tbody id="orders-body"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h2>Events</h2><span class="eyebrow">Bot</span></div>
+        <div class="today-wrap">
+          <table class="trades" data-cards>
+            <thead>
+              <tr>
+                <th scope="col">Time</th>
+                <th scope="col">Level</th>
+                <th scope="col">Message</th>
+                <th scope="col">Strategy</th>
+              </tr>
+            </thead>
+            <tbody id="events-body"></tbody>
+          </table>
+        </div>
+      </section>
+
     </div>
 
     <div class="stage">
@@ -114,10 +149,8 @@
             <span class="invested" id="chart-funded">—</span>
           </div>
           <div class="segmented" id="chart-range" role="group" aria-label="Chart period">
-            <button type="button" data-range="D" aria-pressed="false">D</button>
-            <button type="button" data-range="W" aria-pressed="false">W</button>
+            <button type="button" data-range="W" aria-pressed="true">W</button>
             <button type="button" data-range="M" aria-pressed="false">M</button>
-            <button type="button" data-range="ALL" aria-pressed="true">ALL</button>
           </div>
         </div>
         <div class="chart-hero">
@@ -208,7 +241,7 @@
       <div class="rail">
         <section class="panel">
           <div class="panel-head"><h2>Positions</h2><span class="eyebrow">USD</span></div>
-          <div class="panel-body"></div>
+          <div class="panel-body" id="positions-body"></div>
       </section>
 
         <section class="panel">
@@ -216,7 +249,7 @@
           <div class="panel-body"><div class="alloc" id="pf-alloc"></div></div>
         </section>
 
-        <section class="panel strategies">
+        <section class="panel position-weight">
           <div class="panel-head"><h2>Position weight</h2><span class="eyebrow">vs position cap</span></div>
           <div class="panel-body"><div class="weights" id="pf-weights"></div></div>
         </section>
@@ -248,12 +281,12 @@
 
       <div class="hist-top">
         <section class="panel">
-          <div class="panel-head"><h2>Since inception</h2><span class="eyebrow" id="hs-span">—</span></div>
+          <div class="panel-head"><h2>Totals</h2><span class="eyebrow" id="hs-span">—</span></div>
           <div class="panel-body"><div class="tiles" id="hs-tiles"></div></div>
         </section>
 
         <section class="panel">
-          <div class="panel-head"><h2>By strategy</h2><span class="eyebrow">Since inception</span></div>
+          <div class="panel-head"><h2>By strategy</h2></div>
           <div class="panel-body"><div class="strat-cells" id="hs-strats"></div></div>
         </section>
       </div>

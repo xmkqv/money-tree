@@ -1,3 +1,4 @@
+# pyright: reportUnusedFunction=false
 import asyncio
 import hmac
 import secrets
@@ -27,10 +28,6 @@ from mt.rules.shared import settings
 from .routes import NO_STORE, AppState, dashboard_router, error_response
 
 
-PUBLIC_PATHS = frozenset({"/healthz", "/login", "/auth/callback"})
-SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-
-
 class LoginGuardMiddleware:
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
@@ -41,10 +38,12 @@ class LoginGuardMiddleware:
             return
         connection = HTTPConnection(scope)
         if not isinstance(subject := connection.session.get("user_sub"), str) or not subject:
-            redirects = scope["method"] in {"GET", "HEAD"} and not scope["path"].startswith("/api/")
+            is_redirect = scope["method"] in {"GET", "HEAD"} and not scope["path"].startswith(
+                "/api/"
+            )
             rejection: Response = (
                 RedirectResponse("/login", status_code=303, headers=NO_STORE)
-                if redirects
+                if is_redirect
                 else error_response("Authentication is required", 401)
             )
             await rejection(scope, receive, send)
@@ -53,7 +52,7 @@ class LoginGuardMiddleware:
             csrf_token = connection.session.get("csrf_token")
             request_token = connection.headers.get("x-csrf-token", "")
             if not isinstance(csrf_token, str) or not hmac.compare_digest(
-                csrf_token, request_token
+                csrf_token.encode(), request_token.encode()
             ):
                 response = error_response("CSRF token is invalid", 403)
                 await response(scope, receive, send)
@@ -61,10 +60,8 @@ class LoginGuardMiddleware:
         await self._app(scope, receive, send)
 
 
-def _start_login(request: Request, subject: str) -> None:
-    request.session.clear()
-    request.session["user_sub"] = subject
-    request.session["csrf_token"] = secrets.token_urlsafe(32)
+PUBLIC_PATHS = frozenset({"/healthz", "/login", "/auth/callback"})
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 
 def create_app() -> FastAPI:
@@ -79,7 +76,7 @@ def create_app() -> FastAPI:
         async with (
             AsyncRedis.from_url(  # pyright: ignore[reportUnknownMemberType]
                 str(settings.redis.url), decode_responses=True
-            ) as state,
+            ) as store,
             httpx2.AsyncClient(
                 transport=RequestTransport(
                     requests.web_reads_per_minute, concurrency, requests.pause_seconds
@@ -100,7 +97,7 @@ def create_app() -> FastAPI:
             ) as bars,
         ):
             yield AppState(
-                store=state,
+                store=store,
                 trading=TradingClientAlpaca(trading, configuration.dashboard),
                 bars=BarsClientAlpaca(bars, settings.bars),
             )
@@ -126,26 +123,12 @@ def create_app() -> FastAPI:
         headers = {"Retry-After": retry_after} if retry_after is not None else None
         return error_response("Alpaca read limit was reached", 503, headers)
 
-    def _all_http_errors(group: BaseExceptionGroup[BaseException]) -> bool:
-        return group.subgroup(lambda item: not isinstance(item, httpx2.HTTPError)) is None
-
-    def _rate_limited(group: BaseExceptionGroup[BaseException]) -> Exception | None:
-        limited = group.subgroup(
-            lambda item: (
-                isinstance(item, httpx2.HTTPStatusError) and item.response.status_code == 429
-            )
-        )
-        if limited is None:
-            return None
-        leaf = limited.exceptions[0]
-        return leaf if isinstance(leaf, Exception) else None
-
     @app.exception_handler(ExceptionGroup)
     async def upstream_group_failed(request: Request, error: Exception) -> JSONResponse:
         group = cast(ExceptionGroup[Exception], error)
-        if not _all_http_errors(group):
+        if not _is_http_only(group):
             raise group
-        return await upstream_failed(request, _rate_limited(group) or group)
+        return await upstream_failed(request, _find_rate_limited(group) or group)
 
     @app.get("/healthz")
     async def health() -> JSONResponse:
@@ -167,7 +150,7 @@ def create_app() -> FastAPI:
             async def login_remotely(request: Request) -> RedirectResponse:
                 request.session.clear()
                 redirect = await railway.authorize_redirect(
-                    request, configuration.oauth_redirect_uri
+                    request, configuration.web.oauth_redirect_uri
                 )
                 return RedirectResponse(
                     redirect.headers["location"], status_code=303, headers=NO_STORE
@@ -190,13 +173,39 @@ def create_app() -> FastAPI:
         case _:
             assert_never(configuration.mode)
 
-    @app.post("/logout", status_code=204)
-    async def logout(request: Request) -> Response:
+    @app.post("/logout", status_code=204, response_class=Response)
+    async def logout(request: Request, response: Response) -> None:
         request.session.clear()
-        return Response(
-            status_code=204, headers={**NO_STORE, "Clear-Site-Data": '"cache", "storage"'}
-        )
+        response.headers.update({**NO_STORE, "Clear-Site-Data": '"cache", "storage"'})
 
     app.include_router(dashboard_router(configuration))
 
     return app
+
+
+def _start_login(request: Request, subject: str) -> None:
+    request.session.clear()
+    request.session["user_sub"] = subject
+    request.session["csrf_token"] = secrets.token_urlsafe(32)
+
+
+def _is_http_only(group: BaseExceptionGroup[BaseException]) -> bool:
+    return (
+        group.subgroup(lambda item: not isinstance(item, httpx2.HTTPError | BaseExceptionGroup))
+        is None
+    )
+
+
+def _find_rate_limited(error: BaseException) -> httpx2.HTTPStatusError | None:
+    if isinstance(error, BaseExceptionGroup):
+        return next(
+            (
+                found
+                for item in cast(BaseExceptionGroup[BaseException], error).exceptions
+                if (found := _find_rate_limited(item)) is not None
+            ),
+            None,
+        )
+    if isinstance(error, httpx2.HTTPStatusError) and error.response.status_code == 429:
+        return error
+    return None

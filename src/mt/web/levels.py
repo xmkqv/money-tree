@@ -1,18 +1,20 @@
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Literal, NotRequired, TypedDict
 
-from mt.data.asset import Asset, AssetType
-from mt.data.bars import Bar, BarsClientAlpaca
+from mt.data.asset import Asset
+from mt.data.bars import Bar, BarsClientAlpaca, bar_frame
 from mt.exchange import midnight, session_bounds
-from mt.rules.sections import DailyAtrSection, DashboardSection
-from mt.rules.shared import settings
-from mt.rules.values import StrategyKey, Unattributed, is_strategy_key
+from mt.indicators import latest_atr
+from mt.rules.sections import Daily20SmaSection, DailyAtrSection, DashboardSection
+from mt.rules.settings import RuleSettings
+from mt.rules.values import StrategyKey, Unattributed
 from mt.sizing import Direction
-from mt.strategies.breakout import Breakout, range_level, range_stop
+from mt.strategies.breakout import Breakout, range_level
 from mt.strategies.daily import Daily
 from mt.strategies.registry import STRATEGIES_BY_KEY
 
-from .bars import bars_atr
+from .strategies import describe_strategy
 
 
 class OpeningRange(TypedDict):
@@ -28,74 +30,131 @@ class Levels(TypedDict):
     targets: NotRequired[list[float]]
 
 
+@dataclass(frozen=True, slots=True)
+class _LevelsRequest:
+    asset: Asset
+    strategy_key: StrategyKey
+    direction: Direction
+    entry: float
+    opened_on: date
+
+
 async def build_levels(
     bars_client: BarsClientAlpaca,
     dashboard: DashboardSection,
+    rules: RuleSettings,
     asset: Asset,
-    strategy_key: StrategyKey | Unattributed,
+    strategy_key: StrategyKey,
     side: Literal["long", "short"],
     entry: float,
-    opened: date,
+    opened_on: date,
 ) -> Levels:
-    payload = Levels(strategy_key=strategy_key)
-    if asset.asset_type != AssetType.STOCK:
-        return payload
     direction: Direction = 1 if side == "long" else -1
-    bounds = session_bounds(opened)
-    found_class = STRATEGIES_BY_KEY[strategy_key] if is_strategy_key(strategy_key) else None
-    if found_class is not None and issubclass(found_class, Breakout) and bounds:
-        opens = bounds[0]
-        minutes = found_class.rules.opening_minutes
-        span = dashboard.levels_range_multiple * minutes
-        opening_bars = await bars_client.series(
-            asset,
-            dashboard.levels_source,
-            opens,
-            opens + timedelta(minutes=span),
-            limit=dashboard.levels_source_bars_max,
-            pages_max=1,
-        )
-        found = _opening_range(opening_bars, opens, minutes)
-        if found is not None:
-            _add_breakout_levels(payload, found_class, direction, entry, *found)
-    elif found_class is not None and issubclass(found_class, Daily):
-        historical_bars = await bars_client.series(
-            asset,
-            "1Day",
-            midnight(opened - timedelta(days=dashboard.levels_lookback_days)),
-            midnight(opened),
-            limit=dashboard.levels_lookback_days,
-            pages_max=1,
-        )
-        average_range = bars_atr(historical_bars)
-        if average_range is not None and isinstance(found_class.rules, DailyAtrSection):
-            distance = found_class.rules.stop_atr_multiple * average_range
-            payload["stop"] = round(entry - direction * distance, 4)
-    return payload
+    request = _LevelsRequest(asset, strategy_key, direction, entry, opened_on)
+    strategy = STRATEGIES_BY_KEY[strategy_key]
+    if issubclass(strategy, Breakout):
+        return await _breakout_levels(bars_client, dashboard, rules, strategy, request)
+    if strategy_key == "daily_20sma":
+        return _daily_20sma_levels(rules.daily_20sma, request)
+    if issubclass(strategy, Daily):
+        return await _daily_levels(bars_client, dashboard, rules, request)
+    return Levels(strategy_key=strategy_key)
 
 
-def _opening_range(bars: list[Bar], opens: datetime, minutes: int) -> tuple[float, float] | None:
-    closes = opens + timedelta(minutes=minutes)
-    inside = [bar for bar in bars if opens <= bar.opened_at < closes]
+async def _breakout_levels(
+    bars_client: BarsClientAlpaca,
+    dashboard: DashboardSection,
+    rules: RuleSettings,
+    strategy: type[Breakout],
+    request: _LevelsRequest,
+) -> Levels:
+    empty = Levels(strategy_key=request.strategy_key)
+    bounds = session_bounds(request.opened_on)
+    if bounds is None:
+        return empty
+    opens_at, _ = bounds
+    described = describe_strategy(strategy, rules)
+    opening_minutes = described.rules.opening_minutes
+    opening_bars = await bars_client.series(
+        request.asset,
+        dashboard.levels_source,
+        opens_at,
+        opens_at + timedelta(minutes=opening_minutes),
+        limit=dashboard.levels_source_bars_max,
+        pages_max=dashboard.pages_max,
+    )
+    opening = _try_opening_range(opening_bars, opens_at, opening_minutes)
+    if opening is None:
+        return empty
+    high, low = opening
+    family = rules.breakout
+    stop = range_level(
+        high,
+        low,
+        family.long_stop_fraction if request.direction == 1 else family.short_stop_fraction,
+    )
+    return Levels(
+        strategy_key=request.strategy_key,
+        range=OpeningRange(
+            high=round(high, 4),
+            mid=round(range_level(high, low, family.mid_fraction), 4),
+            low=round(low, 4),
+        ),
+        stop=round(stop, 4),
+        targets=[
+            round(value, 4)
+            for value in described.target_prices(request.entry, stop, request.direction)
+        ],
+    )
+
+
+async def _daily_levels(
+    bars_client: BarsClientAlpaca,
+    dashboard: DashboardSection,
+    rules: RuleSettings,
+    request: _LevelsRequest,
+) -> Levels:
+    empty = Levels(strategy_key=request.strategy_key)
+    section = getattr(rules, request.strategy_key)
+    if not isinstance(section, DailyAtrSection):
+        return empty
+    historical_bars = await bars_client.series(
+        request.asset,
+        "1Day",
+        midnight(request.opened_on - timedelta(days=dashboard.levels_lookback_days)),
+        midnight(request.opened_on),
+        limit=dashboard.levels_lookback_days,
+        pages_max=dashboard.pages_max,
+    )
+    average_range = _try_bars_atr(historical_bars, rules.indicators.period_bars)
+    if average_range is None:
+        return empty
+    distance = section.stop_atr_multiple * average_range
+    return Levels(
+        strategy_key=request.strategy_key,
+        stop=round(request.entry - request.direction * distance, 4),
+    )
+
+
+def _daily_20sma_levels(section: Daily20SmaSection, request: _LevelsRequest) -> Levels:
+    return Levels(
+        strategy_key=request.strategy_key,
+        stop=round(request.entry * (1 - section.stop_fraction), 4),
+        targets=[round(request.entry * (1 + gain), 4) for gain in section.target_gains],
+    )
+
+
+def _try_opening_range(
+    bars: list[Bar], opens_at: datetime, minutes: int
+) -> tuple[float, float] | None:
+    closes_at = opens_at + timedelta(minutes=minutes)
+    inside = [bar for bar in bars if opens_at <= bar.opened_at < closes_at]
     if not inside:
         return None
     return max(bar.high for bar in inside), min(bar.low for bar in inside)
 
 
-def _add_breakout_levels(
-    payload: Levels,
-    strategy: type[Breakout],
-    direction: Direction,
-    entry: float,
-    high: float,
-    low: float,
-) -> None:
-    stop = range_stop(direction, high, low)
-    targets = strategy.target_prices(entry, stop, direction)
-    payload["range"] = OpeningRange(
-        high=round(high, 4),
-        mid=round(range_level(high, low, settings.breakout.mid_fraction), 4),
-        low=round(low, 4),
-    )
-    payload["stop"] = round(stop, 4)
-    payload["targets"] = [round(value, 4) for value in targets]
+def _try_bars_atr(bars: list[Bar], period_bars: int) -> float | None:
+    if len(bars) <= period_bars:
+        return None
+    return latest_atr(bar_frame(bars), period_bars)
