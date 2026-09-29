@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Annotated, Self
+from typing import Self
 
-from pydantic import AfterValidator, AnyHttpUrl, Field, RedisDsn, model_validator
+from pydantic import AnyHttpUrl, Field, RedisDsn, model_validator
 
 from .values import (
     CHART_TIMEFRAMES,
@@ -11,6 +11,7 @@ from .values import (
     Count,
     CssToken,
     DataFeedName,
+    Email,
     EquityPeriod,
     EquityTimeframe,
     Fraction,
@@ -351,5 +352,5 @@ class DashboardSection(SettingsSection):
 class LoginSection(SettingsSection):
     oauth_client_id: str = Field(min_length=1)
     oauth_client_secret: RequiredSecret
-    allowed_emails: frozenset[Annotated[str, AfterValidator(str.casefold)]] = Field(min_length=1)
+    allowed_emails: frozenset[Email] = Field(min_length=1)
     timeout: TimeoutSection

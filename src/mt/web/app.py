@@ -3,12 +3,14 @@ import hmac
 import secrets
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import assert_never
+from typing import assert_never, cast
 
 import httpx2
 from alpaca.common.enums import BaseURL
+from authlib.integrations.starlette_client import OAuthError
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
+from joserfc.errors import JoseError
 from pydantic import ValidationError
 from redis.asyncio import Redis as AsyncRedis
 from starlette.middleware.sessions import SessionMiddleware
@@ -18,11 +20,11 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from mt.data.alpaca import TradingClientAlpaca, credential_headers
 from mt.data.bars import BarsClientAlpaca
 from mt.data.http import RequestTransport, http_timeout
-from mt.data.railway import RailwayOAuthClient
+from mt.data.railway import Identity, railway_oauth
 from mt.rules.settings import LoginSettings, WebSettings
 from mt.rules.shared import settings
 
-from .routes import NO_STORE, dashboard_router, error_response
+from .routes import NO_STORE, AppState, dashboard_router, error_response
 
 
 PUBLIC_PATHS = frozenset({"/healthz", "/login", "/auth/callback"})
@@ -71,7 +73,7 @@ def create_app() -> FastAPI:
     credentials = credential_headers(settings.broker)
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncGenerator[dict[str, object]]:
+    async def lifespan(_: FastAPI) -> AsyncGenerator[AppState]:
         requests = configuration.requests
         concurrency = asyncio.Semaphore(requests.web_concurrency_max)
         async with (
@@ -97,17 +99,11 @@ def create_app() -> FastAPI:
                 timeout=http_timeout(settings.bars.timeout),
             ) as bars,
         ):
-            yield {
-                "store": state,
-                "trading": TradingClientAlpaca(
-                    trading,
-                    configuration.dashboard,
-                ),
-                "bars": BarsClientAlpaca(
-                    bars,
-                    settings.bars,
-                ),
-            }
+            yield AppState(
+                store=state,
+                trading=TradingClientAlpaca(trading, configuration.dashboard),
+                bars=BarsClientAlpaca(bars, settings.bars),
+            )
 
     app = FastAPI(
         title="Money Tree", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
@@ -146,9 +142,10 @@ def create_app() -> FastAPI:
 
     @app.exception_handler(ExceptionGroup)
     async def upstream_group_failed(request: Request, error: Exception) -> JSONResponse:
-        if not isinstance(error, BaseExceptionGroup) or not _all_http_errors(error):
-            raise error
-        return await upstream_failed(request, _rate_limited(error) or error)
+        group = cast(ExceptionGroup[Exception], error)
+        if not _all_http_errors(group):
+            raise group
+        return await upstream_failed(request, _rate_limited(group) or group)
 
     @app.get("/healthz")
     async def health() -> JSONResponse:
@@ -163,44 +160,29 @@ def create_app() -> FastAPI:
                 return RedirectResponse("/", status_code=303, headers=NO_STORE)
 
         case "production":
-            oauth = LoginSettings().login  # pyright: ignore[reportCallIssue]
-            oauth_client = RailwayOAuthClient(oauth, configuration.oauth_redirect_uri)
+            login = LoginSettings().login  # pyright: ignore[reportCallIssue]
+            railway = railway_oauth(login)
 
             @app.get("/login")
-            async def login(request: Request) -> RedirectResponse:
-                authorization = await oauth_client.authorization_request()
+            async def login_remotely(request: Request) -> RedirectResponse:
                 request.session.clear()
-                request.session["oauth_state"] = authorization.state
-                request.session["oauth_verifier"] = authorization.verifier
-                return RedirectResponse(authorization.url, status_code=303, headers=NO_STORE)
+                redirect = await railway.authorize_redirect(
+                    request, configuration.oauth_redirect_uri
+                )
+                return RedirectResponse(
+                    redirect.headers["location"], status_code=303, headers=NO_STORE
+                )
 
             @app.get("/auth/callback")
-            async def callback(
-                request: Request,
-                code: str | None = None,
-                state: str | None = None,
-                error: str | None = None,
-            ) -> Response:
-                expected_state = request.session.pop("oauth_state", None)
-                verifier = request.session.pop("oauth_verifier", None)
-                request.session.clear()
-                if error is not None:
-                    return error_response("Railway login was denied", 401)
-                if (
-                    not isinstance(expected_state, str)
-                    or not isinstance(verifier, str)
-                    or state is None
-                ):
-                    return error_response("OAuth state is invalid", 400)
-                if not hmac.compare_digest(expected_state.encode(), state.encode()):
-                    return error_response("OAuth state is invalid", 400)
-                if not code:
-                    return error_response("OAuth code is missing", 400)
+            async def callback(request: Request) -> Response:
                 try:
-                    identity = await oauth_client.identify(code, verifier)
+                    token = await railway.authorize_access_token(request)
+                    identity = Identity.model_validate(await railway.userinfo(token=token))
+                except OAuthError, JoseError:
+                    return error_response("Railway login failed", 401)
                 except ValidationError:
                     return error_response("Railway OAuth identity is invalid", 401)
-                if identity.email not in oauth.allowed_emails:
+                if identity.email not in login.allowed_emails:
                     return error_response("Railway user is not allowed", 403)
                 _start_login(request, identity.sub)
                 return RedirectResponse("/", status_code=303, headers=NO_STORE)
