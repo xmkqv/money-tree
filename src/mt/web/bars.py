@@ -1,8 +1,7 @@
 from datetime import date, datetime, timedelta
-from math import isfinite
-from typing import TypedDict, cast
+from typing import TypedDict
 
-from pandas import DataFrame, DatetimeIndex, Series, Timedelta, Timestamp
+from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
 from mt.data.bars import Bar, bar_frame
 from mt.exchange import midnight, session_starts
@@ -31,10 +30,9 @@ def session_hour_bars(bars: list[Bar]) -> list[Bar]:
     regular = _regular(bars)
     if regular.empty:
         return []
-    index = cast(DatetimeIndex, regular.index)
+    index = DatetimeIndex(regular.index)
     starts = session_starts(index)
-    elapsed = (index - starts) // Timedelta(hours=1)
-    folded = regular.groupby(starts + elapsed * Timedelta(hours=1)).agg(
+    folded = regular.groupby(starts + (index - starts).floor("1h")).agg(
         open=("open", "first"),
         high=("high", "max"),
         low=("low", "min"),
@@ -42,15 +40,16 @@ def session_hour_bars(bars: list[Bar]) -> list[Bar]:
         volume=("volume", "sum"),
     )
     return [
-        Bar(
-            t=cast(datetime, opened_at),
-            o=float(row["open"]),
-            h=float(row["high"]),
-            l=float(row["low"]),
-            c=float(row["close"]),
-            v=float(row["volume"]),
+        Bar(t=t, o=o, h=h, l=low, c=c, v=v)
+        for t, o, h, low, c, v in zip(
+            folded.index,
+            folded["open"],
+            folded["high"],
+            folded["low"],
+            folded["close"],
+            folded["volume"],
+            strict=True,
         )
-        for opened_at, row in folded.iterrows()
     ]
 
 
@@ -93,13 +92,8 @@ class Average(TypedDict):
 
 def bar_averages(bars: list[Bar], lengths: tuple[int, ...]) -> list[Average]:
     close = Series([bar.close for bar in bars], dtype=float)
+    means = {length: close.rolling(length).mean() for length in lengths}
     return [
-        Average(
-            length=length,
-            values=[
-                float(value) if isfinite(value) else None
-                for value in close.rolling(length, min_periods=length).mean()
-            ],
-        )
-        for length in lengths
+        Average(length=length, values=mean.astype(object).where(mean.notna(), None).tolist())
+        for length, mean in means.items()
     ]

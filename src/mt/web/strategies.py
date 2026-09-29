@@ -6,7 +6,16 @@ from pydantic.fields import FieldInfo
 
 from mt.exchange import today, upcoming_session_bounds
 from mt.rules.settings import RuleSettings
-from mt.rules.values import UNATTRIBUTED, SettingsSection, StrategyKey, Unattributed
+from mt.rules.values import (
+    UNATTRIBUTED,
+    Amount,
+    Count,
+    Fraction,
+    SettingsSection,
+    StrategyKey,
+    Symbol,
+    Unattributed,
+)
 from mt.strategies.base import Strategy
 from mt.strategies.breakout import Breakout
 from mt.strategies.registry import ORDER_PREFIX, STRATEGIES
@@ -32,10 +41,10 @@ UNITS = {
     "fraction": "",
     "fractions": "",
 }
-FRACTIONS = {"Fraction"}
-NUMBERS = {"Count", "Amount", "int", "float"}
-TEXTS = {"Symbol", "str"}
-FLAGS = {"bool"}
+FRACTIONS: set[object] = {Fraction}
+NUMBERS: set[object] = {Count, Amount, int, float}
+TEXTS: set[object] = {Symbol, str}
+FLAGS: set[object] = {bool}
 STATE_FIELDS = {"is_paused"}
 MARKET_CARD = "Market"
 
@@ -156,16 +165,16 @@ def _parts(value: object) -> tuple[object, ...]:
 
 
 def _figure(annotation: object, *, money: bool) -> Callable[[tuple[object, ...]], str]:
-    names = {getattr(part, "__name__", "") for part in get_args(annotation) or (annotation,)}
-    if names & FRACTIONS:
+    parts: set[object] = set(get_args(annotation) or (annotation,))
+    if parts & FRACTIONS:
         return _joined(_percent)
-    if names & NUMBERS:
+    if parts & NUMBERS:
         return _joined(_money if money else _number)
-    if names & TEXTS:
+    if parts & TEXTS:
         return _joined(str)
-    if names & FLAGS:
+    if parts & FLAGS:
         return _joined(_flag)
-    raise ValueError(f"{names} has no config card figure")
+    raise ValueError(f"{parts} has no config card figure")
 
 
 def _joined(figure: Callable[[object], str]) -> Callable[[tuple[object, ...]], str]:

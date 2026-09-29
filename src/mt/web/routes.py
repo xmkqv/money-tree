@@ -4,11 +4,12 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypedDict
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
+from redis.asyncio import Redis as AsyncRedis
 from starlette.staticfiles import StaticFiles
 
 from mt.data.alpaca import AccountRead, EquityPoint, TradingClientAlpaca, upcoming_session_on
@@ -42,6 +43,16 @@ DASHBOARD_HEADERS = {
 LEDGER_KEY = "ledger"
 
 
+class AppState(TypedDict):
+    store: AsyncRedis
+    trading: TradingClientAlpaca
+    bars: BarsClientAlpaca
+
+
+class AppRequest(Request[AppState]):
+    pass
+
+
 @dataclass(frozen=True, slots=True)
 class Read[T]:
     data: T
@@ -67,10 +78,7 @@ def read_response(read: Read[Any], max_age_seconds: int) -> JSONResponse:
     content = {"data": read.data, "read_at": read.read_at}
     return JSONResponse(
         jsonable_encoder(content),
-        headers={
-            "Cache-Control": f"private, max-age={max_age_seconds}, must-revalidate",
-            "Vary": "Cookie",
-        },
+        headers={"Cache-Control": f"private, max-age={max_age_seconds}, must-revalidate"},
     )
 
 
@@ -83,8 +91,8 @@ def query_asset(symbol: Annotated[Symbol, Query()]) -> Asset:
     return asset
 
 
-async def reported_rules(request: Request) -> ReportedRules:
-    state = await read_state(request.state.store)
+async def reported_rules(request: AppRequest) -> ReportedRules:
+    state = await read_state(request.state["store"])
     return ReportedRules(
         state=state, rules=state.rules if state else settings, reported=state is not None
     )
@@ -121,16 +129,16 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
     )
     caches = (ledger_cache, account_cache, equity_cache, bar_cache, levels_cache, name_cache)
 
-    def trading(request: Request) -> TradingClientAlpaca:
-        return request.state.trading
+    def trading(request: AppRequest) -> TradingClientAlpaca:
+        return request.state["trading"]
 
-    async def read_account(request: Request) -> AccountRead:
+    async def read_account(request: AppRequest) -> AccountRead:
         return await account_cache.get_or_build(LEDGER_KEY, trading(request).read)
 
-    def bars_client(request: Request) -> BarsClientAlpaca:
-        return request.state.bars
+    def bars_client(request: AppRequest) -> BarsClientAlpaca:
+        return request.state["bars"]
 
-    async def asset_name(request: Request, symbol: Symbol) -> str:
+    async def asset_name(request: AppRequest, symbol: Symbol) -> str:
         return await name_cache.get_or_build(symbol, lambda: trading(request).asset_name(symbol))
 
     @router.get("/")
@@ -154,7 +162,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
 
     @router.get("/api/bars")
     async def bars(
-        request: Request,
+        request: AppRequest,
         symbol: Annotated[Symbol, Query()],
         instrument: Annotated[Asset, Depends(query_asset)],
         timeframe: Annotated[ChartTimeframe, Query()],
@@ -202,7 +210,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
 
     @router.get("/api/levels")
     async def levels(
-        request: Request,
+        request: AppRequest,
         instrument: Annotated[Asset, Depends(query_asset)],
         strategy_key: Annotated[StrategyKey | Unattributed, Query()],
         side: Annotated[Literal["long", "short"], Query()],
@@ -245,7 +253,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
 
     @router.get("/api/ledger")
     async def ledger(
-        request: Request, reported: Annotated[ReportedRules, Depends(reported_rules)]
+        request: AppRequest, reported: Annotated[ReportedRules, Depends(reported_rules)]
     ) -> JSONResponse:
         async def build() -> Read[Ledger]:
             account = await read_account(request)
@@ -283,7 +291,7 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
         )
 
     @router.get("/api/snapshot")
-    async def snapshot(request: Request) -> JSONResponse:
+    async def snapshot(request: AppRequest) -> JSONResponse:
         account = await read_account(request)
         cached = build_snapshot(account)
         held = ledger_cache.fresh(LEDGER_KEY)

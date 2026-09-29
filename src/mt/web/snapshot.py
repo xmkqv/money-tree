@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal, TypedDict
 
 from alpaca.trading.models import Order
-from pydantic import Field
+from pydantic import Field, computed_field
 
 from mt.data.alpaca import AccountRead, Position
 from mt.exchange import TRADING_ZONE
@@ -24,8 +24,12 @@ class BotState(TypedDict):
 
 class SnapshotPosition(Position):
     unrealized_pnl_fraction: float = Field(exclude=True)
-    unrealized_pnl_percent: float
     weight: float
+
+    @computed_field
+    @property
+    def unrealized_pnl_percent(self) -> float:
+        return round(self.unrealized_pnl_fraction * 100, 2)
 
 
 class Snapshot(TypedDict):
@@ -93,7 +97,6 @@ def snapshot_positions(raw: list[Position], equity: float) -> list[SnapshotPosit
             value=round(abs(item.value), 2),
             unrealized_pnl=round(item.unrealized_pnl, 2),
             unrealized_pnl_fraction=item.unrealized_pnl_fraction,
-            unrealized_pnl_percent=round(item.unrealized_pnl_fraction * 100, 2),
             weight=round(abs(item.value) / equity * 100, 2) if equity else 0.0,
         )
         for item in raw
