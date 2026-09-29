@@ -18,7 +18,7 @@ RUN curl --proto '=https' --fail --silent --show-error --location \
       https://mise.run | sh
 
 WORKDIR /app
-COPY mise.toml mise.production.toml ./
+COPY mise.toml mise.production.toml mise.lock ./
 RUN mise install
 
 COPY pyproject.toml uv.lock ./

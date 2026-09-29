@@ -1,5 +1,4 @@
-from datetime import datetime
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import AnyHttpUrl, Field, RedisDsn, model_validator
 
@@ -15,7 +14,7 @@ from .values import (
     EquityPeriod,
     EquityTimeframe,
     Fraction,
-    MaxAge,
+    NonNegative,
     RequiredSecret,
     SettingsSection,
     SigningSecret,
@@ -55,14 +54,14 @@ class BarsSection(SettingsSection):
     options_per_request: Count
     intraday_feed: DataFeedName
     daily_feed: DataFeedName
-    sip_delay_minutes: MaxAge
-    trade_max_age_seconds: MaxAge
+    sip_delay_minutes: NonNegative
+    trade_max_age_seconds: NonNegative
     timeout: TimeoutSection
 
 
 class RiskSection(SettingsSection):
     per_day_max: Fraction
-    positions_max: Count
+    positions_max: Annotated[int, Field(ge=2)]
     notional_usd_min: Amount
     notional_usd_max: Amount
     quantity_decimal_places: Count
@@ -73,8 +72,6 @@ class RiskSection(SettingsSection):
 
     @model_validator(mode="after")
     def check_limits(self) -> Self:
-        if self.positions_max < 2:
-            raise ValueError("the book must hold at least two positions")
         if self.notional_usd_max < self.notional_usd_min:
             raise ValueError("the holding cap must not fall below the smallest tradable notional")
         return self
@@ -103,34 +100,29 @@ class PortfolioSection(SettingsSection):
     pending_ttl_minutes: Count
     opening_lead_minutes: Count
     iteration_minutes: Count
-    stop_coverage_drift_max: Amount
+    stop_coverage_drift_shares_max: Amount
 
 
 class CompanySection(SettingsSection):
     profile_cache_max: Count
 
 
+class CalendarSection(SettingsSection):
+    cache_max: Count
+
+
 class EarningsSection(SettingsSection):
     block_days: Count
-    calendar_cache_max: Count
 
 
 class BacktestSection(SettingsSection):
     asset_defaults: dict[str, str | bool]
     warm_up_days: Count
     budget_usd: Amount
-    start_at: datetime
-    end_at: datetime
-
-    @model_validator(mode="after")
-    def check_span(self) -> Self:
-        if self.end_at <= self.start_at:
-            raise ValueError("backtest end must follow its start")
-        return self
 
 
 class IndicatorsSection(SettingsSection):
-    period: Count
+    period_bars: Count
 
 
 class BreakoutSection(SettingsSection):
@@ -140,7 +132,7 @@ class BreakoutSection(SettingsSection):
     short_stop_fraction: Fraction
     stop_fraction_min: Fraction
     stop_fraction_max: Fraction
-    target_fractions: tuple[Fraction, Fraction, Fraction]
+    target_fractions: tuple[Fraction, Fraction]
     lookback_sessions: Count
     signal_bars_max: Count
     trail_atr_multiple: Amount
@@ -150,6 +142,14 @@ class BreakoutSection(SettingsSection):
     confirm_lookback_days: Count
     trail_lookback_days: Count
 
+    @model_validator(mode="after")
+    def check_bands(self) -> Self:
+        if self.stop_fraction_max <= self.stop_fraction_min:
+            raise ValueError("the stop fractions must rise from their floor to their ceiling")
+        if sum(self.target_fractions) >= 1:
+            raise ValueError("the target fractions must leave a share to trail")
+        return self
+
 
 class StrategySection(SettingsSection):
     is_paused: bool
@@ -158,8 +158,15 @@ class StrategySection(SettingsSection):
 class BreakoutVariationSection(StrategySection):
     opening_minutes: Count
     volume_multiple: Amount
-    target_multiples: tuple[float, float, float]
+    target_multiples: tuple[Amount, Amount, Amount]
     entry_extension_max: Fraction | None
+
+    @model_validator(mode="after")
+    def check_targets(self) -> Self:
+        first, second, third = self.target_multiples
+        if not first < second < third:
+            raise ValueError("target multiples must rise")
+        return self
 
 
 class DailySection(SettingsSection):
@@ -170,7 +177,6 @@ class DailySection(SettingsSection):
 class DailyVariationSection(StrategySection):
     trend_sessions: Count
     adx_min: Amount
-    does_heed_earnings: bool
     holdings_max: Count
 
 
@@ -198,7 +204,7 @@ class Daily20SmaSection(DailyVariationSection):
     trail_lookback_days: Count
 
     @model_validator(mode="after")
-    def check_targets(self) -> Self:
+    def check_bands(self) -> Self:
         if self.rsi_max <= self.rsi_min:
             raise ValueError("the RSI band must rise from its floor to its ceiling")
         if self.target_gains[1] <= self.target_gains[0]:
@@ -226,10 +232,14 @@ class WebSection(SettingsSection):
     login_ttl_seconds: Count
     heartbeat_timeout_seconds: Count
 
+    @property
+    def oauth_redirect_uri(self) -> str:
+        return f"{str(self.base_url).rstrip('/')}/auth/callback"
+
 
 class ChartTimeframeSection(SettingsSection):
     pad_days: Count
-    span_max: Count
+    span_days_max: Count
     warm_up_days: Count
 
 
@@ -244,7 +254,6 @@ class DashboardSection(SettingsSection):
     levels_lookback_days: Count
     levels_source: Timeframe
     levels_source_bars_max: Count
-    levels_range_multiple: Count
     bars_max: Count
     chart_timeframes: dict[ChartTimeframe, ChartTimeframeSection]
     session_source: Timeframe
@@ -256,19 +265,17 @@ class DashboardSection(SettingsSection):
     equity_daily_period: EquityPeriod
     equity_daily_timeframe: EquityTimeframe
     equity_daily_ttl_seconds: Count
-    equity_intraday_period: EquityPeriod
-    equity_intraday_timeframe: EquityTimeframe
     sma_lengths: tuple[Count, ...] = Field(min_length=1)
     sma_colors: tuple[CssToken, ...] = Field(min_length=1)
-    ledger_max_age_seconds: MaxAge
-    chart_max_age_seconds: MaxAge
-    levels_max_age_seconds: MaxAge
-    strategies_max_age_seconds: MaxAge
+    ledger_max_age_seconds: NonNegative
+    chart_max_age_seconds: NonNegative
+    levels_max_age_seconds: NonNegative
+    strategies_max_age_seconds: NonNegative
     refresh_poll_seconds: Count
     snapshot_poll_seconds: Count
 
     @model_validator(mode="after")
-    def check_chart_timeframes(self) -> Self:
+    def check_dashboard(self) -> Self:
         if len(set(self.sma_lengths)) != len(self.sma_lengths):
             raise ValueError("SMA lengths must be distinct")
         if set(self.chart_timeframes) != set(CHART_TIMEFRAMES):

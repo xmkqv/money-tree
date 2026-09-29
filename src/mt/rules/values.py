@@ -1,3 +1,5 @@
+import re
+from collections.abc import Sequence
 from typing import Annotated, Literal, TypeIs, get_args
 
 from pydantic import (
@@ -22,12 +24,6 @@ type StrategyKey = Literal[
 
 type Unattributed = Literal["unattributed"]
 
-UNATTRIBUTED: Unattributed = "unattributed"
-STRATEGY_KEYS: tuple[StrategyKey, ...] = get_args(StrategyKey.__value__)
-
-ORDER_PREFIX = "mt"
-LIQUIDATE_CODE = "liquidate"
-
 type OrderReason = Literal[
     "entry",
     "stop",
@@ -42,17 +38,44 @@ type OrderReason = Literal[
     "limit",
 ]
 
+type Count = Annotated[int, Field(gt=0)]
+type Amount = Annotated[float, Field(gt=0)]
+type Fraction = Annotated[float, Field(gt=0, le=1)]
+type NonNegative = Annotated[int, Field(ge=0)]
+type Symbol = Annotated[str, Field(min_length=1)]
+type Email = Annotated[str, AfterValidator(str.casefold), Field(min_length=1)]
+type CssToken = Annotated[str, Field(pattern=r"^--[a-z0-9-]+$")]
+type RequiredSecret = Annotated[SecretStr, Field(min_length=1)]
+type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
+type Mode = Literal["development", "production"]
+type BrokerMode = Literal["live", "paper"]
+type DataFeedName = Literal["sip", "delayed_sip", "iex"]
+type EquityPeriod = Annotated[str, Field(pattern=r"^\d+[DWMA]$")]
+type EquityTimeframe = Annotated[str, Field(pattern=r"^\d+(Min|H|D)$")]
+type ChartTimeframe = Literal["5Min", "1Hour", "1Day"]
+
+
+class SettingsSection(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+TIMEFRAME_PATTERN = re.compile(r"^\d+(Min|Hour|Day)$")
+
+UNATTRIBUTED: Unattributed = "unattributed"
+STRATEGY_KEYS: tuple[StrategyKey, ...] = get_args(StrategyKey.__value__)
+
+ORDER_PREFIX = "mt"
+LIQUIDATE_CODE = "liquidate"
+
 ORDER_REASONS: tuple[OrderReason, ...] = get_args(OrderReason.__value__)
 TARGET_REASONS: tuple[OrderReason, ...] = ("target_1", "target_2", "target_3")
 
+CHART_TIMEFRAMES: tuple[ChartTimeframe, ...] = get_args(ChartTimeframe.__value__)
 
-def split_keys(value: object) -> object:
-    if not isinstance(value, str):
-        return value
-    return [item.strip() for item in value.split(",") if item.strip()]
+type Timeframe = Annotated[str, Field(pattern=TIMEFRAME_PATTERN)]
 
 
-def check_distinct(values: tuple[StrategyKey, ...]) -> tuple[StrategyKey, ...]:
+def check_distinct[Keys: Sequence[StrategyKey]](values: Keys) -> Keys:
     if len(set(values)) != len(values):
         raise ValueError(f"strategy keys must be distinct; choose from: {', '.join(STRATEGY_KEYS)}")
     return values
@@ -66,33 +89,18 @@ def is_order_reason(value: str) -> TypeIs[OrderReason]:
     return value in ORDER_REASONS
 
 
-type Count = Annotated[int, Field(gt=0)]
-type Amount = Annotated[float, Field(gt=0)]
-type Fraction = Annotated[float, Field(gt=0, le=1)]
-type MaxAge = Annotated[int, Field(ge=0)]
-type Symbol = Annotated[str, Field(min_length=1)]
-type Email = Annotated[str, AfterValidator(str.casefold), Field(min_length=1)]
-type CssToken = Annotated[str, Field(pattern=r"^--[a-z0-9-]+$")]
-type RequiredSecret = Annotated[SecretStr, Field(min_length=1)]
-type SigningSecret = Annotated[SecretStr, Field(min_length=32)]
-type Mode = Literal["development", "production"]
-type BrokerMode = Literal["live", "paper"]
-type DataFeedName = Literal["sip", "delayed_sip", "iex"]
-type Timeframe = Annotated[str, Field(pattern=r"^\d+(Min|Hour|Day)$")]
-type EquityPeriod = Annotated[str, Field(pattern=r"^\d+[DWMA]$")]
-type EquityTimeframe = Annotated[str, Field(pattern=r"^\d+(Min|H|D)$")]
-type ChartTimeframe = Literal["5Min", "1Hour", "1Day"]
+def _split_keys(value: object) -> object:
+    if not isinstance(value, str):
+        return value
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
 type StrategySelection = Annotated[
     tuple[StrategyKey, ...],
-    BeforeValidator(split_keys),
+    BeforeValidator(_split_keys),
     AfterValidator(check_distinct),
     Field(min_length=1),
 ]
 
-CHART_TIMEFRAMES: tuple[ChartTimeframe, ...] = get_args(ChartTimeframe.__value__)
 
 strategy_selection_adapter: TypeAdapter[tuple[StrategyKey, ...]] = TypeAdapter(StrategySelection)
-
-
-class SettingsSection(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)

@@ -19,24 +19,24 @@ SERVICE_SETTINGS: dict[ServiceName, tuple[type[BaseSettings], ...]] = {
 }
 
 
-def secret_keys() -> set[str]:
+def service_secrets(service: ServiceName) -> list[str]:
+    read = {key for model in SERVICE_SETTINGS[service] for key in _iter_keys(model, "")}
+    return sorted(_secret_keys() & read)
+
+
+def _secret_keys() -> set[str]:
     configuration = DeploymentSettings()  # pyright: ignore[reportCallIssue]
     path = configuration.project_root / f"mise.{configuration.mode}.toml"
     declared: dict[str, str] = loads(path.read_text())["vars"]
-    return set(declared["secrets"].split())
+    return set(declared.get("secrets", "").split())
 
 
-def iter_keys(model: type[BaseModel], prefix: str) -> Iterator[str]:
+def _iter_keys(model: type[BaseModel], prefix: str) -> Iterator[str]:
     for name, field in model.model_fields.items():
         annotation = field.annotation
         if isinstance(field.validation_alias, str):
             yield field.validation_alias
         elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
-            yield from iter_keys(annotation, f"{prefix}{name.upper()}__")
+            yield from _iter_keys(annotation, f"{prefix}{name.upper()}__")
         else:
             yield f"{prefix}{name.upper()}"
-
-
-def service_secrets(service: ServiceName) -> list[str]:
-    read = {key for model in SERVICE_SETTINGS[service] for key in iter_keys(model, "")}
-    return sorted(secret_keys() & read)

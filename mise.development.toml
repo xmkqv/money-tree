@@ -9,12 +9,6 @@ start_attempts = "60"
 start_delay_seconds = "1"
 stop_attempts = "20"
 stop_delay_seconds = "0.5"
-secrets = """
-BROKER__API_KEY
-BROKER__API_SECRET
-FINNHUB__API_KEY
-WEB__LOGIN_SECRET
-"""
 
 [env]
 REDIS__URL = "redis://{{vars.redis_bind}}:{{vars.redis_port}}/0"

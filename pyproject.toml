@@ -44,7 +44,7 @@ include = ["src"]
 pythonVersion = "3.14"
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false
-reportUnusedFunction = false
+reportUnusedFunction = true
 
 [tool.ruff]
 line-length = 100

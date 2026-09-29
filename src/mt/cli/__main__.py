@@ -1,11 +1,11 @@
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import TYPE_CHECKING, Annotated
 
 import typer
 from pydantic import ValidationError
 
 from mt.rules.services import ServiceName, service_secrets
-from mt.rules.values import STRATEGY_KEYS, StrategyKey, strategy_selection_adapter
+from mt.rules.values import StrategyKey, strategy_selection_adapter
 
 
 if TYPE_CHECKING:
@@ -24,14 +24,12 @@ def list_environment(service: Annotated[ServiceName, typer.Option()]) -> None:
 
 
 def _parse_assets(value: str) -> list[Asset]:
-    from mt.data.asset import Asset, AssetType
+    from mt.data.asset import Asset
 
     try:
         assets = [Asset.from_symbol(item) for item in value.split(",")]
         if len(set(assets)) != len(assets):
             raise ValueError("symbols must be distinct")
-        if any(asset.asset_type != AssetType.STOCK for asset in assets):
-            raise ValueError("reports support equities only")
         return assets
     except ValueError as error:
         raise typer.BadParameter(str(error)) from error
@@ -41,9 +39,7 @@ def _parse_strategies(value: str) -> list[StrategyKey]:
     try:
         return list(strategy_selection_adapter.validate_python(value))
     except ValidationError as error:
-        names = ", ".join(sorted(STRATEGY_KEYS))
-        message = f"strategies must be distinct keys; choose from: {names}"
-        raise typer.BadParameter(message) from error
+        raise typer.BadParameter("; ".join(item["msg"] for item in error.errors())) from error
 
 
 def _parse_strategy(value: str) -> StrategyKey:
@@ -55,24 +51,21 @@ def _parse_strategy(value: str) -> StrategyKey:
 
 @app.command("report")
 def run_report(
-    strategy: Annotated[str | None, typer.Option()] = None,
-    symbols: Annotated[str | None, typer.Option()] = None,
-    start: Annotated[datetime | None, typer.Option()] = None,
-    end: Annotated[datetime | None, typer.Option()] = None,
+    strategy: Annotated[str, typer.Option()],
+    symbols: Annotated[str, typer.Option()],
+    start: Annotated[date, typer.Option(parser=date.fromisoformat)],
+    end: Annotated[date, typer.Option(parser=date.fromisoformat)],
 ) -> None:
-    from mt.rules.bot import settings as bot_settings
-    from mt.rules.shared import settings
-
-    symbols = settings.benchmark_symbol if symbols is None else symbols
-    start = bot_settings.backtest.start_at if start is None else start
-    end = bot_settings.backtest.end_at if end is None else end
-    if start.tzinfo != end.tzinfo or end <= start:
-        raise typer.BadParameter("end must follow start in the same timezone")
-    selected = bot_settings.strategies[0] if strategy is None else _parse_strategy(strategy)
-    assets = _parse_assets(symbols)
     from mt.bot.backtest import report
 
-    typer.echo(report(selected, assets, start, end))
+    typer.echo(
+        report(
+            _parse_strategy(strategy),
+            _parse_assets(symbols),
+            datetime.combine(start, time()),
+            datetime.combine(end, time()),
+        )
+    )
 
 
 @app.command("trade")

@@ -10,11 +10,13 @@ from .sections import (
     BreakoutSection,
     BreakoutVariationSection,
     BrokerSection,
+    CalendarSection,
     CompanySection,
     Daily20SmaSection,
     DailySection,
     DailySmaSection,
     DailyTfbSection,
+    DailyVariationSection,
     DashboardSection,
     EarningsSection,
     ExportSection,
@@ -37,11 +39,14 @@ class Settings(BaseSettings):
     )
 
 
+class ModeSettings(Settings):
+    mode: Mode = Field(validation_alias="MISE_ENV")
+
+
 class RuleSettings(Settings):
     benchmark_symbol: Symbol
     risk: RiskSection
     universe: UniverseSection
-    company: CompanySection
     earnings: EarningsSection
     indicators: IndicatorsSection
     breakout: BreakoutSection
@@ -55,11 +60,7 @@ class RuleSettings(Settings):
 
     @model_validator(mode="after")
     def check_strategy_holdings(self) -> Self:
-        capped = (
-            self.daily_sma,
-            self.daily_tfb,
-            self.daily_20sma,
-        )
+        capped = [section for _, section in self if isinstance(section, DailyVariationSection)]
         if any(section.holdings_max > self.risk.strategy_holdings_max for section in capped):
             raise ValueError("a strategy holding cap exceeds the risk holdings cap")
         return self
@@ -67,6 +68,8 @@ class RuleSettings(Settings):
 
 class SharedSettings(RuleSettings):
     finnhub: FinnhubSection
+    company: CompanySection
+    calendar: CalendarSection
     broker: BrokerSection
     bars: BarsSection
     redis: RedisSection
@@ -79,20 +82,14 @@ class BotSettings(Settings):
     backtest: BacktestSection
 
 
-class WebSettings(Settings):
+class WebSettings(ModeSettings):
     requests: RequestSection
-    mode: Annotated[Mode, Field(validation_alias="MISE_ENV")]
     web: WebSection
     dashboard: DashboardSection
 
-    @property
-    def oauth_redirect_uri(self) -> str:
-        return f"{str(self.web.base_url).rstrip('/')}/auth/callback"
 
-
-class DeploymentSettings(Settings):
+class DeploymentSettings(ModeSettings):
     project_root: Path = Field(validation_alias="MISE_PROJECT_ROOT")
-    mode: Mode = Field(validation_alias="MISE_ENV")
 
 
 class LoginSettings(Settings):
