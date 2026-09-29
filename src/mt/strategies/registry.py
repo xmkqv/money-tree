@@ -16,6 +16,8 @@ from .daily_sma import DailySma
 from .daily_tfb import DailyTfb
 
 
+CODE_SUFFIX_LENGTH = 16
+
 STRATEGIES: tuple[type[Strategy], ...] = (
     Breakout5m,
     Breakout10m,
@@ -37,16 +39,11 @@ for _strategy in STRATEGIES:
 
 
 def order_code(code: str, reason: OrderReason) -> str:
-    return "-".join((ORDER_PREFIX, code, reason, uuid4().hex[:8]))
+    return _code(code, reason)
 
 
 def liquidate_code() -> str:
-    return "-".join((ORDER_PREFIX, LIQUIDATE_CODE, uuid4().hex))
-
-
-def _order_parts(value: str) -> list[str] | None:
-    parts = value.split("-")
-    return parts if len(parts) >= 3 and parts[0] == ORDER_PREFIX else None
+    return _code(LIQUIDATE_CODE)
 
 
 def find_order_strategy_key(value: str) -> StrategyKey | None:
@@ -66,3 +63,12 @@ def find_order_reason(value: str) -> OrderReason | None:
     if len(parts) == 4 and is_order_reason(parts[2]):
         return parts[2]
     return None
+
+
+def _code(*parts: str) -> str:
+    return "-".join((ORDER_PREFIX, *parts, uuid4().hex[:CODE_SUFFIX_LENGTH]))
+
+
+def _order_parts(value: str) -> list[str] | None:
+    parts = value.split("-")
+    return parts if len(parts) >= 3 and parts[0] == ORDER_PREFIX else None

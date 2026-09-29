@@ -1,24 +1,28 @@
+import re
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import date, datetime
-from decimal import Decimal
+from datetime import datetime
 from typing import ClassVar, Protocol
 
 from pandas import DataFrame
 
 from mt.data.asset import Asset
+from mt.indicators import latest_atr
+from mt.rules.sections import DailyVariationSection, StrategySection
 from mt.rules.shared import settings
 from mt.rules.values import TARGET_REASONS, OrderReason, StrategyKey
-from mt.sizing import Direction, next_stop, round_quantity
+from mt.sizing import Direction, next_stop
 from mt.state import EventLevel
+
+
+type Take = tuple[OrderReason, float | None]
 
 
 @dataclass(frozen=True, slots=True)
 class Session:
     now: datetime
-    opens: datetime
-    closes: datetime
+    opens_at: datetime
+    closes_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,15 +37,18 @@ class Candidate:
 class Ladder:
     original_quantity: float
     targets: tuple[float, ...]
+    fractions: tuple[float, ...]
     stage: int = 0
 
-    def step(self, fraction: float, *, is_whole: bool = False) -> tuple[Decimal, OrderReason]:
-        quantity = round_quantity(
-            Decimal(str(self.original_quantity)) * Decimal(str(fraction)), is_whole=is_whole
-        )
+    def try_take(self, price: float, direction: Direction) -> Take | None:
+        if self.stage >= len(self.targets) or direction * (price - self.targets[self.stage]) < 0:
+            return None
         reason = TARGET_REASONS[self.stage]
+        if self.stage >= len(self.fractions):
+            return reason, None
+        shares = self.original_quantity * self.fractions[self.stage]
         self.stage += 1
-        return quantity, reason
+        return reason, shares
 
 
 @dataclass(slots=True)
@@ -57,6 +64,11 @@ class Holding:
     lowest: float
     ladder: Ladder | None = None
     stop_reason: OrderReason = "stop"
+    breakeven_at: datetime | None = None
+
+    def mark(self, price: float) -> None:
+        self.highest = max(self.highest, price)
+        self.lowest = min(self.lowest, price)
 
     def tighten_stop(self, stop: float, reason: OrderReason) -> None:
         raised = next_stop(self.direction, self.stop, stop)
@@ -67,10 +79,10 @@ class Holding:
 class Portfolio(Protocol):
     def assets(self) -> list[Asset]: ...
 
-    def daily_frame(self, asset: Asset) -> DataFrame | None: ...
+    def get_daily_frame(self, asset: Asset) -> DataFrame | None: ...
 
     def frames(
-        self, assets: list[Asset], start: datetime, now: datetime, minutes: int
+        self, assets: list[Asset], start_at: datetime, now_at: datetime, minutes: int
     ) -> dict[Asset, DataFrame]: ...
 
     def quote(self, asset: Asset) -> float | None: ...
@@ -79,7 +91,7 @@ class Portfolio(Protocol):
 
     def is_taken(self, strategy: Strategy, asset: Asset) -> bool: ...
 
-    def enter(self, strategy: Strategy, candidate: Candidate, session: Session) -> bool: ...
+    def enter(self, strategy: Strategy, candidate: Candidate, session: Session) -> None: ...
 
     def exit(
         self, holding: Holding, reason: OrderReason, quantity: float | None = None
@@ -90,11 +102,15 @@ class Portfolio(Protocol):
     def record(self, strategy: Strategy, kind: str, level: EventLevel, message: str) -> None: ...
 
 
+MINUTES_PATTERN = re.compile(r"\d+m")
+
+
 class Strategy(ABC):
     key: ClassVar[StrategyKey]
     code: ClassVar[str]
     family: ClassVar[str]
     variation: ClassVar[str]
+    rules: ClassVar[StrategySection]
     is_paused: ClassVar[bool]
     is_stop_resting: ClassVar[bool] = False
     holdings_max: ClassVar[int] = settings.risk.strategy_holdings_max
@@ -102,21 +118,23 @@ class Strategy(ABC):
     def __init_subclass__(cls) -> None:
         if "key" not in cls.__dict__:
             return
-        family, _, variation = cls.key.partition("_")
-        cls.family = family
-        if "variation" not in cls.__dict__:
-            cls.variation = variation.upper() if variation.isalpha() else variation
+        cls.family, _, cls.variation = cls.key.partition("_")
+        cls.is_paused = cls.rules.is_paused
+        if isinstance(cls.rules, DailyVariationSection):
+            cls.holdings_max = cls.rules.holdings_max
 
     def __init__(self, portfolio: Portfolio) -> None:
         self.portfolio = portfolio
 
     @classmethod
     def name(cls) -> str:
-        return f"{cls.family.capitalize()} {cls.variation}"
+        is_minutes = MINUTES_PATTERN.fullmatch(cls.variation)
+        variation = cls.variation if is_minutes else cls.variation.upper()
+        return f"{cls.family.capitalize()} {variation}"
 
     @classmethod
     @abstractmethod
-    def entry_window(cls, opens: datetime, closes: datetime) -> tuple[datetime, datetime]: ...
+    def entry_window(cls, opens_at: datetime, closes_at: datetime) -> tuple[datetime, datetime]: ...
 
     @abstractmethod
     def run(self, session: Session) -> None: ...
@@ -124,29 +142,25 @@ class Strategy(ABC):
     @abstractmethod
     def manage(self, holding: Holding, session: Session) -> None: ...
 
-    def begin(self, session_on: date) -> None:
+    def begin(self, session: Session) -> None:
         return None
 
     def ladder(self, holding: Holding, quantity: float) -> Ladder | None:
         return None
 
-    def is_capped(self, now: datetime | None = None) -> bool:
+    def is_capped(self, session: Session) -> bool:
         if self.portfolio.holding_count(self.key) < self.holdings_max:
             return False
-        if now is not None:
-            self.portfolio.record(
-                self,
-                f"entries.capped.{now.date()}",
-                "info",
-                f"{self.name()} entries paused: {self.holdings_max} holdings already open",
-            )
+        self.portfolio.record(
+            self,
+            f"entries.capped.{session.now.date()}",
+            "info",
+            f"{self.name()} entries paused: {self.holdings_max} holdings already open",
+        )
         return True
 
 
-def ranked[Item](
-    items: Iterable[Item],
-    *,
-    symbol: Callable[[Item], str],
-    score: Callable[[Item], float],
-) -> list[Item]:
-    return sorted(items, key=lambda item: (-score(item), symbol(item)))
+def trail_distance(frame: DataFrame, multiple: float, period_bars: int) -> float | None:
+    if len(frame) <= period_bars:
+        return None
+    return multiple * latest_atr(frame, period_bars)

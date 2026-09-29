@@ -11,6 +11,7 @@ from mt.strategies.registry import STRATEGIES_BY_KEY
 from .broker import broker_credentials
 
 
+RUNS_DIR = Path("runs")
 ARTIFACT_NAMES = {
     "stats_file": "stats.csv",
     "trades_file": "trades.csv",
@@ -28,11 +29,10 @@ def report(strategy_key: StrategyKey, assets: list[Asset], start: datetime, end:
 
     if not assets or any(asset.asset_type != AssetType.STOCK for asset in assets):
         raise ValueError("reports require equity assets")
-    output_dir = Path("runs") / f"{strategy_key}-{start:%Y%m%d}-{end:%Y%m%d}"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    datasource = YahooDataBacktesting
-    datasource_configuration: dict[str, str | bool] | None = None
-    datasource_options: dict[str, object] = {}
+    if end <= start:
+        raise ValueError("report end must fall after its start")
+    datasource_configuration: dict[str, str | bool] | None
+    datasource_options: dict[str, object]
     if issubclass(STRATEGIES_BY_KEY[strategy_key], Breakout):
         datasource = AlpacaBacktesting
         datasource_configuration = broker_credentials(is_paper=True)
@@ -40,6 +40,12 @@ def report(strategy_key: StrategyKey, assets: list[Asset], start: datetime, end:
             "timestep": "minute",
             "warm_up_trading_days": bot_settings.backtest.warm_up_days,
         }
+    else:
+        datasource = YahooDataBacktesting
+        datasource_configuration = None
+        datasource_options = {}
+    output_dir = RUNS_DIR / f"{strategy_key}-{start:%Y%m%d}-{end:%Y%m%d}"
+    output_dir.mkdir(parents=True, exist_ok=True)
     Portfolio.backtest(
         datasource,
         start,

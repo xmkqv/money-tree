@@ -38,7 +38,7 @@ class StateExporter:
     def start(self) -> None:
         self._thread.start()
 
-    def publish(
+    def record(
         self,
         status: RunStatus,
         kind: str,
@@ -50,32 +50,16 @@ class StateExporter:
         with self._lock:
             if self._stopping.is_set():
                 return
-            self._merge(status, self._event(kind, level, message, strategy_key=strategy_key))
+            self._merge(status, _event(kind, level, message, strategy_key=strategy_key))
 
     def close(self, status: Literal["stopped", "failed"], message: str) -> None:
         with self._lock:
             if self._stopping.is_set():
                 return
             level: EventLevel = "info" if status == "stopped" else "error"
-            self._merge(status, self._event(f"run.{status}", level, message))
+            self._merge(status, _event(f"run.{status}", level, message))
             self._stopping.set()
         self._thread.join(timeout=bot_settings.export.close_timeout_seconds)
-
-    def _event(
-        self,
-        kind: str,
-        level: EventLevel,
-        message: str,
-        *,
-        strategy_key: StrategyKey | None = None,
-    ) -> StateEvent:
-        return StateEvent(
-            kind=kind,
-            occurred_at=datetime.now(UTC),
-            level=level,
-            message=message,
-            strategy_key=strategy_key,
-        )
 
     def _merge(self, status: RunStatus, event: StateEvent) -> None:
         if self._state.status in {"stopped", "failed"} and status != "failed":
@@ -92,16 +76,32 @@ class StateExporter:
             str(settings.redis.url)
         ) as client:
             while True:
-                stopped = self._stopping.wait(bot_settings.export.interval_seconds)
-                self._send(client, self._heartbeat())
-                if stopped:
+                is_stopped = self._stopping.wait(bot_settings.export.interval_seconds)
+                self._publish(client, self._heartbeat())
+                if is_stopped:
                     return
 
-    def _send(self, client: Redis, state: State) -> None:
+    def _publish(self, client: Redis, state: State) -> None:
         try:
             publish_state(client, state)
         except RedisError as error:
             logger.warning("State export failed: %s", type(error).__name__)
+
+
+def _event(
+    kind: str,
+    level: EventLevel,
+    message: str,
+    *,
+    strategy_key: StrategyKey | None = None,
+) -> StateEvent:
+    return StateEvent(
+        kind=kind,
+        occurred_at=datetime.now(UTC),
+        level=level,
+        message=message,
+        strategy_key=strategy_key,
+    )
 
 
 def _build_state(
