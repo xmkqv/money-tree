@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from mt.data.asset import Asset
 
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(no_args_is_help=True, add_completion=False)
 environment = typer.Typer(no_args_is_help=True)
 app.add_typer(environment, name="env")
 
