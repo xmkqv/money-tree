@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from math import isfinite
-from typing import ClassVar, cast
+from typing import ClassVar
 
 from pandas import DataFrame, DatetimeIndex, Timestamp
 
@@ -55,10 +55,11 @@ def is_setup_ready(high: float, low: float, close: float) -> bool:
 def relative_volume(frame: DataFrame, day: date, clock: time) -> float | None:
     sessions = settings.breakout.lookback_sessions
     regular = regular_session(frame)
-    index = cast(DatetimeIndex, regular.index)
+    index = DatetimeIndex(regular.index)
+    stamps = index.normalize()
     current = Timestamp(day, tz=TRADING_ZONE)
-    to_clock = regular[(index.normalize() <= current) & (index.time <= clock)]
-    daily = to_clock["volume"].groupby(cast(DatetimeIndex, to_clock.index).normalize()).sum()
+    keep = (stamps <= current) & (index.time <= clock)
+    daily = regular["volume"][keep].groupby(stamps[keep]).sum()
     if current not in daily.index:
         return None
     history = daily.iloc[:-1].tail(sessions)
@@ -211,7 +212,7 @@ class Breakout(Strategy):
     def is_confirmed(self, frame: DataFrame, now: datetime) -> bool:
         if frame.empty:
             return False
-        clock = cast(Timestamp, frame.index[-1]).time()
+        clock = frame.index[-1].time()
         ratio = relative_volume(frame, now.date(), clock)
         return ratio is not None and ratio >= self.rules.volume_multiple
 
@@ -242,7 +243,7 @@ class Breakout(Strategy):
         for asset, frame in frames.items():
             if frame.empty:
                 continue
-            index = cast(DatetimeIndex, frame.index)
+            index = DatetimeIndex(frame.index)
             inside = (index >= Timestamp(session.opens)) & (index < Timestamp(opening_end))
             opening = frame[inside]
             after = frame.loc[opening_end:]
@@ -253,13 +254,13 @@ class Breakout(Strategy):
             found = self._first_break(after, high, low)
             if found is None:
                 continue
-            index, direction, close = found
+            position, direction, close = found
             self._scanned.add(asset)
             if not is_setup_ready(high, low, close):
                 continue
-            if len(after) - index > self.family_rules.signal_bars_max:
+            if len(after) - position > self.family_rules.signal_bars_max:
                 continue
-            signals.append(Signal(asset, direction, high, low, cast(Timestamp, after.index[index])))
+            signals.append(Signal(asset, direction, high, low, after.index[position]))
         return signals
 
     def _first_break(

@@ -12,9 +12,9 @@ from mt.frames import last_close
 
 def daily_indicators(frame: DataFrame, lengths: Collection[int], period: int) -> DataFrame:
     close = frame["close"]
-    rsi = ta_rsi(close, length=period, talib=False)
-    atr = ta_atr(frame["high"], frame["low"], close, length=period, talib=False)
-    directional = ta_adx(frame["high"], frame["low"], frame["close"], length=period, talib=False)
+    rsi = ta_rsi(close, length=period)
+    atr = ta_atr(frame["high"], frame["low"], close, length=period)
+    directional = ta_adx(frame["high"], frame["low"], frame["close"], length=period)
     columns: dict[str, Series | float] = {
         f"SMA_{length}": close.rolling(length).mean() for length in lengths
     }
@@ -31,7 +31,7 @@ def latest_atr(frame: DataFrame, period: int) -> float:
     values = (
         frame[name]
         if name in frame.columns
-        else ta_atr(frame["high"], frame["low"], frame["close"], length=period, talib=False)
+        else ta_atr(frame["high"], frame["low"], frame["close"], length=period)
     )
     latest = finite_value(values) if isinstance(values, Series) else None
     if latest is None:

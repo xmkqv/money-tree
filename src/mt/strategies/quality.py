@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from mt.data.asset import Asset
 from mt.data.company import industry
+from mt.data.edgar import ciks, fundamentals
 from mt.rules.sections import QualityGpSection
 from mt.rules.shared import settings
 
@@ -54,8 +55,6 @@ class Quality(Monthly):
         return found
 
     def _rank(self, day: date) -> tuple[Asset, ...]:
-        from mt.data.edgar import ciks, fundamentals
-
         universe = self.portfolio.assets()[: self.rules.universe_size]
         if not universe:
             return ()

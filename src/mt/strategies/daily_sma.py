@@ -33,8 +33,6 @@ class DailySma(Daily):
         rules = cls._rules()
         period = settings.indicators.period
         crossed = crossed_above_average(frame)
-        if crossed is None:
-            return False
         close = frame["close"]
         signal = (
             crossed

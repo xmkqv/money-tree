@@ -1,6 +1,5 @@
 from collections.abc import Collection
 from datetime import UTC
-from typing import cast
 
 from pandas import DataFrame, DatetimeIndex
 from pandas.api.types import is_numeric_dtype
@@ -25,7 +24,7 @@ def normalize_ohlcv(frame: DataFrame, required: Collection[str]) -> DataFrame:
 
 
 def regular_session(frame: DataFrame) -> DataFrame:
-    index = cast(DatetimeIndex, frame.index)
+    index = DatetimeIndex(frame.index)
     inside = (index >= session_starts(index)) & (index < session_ends(index))
     return frame[inside]
 

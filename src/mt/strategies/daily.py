@@ -1,9 +1,8 @@
 from abc import abstractmethod
 from datetime import date, datetime
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from pandas import DataFrame, Series
-from pandas_ta_classic.utils import cross as ta_cross
 
 from mt.data.asset import Asset
 from mt.data.earnings import is_earnings_blocked, is_earnings_exit_due
@@ -28,18 +27,16 @@ def does_signal_exit(frame: DataFrame) -> bool:
         return False
     average = f"SMA_{settings.daily.average_sessions}"
     strength = f"RSI_{settings.indicators.period}"
-    inputs = frame[["close", average, strength]]
-    if inputs.iloc[-1].isna().any():
+    last = frame[["close", average, strength]].iloc[-1]
+    if last.isna().any():
         return False
-    signal = (frame["close"] < frame[average]) | (frame[strength] < settings.daily.exit_rsi_max)
-    return bool(signal.iloc[-1])
+    return bool(last["close"] < last[average] or last[strength] < settings.daily.exit_rsi_max)
 
 
-def crossed_above_average(frame: DataFrame) -> Series[Any] | None:
-    crossed = ta_cross(
-        frame["close"], frame[f"SMA_{settings.daily.average_sessions}"], above=True, asint=False
-    )
-    return crossed if isinstance(crossed, Series) else None
+def crossed_above_average(frame: DataFrame) -> Series[bool]:
+    average = frame[f"SMA_{settings.daily.average_sessions}"]
+    close = frame["close"]
+    return (close > average) & (close.shift(1) < average.shift(1))
 
 
 class Daily(Strategy):

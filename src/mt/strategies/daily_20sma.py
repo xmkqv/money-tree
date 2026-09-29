@@ -44,8 +44,6 @@ class Daily20Sma(Daily):
         rules = cls._rules()
         period = settings.indicators.period
         crossed = crossed_above_average(frame)
-        if crossed is None:
-            return False
         close = frame["close"]
         trend = frame[f"SMA_{rules.trend_sessions}"]
         trend_long = frame[f"SMA_{rules.trend_sessions_long}"]

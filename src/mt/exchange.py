@@ -1,10 +1,14 @@
-from datetime import UTC, date, datetime, time
+from datetime import date, datetime, time
 
 import exchange_calendars
 from pandas import DatetimeIndex, Series
 
 
-XNYS = exchange_calendars.get_calendar("XNYS")
+CALENDAR_YEARS_AHEAD = 5
+
+XNYS = exchange_calendars.get_calendar(
+    "XNYS", end=date(date.today().year + CALENDAR_YEARS_AHEAD, 12, 31)
+)
 TRADING_ZONE = XNYS.tz
 
 
@@ -42,5 +46,4 @@ def _bounds(session: date) -> tuple[datetime, datetime]:
 
 def _session_stamps(index: DatetimeIndex, table: Series) -> DatetimeIndex:
     sessions = index.tz_convert(TRADING_ZONE).normalize().tz_localize(None)
-    stamps = DatetimeIndex(table.reindex(sessions).to_numpy(), tz=UTC)
-    return stamps.tz_convert(TRADING_ZONE)
+    return DatetimeIndex(table.reindex(sessions).array).tz_convert(TRADING_ZONE)

@@ -1,7 +1,7 @@
-from datetime import date, datetime, timedelta
-from typing import Any, ClassVar, cast
+from datetime import date, datetime
+from typing import ClassVar
 
-from pandas import DataFrame, DateOffset, DatetimeIndex, Timestamp
+from pandas import DataFrame, DatetimeIndex, Timedelta, Timestamp, date_range
 
 from mt.data.asset import Asset
 from mt.rules.sections import AllocationBaaSection
@@ -17,17 +17,16 @@ MONTH_END_GAP_DAYS = 7
 
 
 def month_end_closes(frame: DataFrame, month_start: date, months: int) -> list[float] | None:
-    dates = cast(Any, cast(DatetimeIndex, frame.index)).date
-    closes: list[float] = []
-    for offset in range(months + 1):
-        cutoff = (Timestamp(month_start) - DateOffset(months=offset) - timedelta(days=1)).date()
-        eligible = frame["close"][dates <= cutoff]
-        if eligible.empty:
-            return None
-        if (cutoff - cast(Timestamp, eligible.index[-1]).date()).days > MONTH_END_GAP_DAYS:
-            return None
-        closes.append(float(eligible.iloc[-1]))
-    return closes
+    days = DatetimeIndex(frame.index).tz_localize(None).normalize()
+    cutoffs = date_range(
+        end=Timestamp(month_start) - Timedelta(days=1), periods=months + 1, freq="ME"
+    )[::-1]
+    positions = days.get_indexer(cutoffs, method="pad")
+    if (positions < 0).any() or (
+        cutoffs - days[positions] > Timedelta(days=MONTH_END_GAP_DAYS)
+    ).any():
+        return None
+    return frame["close"].iloc[positions].astype(float).tolist()
 
 
 def fast_momentum(closes: list[float]) -> float:

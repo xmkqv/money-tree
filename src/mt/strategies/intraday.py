@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta
-from typing import ClassVar, cast
+from typing import ClassVar
 
 from pandas import DataFrame, DatetimeIndex, Series, Timestamp
 
@@ -13,16 +13,11 @@ from .base import Candidate, Holding, Portfolio, Session, Strategy
 
 
 def opening_moves(frame: DataFrame) -> Series[float]:
-    regular = regular_session(frame)
-    if regular.empty:
-        return Series(dtype=float)
-    index = cast(DatetimeIndex, regular.index)
+    closes = regular_session(frame)["close"].astype(float)
+    index = DatetimeIndex(closes.index)
     sessions = index.normalize()
-    opening = index == session_starts(index)
-    first = regular.loc[opening, "close"].set_axis(sessions[opening])
-    last = regular["close"].groupby(sessions).last()
-    prior = last.shift(1).reindex(first.index)
-    return cast("Series[float]", (first / prior - 1.0).dropna())
+    opened = closes.set_axis(sessions)[index == session_starts(index)]
+    return (opened / closes.groupby(sessions).last().shift(1) - 1.0).dropna()
 
 
 class Intraday(Strategy):
@@ -74,7 +69,8 @@ class Intraday(Strategy):
         moves = Series(dtype=float) if frame is None else opening_moves(frame)
         today = Timestamp(day, tz=TRADING_ZONE)
         history = moves[moves.index < today].tail(self.rules.noise_sessions)
-        if today not in moves.index or len(history) < self.rules.noise_sessions:
+        move = moves.get(today)
+        if move is None or len(history) < self.rules.noise_sessions:
             self.portfolio.record(
                 self,
                 f"signal.unread.{day}",
@@ -83,7 +79,6 @@ class Intraday(Strategy):
                 f"{self.rules.noise_sessions} sessions of opening moves",
             )
             return None
-        move = float(cast(float, moves[today]))
         band = float(history.abs().mean())
         if move == 0 or abs(move) < self.rules.noise_multiple * band:
             self.portfolio.record(
