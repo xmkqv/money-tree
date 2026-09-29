@@ -165,12 +165,11 @@ policy[{table},{…roles?}] get?=… set?=… add?=… del?=…
 tile t
 tile[p_id] t
 join tile_xywh xywh on xywh.tile_id = t.id
+walk ptr p until p.topic_id ≠ null
+    p = ptr[id=p.host_id]
 
-{name}({args}) {out} {mods}
-    -- {steps,sep=;}
-
-{name}({p_arg} {type},…) {out} {mods}
-    … {steps}
+{name}({arg} {type},…) {out} {mods}
+    {steps}
 
 trg name before|after event[|event] [deferred] table [when predicate] [callable()]
     {steps?}

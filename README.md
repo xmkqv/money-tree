@@ -23,6 +23,14 @@ mise run stop
 mise --env production run deploy
 ```
 
+## maintenance
+
+```bash
+for d in ../ddoc/agents/skills/*/; do
+    rsync -a --delete "$d" ".claude/skills/$(basename "$d")/"
+done
+```
+
 ## license
 
 MIT. See [LICENSE](LICENSE).

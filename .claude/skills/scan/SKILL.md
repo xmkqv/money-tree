@@ -6,7 +6,7 @@ description: only-if-asked
 scan(cat=*,lvl=*,fix?)
   log intent, fov, foe
   log skills.mk.sketch(tree spec)
-  log issue[cat,≤lvl]
+  log issue[cat,lvl]
   if fix then run matching fix_*
 
 # rules
