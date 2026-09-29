@@ -1,3 +1,4 @@
+from http import HTTPStatus
 from typing import Protocol, cast
 from uuid import uuid4
 
@@ -11,12 +12,13 @@ from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest
 
 from mt.rules.bot import settings as bot_settings
 from mt.rules.shared import settings
-from mt.rules.values import LIQUIDATE_CODE, ORDER_PREFIX
+from mt.rules.values import OrderReason
+from mt.strategies.registry import find_order_reason
 
 from .asset import Asset
 
 
-LIQUIDATE_PREFIX = f"{ORDER_PREFIX}-{LIQUIDATE_CODE}-"
+LIQUIDATE_REASON: OrderReason = "limit"
 
 
 class Broker(Protocol):
@@ -24,7 +26,7 @@ class Broker(Protocol):
 
     def assets(self) -> dict[Asset, BrokerAsset]: ...
 
-    def ordered(self, positions: dict[Asset, float]) -> set[Asset]: ...
+    def find_closing_assets(self, positions: dict[Asset, float]) -> set[Asset]: ...
 
 
 class BrokerAlpaca:
@@ -35,11 +37,12 @@ class BrokerAlpaca:
         orders = self._open_orders()
         closing: set[Asset] = set()
         for order in orders:
-            if order.symbol is None or not order.client_order_id.startswith(LIQUIDATE_PREFIX):
+            if order.symbol is None or find_order_reason(order.client_order_id) != LIQUIDATE_REASON:
                 try:
                     self._api.cancel_order_by_id(order.id)
                 except APIError as error:
-                    if cast(int | None, getattr(error, "status_code", None)) != 422:
+                    status_code = cast(int | None, error.status_code)  # pyright: ignore[reportUnknownMemberType]
+                    if status_code != HTTPStatus.UNPROCESSABLE_ENTITY:
                         raise
             else:
                 closing.add(Asset.from_symbol(order.symbol))
@@ -53,7 +56,7 @@ class BrokerAlpaca:
             if asset.tradable and asset.fractionable
         }
 
-    def ordered(self, positions: dict[Asset, float]) -> set[Asset]:
+    def find_closing_assets(self, positions: dict[Asset, float]) -> set[Asset]:
         closing: set[Asset] = set()
         for order in self._open_orders():
             if order.symbol is None or order.side is None:
@@ -81,12 +84,6 @@ class BrokerAlpaca:
         return orders
 
 
-def _listed[Item](result: list[Item] | RawData) -> list[Item]:
-    if not isinstance(result, list):
-        raise TypeError("the broker returned raw data instead of models")
-    return result
-
-
 class BrokerEngine:
     def __init__(self, assets: list[Asset]) -> None:
         self._assets = {
@@ -102,5 +99,11 @@ class BrokerEngine:
     def assets(self) -> dict[Asset, BrokerAsset]:
         return self._assets
 
-    def ordered(self, positions: dict[Asset, float]) -> set[Asset]:
+    def find_closing_assets(self, positions: dict[Asset, float]) -> set[Asset]:
         return set()
+
+
+def _listed[Item](result: list[Item] | RawData) -> list[Item]:
+    if not isinstance(result, list):
+        raise TypeError("the broker returned raw data instead of models")
+    return result

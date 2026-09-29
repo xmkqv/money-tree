@@ -6,11 +6,12 @@ from pandas import DataFrame, DatetimeIndex
 from pydantic import AwareDatetime, Field
 
 from mt.exchange import TRADING_ZONE
+from mt.frames import OHLCV_COLUMNS
 from mt.rules.sections import BarsSection
 from mt.rules.values import DataFeedName, Timeframe
 
 from .asset import Asset, AssetType
-from .http import PaginationError, Payload, get_bytes
+from .http import ExceedPagesError, Payload, get_bytes
 
 
 class Bar(Payload):
@@ -19,7 +20,7 @@ class Bar(Payload):
     high: float = Field(alias="h")
     low: float = Field(alias="l")
     close: float = Field(alias="c")
-    volume: float = Field(alias="v", default=0.0)
+    volume: float = Field(alias="v")
 
 
 class _BarsPage(Payload):
@@ -52,7 +53,7 @@ def feed_end(configuration: BarsSection, feed: DataFeedName, end: datetime) -> d
 def bar_frame(bars: list[Bar]) -> DataFrame:
     frame = DataFrame([bar.model_dump() for bar in bars]).set_index("opened_at")
     index = DatetimeIndex(frame.index).tz_convert(TRADING_ZONE)
-    columns = frame.set_axis(index)[["open", "high", "low", "close", "volume"]]
+    columns = frame.set_axis(index)[list(OHLCV_COLUMNS)]
     return columns.astype(float).sort_index()
 
 
@@ -69,7 +70,7 @@ class BarsClientAlpaca:
         end: datetime | None = None,
         *,
         limit: int,
-        pages_max: int | None = None,
+        pages_max: int,
     ) -> dict[Asset, list[Bar]]:
         groups: dict[AssetType, dict[str, Asset]] = {}
         rows: dict[Asset, list[Bar]] = {asset: [] for asset in assets}
@@ -80,7 +81,7 @@ class BarsClientAlpaca:
         for asset_type, symbols in groups.items():
             params: dict[str, object] = {
                 "timeframe": timeframe,
-                "start": start.isoformat(),
+                "start": start,
                 "limit": limit,
                 "sort": "asc",
             }
@@ -97,7 +98,7 @@ class BarsClientAlpaca:
             if until is not None:
                 if until < start:
                     continue
-                params["end"] = until.isoformat()
+                params["end"] = until
             for batch in itertools.batched(symbols, batch_size, strict=False):
                 query = {**params, "symbols": ",".join(batch)}
                 page_count = 0
@@ -108,8 +109,8 @@ class BarsClientAlpaca:
                     page_count += 1
                     if not page.next_page_token:
                         break
-                    if pages_max is not None and page_count >= pages_max:
-                        raise PaginationError("Bars exceed the configured page limit")
+                    if page_count >= pages_max:
+                        raise ExceedPagesError("Bars exceed the configured page limit")
                     query["page_token"] = page.next_page_token
         return rows
 
@@ -121,7 +122,7 @@ class BarsClientAlpaca:
         end: datetime | None = None,
         *,
         limit: int,
-        pages_max: int | None = None,
+        pages_max: int,
     ) -> list[Bar]:
         rows = await self.bars([asset], timeframe, start, end, limit=limit, pages_max=pages_max)
         return rows[asset]

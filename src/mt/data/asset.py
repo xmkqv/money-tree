@@ -1,18 +1,16 @@
 from datetime import date
-from typing import Any, cast
+from typing import Any, Self, cast
 
 from lumibot.entities.asset import Asset as LumibotAsset
 from lumibot.tools import create_options_symbol
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, model_validator
 
 
 AssetType = LumibotAsset.AssetType
 OptionRight = LumibotAsset.OptionRight
 
 
-class Asset(BaseModel, frozen=True):
-    model_config = ConfigDict(extra="forbid")
-
+class Asset(BaseModel, frozen=True, extra="forbid"):
     symbol: str
     asset_type: AssetType = AssetType.STOCK
     expiration: date | None = None
@@ -44,14 +42,18 @@ class Asset(BaseModel, frozen=True):
             self.model_dump(mode="json")
         )
 
+    @model_validator(mode="after")
+    def check_kind(self) -> Self:
+        if self.asset_type == AssetType.CRYPTO and not self.precision:
+            raise ValueError("crypto assets require a quote currency")
+        if self.asset_type == AssetType.OPTION and (self.expiration is None or self.right is None):
+            raise ValueError("option assets require expiration and right")
+        return self
+
     def __str__(self) -> str:
         if self.asset_type == AssetType.CRYPTO:
-            if not self.precision:
-                raise ValueError("crypto assets require a quote currency")
             return f"{self.symbol}/{self.precision}"
         if self.asset_type == AssetType.OPTION:
-            if self.expiration is None or self.right is None:
-                raise ValueError("option assets require expiration and right")
             return str(
                 cast(Any, create_options_symbol)(
                     self.symbol, self.expiration, self.right, self.strike

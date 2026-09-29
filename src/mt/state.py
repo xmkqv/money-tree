@@ -1,11 +1,12 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, AwareDatetime, BaseModel, ConfigDict, Field
 from redis import Redis
 from redis.asyncio import Redis as AsyncRedis
 
-from .rules.settings import RuleSettings
-from .rules.values import STRATEGY_KEYS, StrategyKey
+from mt.rules.bot import settings as bot_settings
+from mt.rules.settings import RuleSettings
+from mt.rules.values import STRATEGY_KEYS, StrategyKey, check_distinct
 
 
 type EventLevel = Literal["info", "warning", "error"]
@@ -26,13 +27,15 @@ class StateEvent(_StrictModel):
 
 class State(_StrictModel):
     status: RunStatus
-    strategies: list[StrategyKey] = Field(min_length=1, max_length=len(STRATEGY_KEYS))
-    paused: list[StrategyKey] = Field(
-        default_factory=list[StrategyKey], max_length=len(STRATEGY_KEYS)
-    )
+    strategies: Annotated[
+        list[StrategyKey],
+        AfterValidator(check_distinct),
+        Field(min_length=1, max_length=len(STRATEGY_KEYS)),
+    ]
+    paused: list[StrategyKey] = Field(max_length=len(STRATEGY_KEYS))
     heartbeat_at: AwareDatetime
     rules: RuleSettings
-    events: list[StateEvent]
+    events: list[StateEvent] = Field(max_length=bot_settings.export.events_max)
 
 
 STATE_KEY = "mt:state"

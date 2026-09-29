@@ -4,7 +4,9 @@ import math
 import re
 import time
 from collections.abc import Mapping
+from datetime import datetime
 from email.utils import parsedate_to_datetime
+from http import HTTPStatus
 
 import httpx2
 from limits import RateLimitItemPerMinute
@@ -15,21 +17,25 @@ from pydantic import BaseModel, ConfigDict
 from mt.rules.sections import TimeoutSection
 
 
-logger = logging.getLogger(__name__)
-
-
 class Payload(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True, validate_by_name=True)
 
 
-class PaginationError(httpx2.HTTPError):
+class ExceedPagesError(httpx2.HTTPError):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 async def get_bytes(
     client: httpx2.AsyncClient, path: str, params: Mapping[str, object] | None = None
 ) -> bytes:
-    query = {key: str(value) for key, value in (params or {}).items() if value is not None}
+    query = {
+        key: value.isoformat() if isinstance(value, datetime) else str(value)
+        for key, value in (params or {}).items()
+        if value is not None
+    }
     response = await client.get(path, params=query)
     return response.raise_for_status().content
 
@@ -44,9 +50,11 @@ def http_timeout(timeout: TimeoutSection) -> httpx2.Timeout:
 
 
 class RequestTransport(httpx2.AsyncHTTPTransport):
-    def __init__(self, allowance: int, concurrency: asyncio.Semaphore, pause_seconds: int) -> None:
+    def __init__(
+        self, requests_per_minute: int, concurrency: asyncio.Semaphore, pause_seconds: int
+    ) -> None:
         super().__init__()
-        self._allowance = RateLimitItemPerMinute(allowance)
+        self._allowance = RateLimitItemPerMinute(requests_per_minute)
         self._limiter = MovingWindowRateLimiter(MemoryStorage())
         self._concurrency = concurrency
         self._pause_seconds = pause_seconds
@@ -61,13 +69,13 @@ class RequestTransport(httpx2.AsyncHTTPTransport):
         async with self._concurrency:
             if time.time() < self._resume_at:
                 return self._limited()
-            started = time.monotonic()
+            started_at = time.monotonic()
             response = None
             try:
                 response = await super().handle_async_request(request)
                 await response.aread()
-                if response.status_code == 429:
-                    self._resume_at = max(self._resume_at, retry_at(response, self._pause_seconds))
+                if response.status_code == HTTPStatus.TOO_MANY_REQUESTS:
+                    self._resume_at = max(self._resume_at, _retry_at(response, self._pause_seconds))
                     response.headers["Retry-After"] = str(math.ceil(self._resume_at - time.time()))
                 return response
             finally:
@@ -78,18 +86,19 @@ class RequestTransport(httpx2.AsyncHTTPTransport):
                     re.sub(r"(/orders|/assets)/[^/]+", r"\1/{id}", request.url.path),
                     request.method,
                     response.status_code if response else "failed",
-                    time.monotonic() - started,
+                    time.monotonic() - started_at,
                     response.headers.get("X-RateLimit-Remaining") if response else None,
                     response.headers.get("X-RateLimit-Reset") if response else None,
                 )
 
     def _limited(self) -> httpx2.Response:
         return httpx2.Response(
-            429, headers={"Retry-After": str(max(1, math.ceil(self._resume_at - time.time())))}
+            HTTPStatus.TOO_MANY_REQUESTS,
+            headers={"Retry-After": str(max(1, math.ceil(self._resume_at - time.time())))},
         )
 
 
-def retry_at(response: httpx2.Response, fallback_seconds: int) -> float:
+def _retry_at(response: httpx2.Response, fallback_seconds: int) -> float:
     now = time.time()
     times: list[float] = []
     retry = response.headers.get("Retry-After")
@@ -99,12 +108,12 @@ def retry_at(response: httpx2.Response, fallback_seconds: int) -> float:
             continue
         try:
             number = float(value)
-            stamp = now + number if relative else number
+            retry_at = now + number if relative else number
         except ValueError:
             try:
-                stamp = parsedate_to_datetime(value).timestamp()
+                retry_at = parsedate_to_datetime(value).timestamp()
             except ValueError, TypeError, OverflowError:
                 continue
-        if math.isfinite(stamp) and stamp > now:
-            times.append(stamp)
+        if math.isfinite(retry_at) and retry_at > now:
+            times.append(retry_at)
     return max(times, default=now + fallback_seconds)

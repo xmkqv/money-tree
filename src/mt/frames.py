@@ -1,4 +1,4 @@
-from collections.abc import Collection
+from collections.abc import Callable, Collection, Iterable
 from datetime import UTC
 
 from pandas import DataFrame, DatetimeIndex
@@ -7,7 +7,10 @@ from pandas.api.types import is_numeric_dtype
 from mt.exchange import TRADING_ZONE, session_ends, session_starts
 
 
-def normalize_ohlcv(frame: DataFrame, required: Collection[str]) -> DataFrame:
+OHLCV_COLUMNS = ("open", "high", "low", "close", "volume")
+
+
+def normalize_ohlcv(frame: DataFrame, required: Collection[str] = OHLCV_COLUMNS) -> DataFrame:
     if not isinstance(frame.index, DatetimeIndex):
         raise ValueError("bars must use a DatetimeIndex")
     missing = sorted(set(required).difference(frame.columns))
@@ -31,3 +34,12 @@ def regular_session(frame: DataFrame) -> DataFrame:
 
 def last_close(frame: DataFrame) -> float:
     return float(frame["close"].iloc[-1])
+
+
+def ranked[Item](
+    items: Iterable[Item],
+    *,
+    symbol: Callable[[Item], str],
+    score: Callable[[Item], float],
+) -> list[Item]:
+    return sorted(items, key=lambda item: (-score(item), symbol(item)))

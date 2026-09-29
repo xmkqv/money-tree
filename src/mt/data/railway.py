@@ -12,9 +12,6 @@ from mt.rules.values import Email
 from .http import http_timeout
 
 
-METADATA_URL = "https://backboard.railway.com/oauth/.well-known/openid-configuration"
-
-
 class Identity(BaseModel):
     model_config = ConfigDict(extra="ignore", frozen=True, str_strip_whitespace=True)
 
@@ -28,6 +25,9 @@ class RailwayOAuth(Protocol):
     async def authorize_access_token(self, request: Request) -> Mapping[str, object]: ...
 
     async def userinfo(self, *, token: Mapping[str, object]) -> Mapping[str, object]: ...
+
+
+METADATA_URL = "https://backboard.railway.com/oauth/.well-known/openid-configuration"
 
 
 def railway_oauth(login: LoginSection) -> RailwayOAuth:
