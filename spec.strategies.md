@@ -1,10 +1,5 @@
 ---
 name: strategies
-refs:
-  - paper:gao-han-li-zhou-2018 = Gao, Han, Li & Zhou (2018)
-  - paper:zarattini-aziz-barbon-2024 = Zarattini, Aziz & Barbon (2024)
-  - paper:keller-2022 = Keller (2022), Bold Asset Allocation
-  - paper:novy-marx-2013 = Novy-Marx (2013), gross profitability
 reminders:
   - strategy spec is a faithful logical projection of the fundamental math
 ---
@@ -66,7 +61,7 @@ entry
 
 management
     stop = max(stop, highest close since entry - stop_atr_multiple * ATR)
-    close < stop or close < SMA(average_sessions) or RSI < exit_rsi_max → exit at the next open
+    close < SMA(average_sessions) or RSI < exit_rsi_max → exit at the next open
     blocking earnings → exit at the open of the last session before the event
     an unsubmitted earnings exit retries
 ```
@@ -90,6 +85,5 @@ management
     each target closes its target_fractions share; the rest trails
     highest < entry * (1 + breakeven_gain) → the stop holds
     otherwise stop = max(stop, entry, highest - trail_atr_multiple * ATR)
-    price ≤ stop → exit
     at the open, close < SMA(average_sessions) or RSI < exit_rsi_max → exit the rest
 ```

@@ -112,7 +112,6 @@ mt trade --strategies KEY,…
 
 ## portfolio
 
-- portfolio owns the universe, sizing, exposure, ownership and execution
 - strategies reach bars, quotes and actions only through portfolio
 - a stop never widens
 - closing orders never exceed the broker position
@@ -245,7 +244,7 @@ GET /assets/{filename}
 # static asset
 
 GET /api/session
-# CSRF token, polling cadence and average colours
+# CSRF token, polling cadence and average colors
 
 POST /logout
 X-CSRF-Token: {token}
@@ -263,7 +262,7 @@ X-CSRF-Token: {token}
 - the web keeps the last state across its own restarts
 
 ```http:surface
-# every response carries the read_at of its source
+# every response carries the read instant of its source
 
 GET /api/strategies → rules
 # reported rules, otherwise configured rules
