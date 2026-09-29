@@ -9,14 +9,11 @@ from mt.rules.values import (
     is_order_reason,
 )
 
-from .allocation import AllocationBaa
 from .base import Strategy
 from .breakout import Breakout5m, Breakout10m, Breakout15m
 from .daily_20sma import Daily20Sma
 from .daily_sma import DailySma
 from .daily_tfb import DailyTfb
-from .intraday import IntradayMim
-from .quality import QualityGp
 
 
 STRATEGIES: tuple[type[Strategy], ...] = (
@@ -26,9 +23,6 @@ STRATEGIES: tuple[type[Strategy], ...] = (
     DailySma,
     DailyTfb,
     Daily20Sma,
-    IntradayMim,
-    AllocationBaa,
-    QualityGp,
 )
 STRATEGIES_BY_KEY: dict[StrategyKey, type[Strategy]] = {cls.key: cls for cls in STRATEGIES}
 STRATEGIES_BY_CODE: dict[str, type[Strategy]] = {cls.code: cls for cls in STRATEGIES}

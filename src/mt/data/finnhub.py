@@ -36,7 +36,6 @@ class Release(Payload):
 
 class Profile(Payload):
     market_cap_musd: float = Field(alias="marketCapitalization", default=0.0)
-    industry: str = Field(alias="finnhubIndustry", default="")
 
 
 class _Calendar(Payload):

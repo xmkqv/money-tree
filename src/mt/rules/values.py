@@ -18,9 +18,6 @@ type StrategyKey = Literal[
     "daily_sma",
     "daily_tfb",
     "daily_20sma",
-    "intraday_mim",
-    "allocation_baa",
-    "quality_gp",
 ]
 
 type Unattributed = Literal["unattributed"]

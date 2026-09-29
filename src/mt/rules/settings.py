@@ -5,7 +5,6 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .sections import (
-    AllocationBaaSection,
     BacktestSection,
     BarsSection,
     BreakoutSection,
@@ -18,14 +17,11 @@ from .sections import (
     DailyTfbSection,
     DashboardSection,
     EarningsSection,
-    EdgarSection,
     ExportSection,
     FinnhubSection,
     IndicatorsSection,
-    IntradayMimSection,
     LoginSection,
     PortfolioSection,
-    QualityGpSection,
     RedisSection,
     RequestSection,
     RiskSection,
@@ -56,9 +52,6 @@ class RuleSettings(Settings):
     daily_sma: DailySmaSection
     daily_tfb: DailyTfbSection
     daily_20sma: Daily20SmaSection
-    intraday_mim: IntradayMimSection
-    allocation_baa: AllocationBaaSection
-    quality_gp: QualityGpSection
 
     @model_validator(mode="after")
     def check_strategy_holdings(self) -> Self:
@@ -66,9 +59,6 @@ class RuleSettings(Settings):
             self.daily_sma,
             self.daily_tfb,
             self.daily_20sma,
-            self.intraday_mim,
-            self.allocation_baa,
-            self.quality_gp,
         )
         if any(section.holdings_max > self.risk.strategy_holdings_max for section in capped):
             raise ValueError("a strategy holding cap exceeds the risk holdings cap")
@@ -87,7 +77,6 @@ class BotSettings(Settings):
     strategies: Annotated[StrategySelection, NoDecode]
     portfolio: PortfolioSection
     backtest: BacktestSection
-    edgar: EdgarSection
 
 
 class WebSettings(Settings):
