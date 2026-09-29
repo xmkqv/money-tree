@@ -4,8 +4,9 @@ from decimal import Decimal
 from math import isfinite
 from typing import Any, cast
 
+from lumibot.entities import Order
 from lumibot.strategies import Strategy as LumibotStrategy
-from pandas import DataFrame, DatetimeIndex, Timestamp
+from pandas import DataFrame, DatetimeIndex, Timedelta, Timestamp
 
 from mt.data.asset import Asset, AssetType
 from mt.data.broker import Broker, BrokerAlpaca, BrokerAsset, BrokerEngine
@@ -126,9 +127,10 @@ class Portfolio(LumibotStrategy):
         is_complete: bool,
     ) -> None:
         asset = Asset.from_lumibot(order.asset)
-        side = str(order.side).lower()
         pending = self._pending.get(asset)
-        if pending is not None and ("buy" if pending.holding.direction == 1 else "sell") in side:
+        if pending is not None and (
+            order.is_buy_order() if pending.holding.direction == 1 else order.is_sell_order()
+        ):
             holding = pending.holding
             is_first_fill = pending.filled_quantity == 0
             filled = abs(float(quantity))
@@ -191,11 +193,10 @@ class Portfolio(LumibotStrategy):
         return held + ordered
 
     def is_taken(self, strategy: Strategy, asset: Asset) -> bool:
-        engine_position = self.get_position(asset.to_lumibot())
         is_owned = (
             asset in self._pending
             or asset in self._holdings
-            or (engine_position is not None and abs(float(engine_position.quantity)) > 0)
+            or asset in self._positions(is_refreshed=False)
         )
         return is_owned or asset in self._traded[strategy.key]
 
@@ -218,7 +219,7 @@ class Portfolio(LumibotStrategy):
         direction: Direction,
         code: str,
         **params: object,
-    ) -> None:
+    ) -> bool:
         order = self.create_order(
             asset.to_lumibot(),
             quantity,
@@ -227,7 +228,16 @@ class Portfolio(LumibotStrategy):
             custom_params={"client_order_id": code},
             **params,
         )
-        self.submit_order(order)
+        try:
+            self.submit_order(order)
+        except Exception as error:
+            self._record(
+                f"order.rejected.{asset}.{self._now().date()}",
+                "warning",
+                f"{asset} order rejected: {type(error).__name__}",
+            )
+            return False
+        return True
 
     def _record(
         self,
@@ -292,51 +302,38 @@ class Portfolio(LumibotStrategy):
 
     def _close(self, asset: Asset, quantity: float) -> None:
         self._closing.add(asset)
-        self._submit(asset, abs(quantity), -1 if quantity > 0 else 1, liquidate_code())
+        if not self._submit(asset, abs(quantity), -1 if quantity > 0 else 1, liquidate_code()):
+            self._closing.discard(asset)
 
-    def _engine_positions(self) -> dict[Asset, Any]:
-        return {
-            Asset.from_lumibot(value.asset): value
-            for value in cast(list[Any], self.get_positions())
+    def _tracked(self, *, is_refreshed: bool = True) -> list[Any]:
+        return cast(list[Any], self.get_positions(broker_refresh=is_refreshed))
+
+    def _positions(self, *, is_refreshed: bool = True) -> dict[Asset, float]:
+        quantities = {
+            Asset.from_lumibot(position.asset): float(position.quantity)
+            for position in self._tracked(is_refreshed=is_refreshed)
         }
-
-    def _positions(self) -> dict[Asset, float]:
-        if self.is_backtesting:
-            quantities = {
-                asset: float(engine_position.quantity)
-                for asset, engine_position in self._engine_positions().items()
-            }
-        else:
-            quantities = {
-                Asset.from_symbol(broker_position.symbol): float(broker_position.qty)
-                for broker_position in self._broker.positions()
-            }
         return {asset: quantity for asset, quantity in quantities.items() if quantity}
 
     def _held(self, holding: Holding) -> float:
         return max(0.0, holding.direction * self._positions().get(holding.asset, 0.0))
 
     def _gross(self) -> float:
-        if not self.is_backtesting:
-            return sum(
-                abs(float(broker_position.market_value or 0.0))
-                for broker_position in self._broker.positions()
-            )
-        return sum(
-            abs(float(engine_position.quantity) * float(self.get_last_price(engine_position.asset)))
-            for engine_position in self._engine_positions().values()
-        )
+        return sum(abs(self._exposure(position)) for position in self._tracked())
+
+    def _exposure(self, position: Any) -> float:
+        market_value = getattr(position, "market_value", None)
+        if market_value is not None:
+            return float(market_value)
+        return float(position.quantity) * float(self.get_last_price(position.asset))
 
     def _reconcile(self, now: datetime) -> None:
         positions = self._positions()
         for asset in list(self._holdings):
             if asset not in positions:
                 self._release(asset)
-        active = {
-            Asset.from_lumibot(order.asset)
-            for order in cast(list[Any], self.get_orders())
-            if order.is_active()
-        }
+        orders = cast(list[Any], self.get_orders(statuses=Order.ACTIVE_STATUSES))
+        active = {Asset.from_lumibot(order.asset) for order in orders}
         for asset, pending in list(self._pending.items()):
             ttl = timedelta(minutes=bot_settings.portfolio.pending_ttl_minutes)
             expired = now - pending.submitted_at > ttl
@@ -349,14 +346,14 @@ class Portfolio(LumibotStrategy):
         self._closing.intersection_update(active)
         owned = self._holdings.keys() | self._pending.keys() | self._closing
         for asset in active - positions.keys() - owned:
-            self._cancel(asset)
+            self._cancel(asset, orders=orders)
         for asset in self._strays(positions, owned):
             self._record(
                 f"position.stray.{asset}.{now.date()}",
                 "warning",
                 f"{asset} is held without a strategy holding: closing at market",
             )
-            self._cancel(asset)
+            self._cancel(asset, orders=orders)
             self._close(asset, positions[asset])
         if self._locked_on != now.date():
             self._resync_stops(positions)
@@ -407,7 +404,9 @@ class Portfolio(LumibotStrategy):
                     asset.to_lumibot(), bot_settings.portfolio.lookback_days, timestep="day"
                 )
                 if bars is not None:
-                    frames[asset] = normalize_ohlcv(bars.df, {"high", "low", "close", "volume"})
+                    frames[asset] = normalize_ohlcv(
+                        bars.pandas_df, {"high", "low", "close", "volume"}
+                    )
         else:
             frames = self._bars.bars(requested, "1Day", start, now)
         lengths = {
@@ -455,8 +454,8 @@ class Portfolio(LumibotStrategy):
         if not isinstance(index, DatetimeIndex):
             raise TypeError("bar frames must use a DatetimeIndex")
         if minutes:
-            return frame[index + timedelta(minutes=minutes) <= Timestamp(now)]
-        return frame[index.date < now.date()]
+            return frame.loc[: Timestamp(now) - Timedelta(minutes=minutes)]
+        return frame[index < Timestamp(midnight(now.date()))]
 
     def enter(self, strategy: Strategy, candidate: Candidate, session: Session) -> bool:
         now = session.now
@@ -522,7 +521,9 @@ class Portfolio(LumibotStrategy):
         )
         self._pending[asset] = Pending(holding, now, notional_usd)
         self._traded[strategy.key].add(asset)
-        self._submit(asset, quantity, direction, order_code(strategy.code, "entry"))
+        if not self._submit(asset, quantity, direction, order_code(strategy.code, "entry")):
+            self._pending.pop(asset, None)
+            return False
         return True
 
     def protect(self, holding: Holding, quantity: float | None = None) -> None:
@@ -561,14 +562,14 @@ class Portfolio(LumibotStrategy):
         if size <= 0 or self._stops.get(holding.asset) == (stop, float(size)):
             return
         self._cancel(holding.asset, is_stop_only=True)
-        self._submit(
+        if self._submit(
             holding.asset,
             size,
             -holding.direction,
             order_code(holding.strategy.code, holding.stop_reason),
             stop_price=stop,
-        )
-        self._stops[holding.asset] = (stop, float(size))
+        ):
+            self._stops[holding.asset] = (stop, float(size))
 
     def exit(self, holding: Holding, reason: OrderReason, quantity: float | None = None) -> None:
         if holding.asset in self._closing:
@@ -583,19 +584,31 @@ class Portfolio(LumibotStrategy):
             return
         self._cancel(holding.asset)
         self._closing.add(holding.asset)
-        self._submit(
+        if not self._submit(
             holding.asset, size, -holding.direction, order_code(holding.strategy.code, reason)
-        )
+        ):
+            self._closing.discard(holding.asset)
 
-    def _cancel(self, asset: Asset, *, is_stop_only: bool = False) -> None:
+    def _cancel(
+        self,
+        asset: Asset,
+        *,
+        is_stop_only: bool = False,
+        orders: list[Any] | None = None,
+    ) -> None:
         def matches(order: Any) -> bool:
-            if not order.is_active() or Asset.from_lumibot(order.asset) != asset:
+            if Asset.from_lumibot(order.asset) != asset:
                 return False
             return not is_stop_only or bool(order.is_stop_order())
 
-        orders = [order for order in cast(list[Any], self.get_orders()) if matches(order)]
-        self.cancel_open_orders(orders)
-        if orders:
+        source = (
+            orders
+            if orders is not None
+            else cast(list[Any], self.get_orders(statuses=Order.ACTIVE_STATUSES))
+        )
+        matched = [order for order in source if matches(order)]
+        self.cancel_open_orders(matched)
+        if matched and not self.is_backtesting:
             self.sleep(1)
         self._stops.pop(asset, None)
 

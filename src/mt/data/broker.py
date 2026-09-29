@@ -1,12 +1,12 @@
-from typing import Protocol
+from typing import Protocol, cast
 from uuid import uuid4
 
+from alpaca.common.exceptions import APIError
 from alpaca.common.types import RawData
 from alpaca.trading.client import TradingClient
 from alpaca.trading.enums import AssetClass, AssetStatus, OrderSide, QueryOrderStatus
 from alpaca.trading.models import Asset as BrokerAsset
 from alpaca.trading.models import Order
-from alpaca.trading.models import Position as BrokerPosition
 from alpaca.trading.requests import GetAssetsRequest, GetOrdersRequest
 
 from mt.rules.bot import settings as bot_settings
@@ -24,8 +24,6 @@ class Broker(Protocol):
 
     def assets(self) -> dict[Asset, BrokerAsset]: ...
 
-    def positions(self) -> list[BrokerPosition]: ...
-
     def ordered(self, positions: dict[Asset, float]) -> set[Asset]: ...
 
 
@@ -38,7 +36,11 @@ class BrokerAlpaca:
         closing: set[Asset] = set()
         for order in orders:
             if order.symbol is None or not order.client_order_id.startswith(LIQUIDATE_PREFIX):
-                self._api.cancel_order_by_id(order.id)
+                try:
+                    self._api.cancel_order_by_id(order.id)
+                except APIError as error:
+                    if cast(int | None, getattr(error, "status_code", None)) != 422:
+                        raise
             else:
                 closing.add(Asset.from_symbol(order.symbol))
         return closing
@@ -50,9 +52,6 @@ class BrokerAlpaca:
             for asset in _listed(self._api.get_all_assets(request))
             if asset.tradable and asset.fractionable
         }
-
-    def positions(self) -> list[BrokerPosition]:
-        return _listed(self._api.get_all_positions())
 
     def ordered(self, positions: dict[Asset, float]) -> set[Asset]:
         closing: set[Asset] = set()
@@ -102,9 +101,6 @@ class BrokerEngine:
 
     def assets(self) -> dict[Asset, BrokerAsset]:
         return self._assets
-
-    def positions(self) -> list[BrokerPosition]:
-        return []
 
     def ordered(self, positions: dict[Asset, float]) -> set[Asset]:
         return set()

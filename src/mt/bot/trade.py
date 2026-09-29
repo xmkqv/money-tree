@@ -33,11 +33,7 @@ def trade(strategies: list[StrategyKey]) -> None:
         try:
             trader.run_all()
         finally:
-            try:
-                trader.stop_all()
-            finally:
-                if strategy._executor.ident is not None:
-                    strategy._executor.join()
+            trader.stop_all()
     except BaseException:
         exporter.publish("failed", "run.failed", "error", "Trading run failed")
         raise
