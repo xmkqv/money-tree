@@ -103,39 +103,12 @@
 
       <section class="panel">
         <div class="panel-head"><h2>Orders</h2><span class="eyebrow">Open</span></div>
-        <div class="today-wrap">
-          <table class="trades" data-cards>
-            <thead>
-              <tr>
-                <th scope="col">Symbol</th>
-                <th scope="col">Side</th>
-                <th scope="col" class="r">Qty</th>
-                <th scope="col">Type</th>
-                <th scope="col" class="r">Limit / stop</th>
-                <th scope="col">Status</th>
-                <th scope="col">Strategy</th>
-              </tr>
-            </thead>
-            <tbody id="orders-body"></tbody>
-          </table>
-        </div>
+        <div class="today-wrap"><table class="trades" id="orders-table" data-cards></table></div>
       </section>
 
       <section class="panel">
         <div class="panel-head"><h2>Events</h2><span class="eyebrow">Bot</span></div>
-        <div class="today-wrap">
-          <table class="trades" data-cards>
-            <thead>
-              <tr>
-                <th scope="col">Time</th>
-                <th scope="col">Level</th>
-                <th scope="col">Message</th>
-                <th scope="col">Strategy</th>
-              </tr>
-            </thead>
-            <tbody id="events-body"></tbody>
-          </table>
-        </div>
+        <div class="today-wrap"><table class="trades" id="events-table" data-cards></table></div>
       </section>
 
     </div>

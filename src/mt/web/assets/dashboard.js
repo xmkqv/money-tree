@@ -4,12 +4,15 @@ import { html, render, repeat, nothing, classMap, styleMap } from "/assets/lit.m
 const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 const usd0 = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
-const money = v => usd.format(v);
-const signedMoney = v => (v > 0 ? "+" : v < 0 ? "−" : "") + usd.format(Math.abs(v));
-const signedPct = (v, d = 2) => v === null || !Number.isFinite(v) ? "—" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d) + "%";
-const ratio = v => Number.isFinite(v) ? v.toFixed(2) : "—";
-const plainNum = new Intl.NumberFormat("en-US").format;
-const shares = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format;
+const orDash = f => v => Number.isFinite(v) ? f(v) : "—";
+const sign = v => (v > 0 ? "+" : v < 0 ? "−" : "");
+const money = orDash(usd.format);
+const signedMoney = orDash(v => sign(v) + usd.format(Math.abs(v)));
+const signedPct = (v, d = 2) => orDash(x => sign(x) + Math.abs(x).toFixed(d) + "%")(v);
+const ratio = orDash(v => v.toFixed(2));
+const pct = (v, d = 1) => orDash(x => x.toFixed(d) + "%")(v);
+const plainNum = orDash(new Intl.NumberFormat("en-US").format);
+const shares = orDash(new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format);
 const tone = v => (v > 0 ? "pos" : v < 0 ? "neg" : "flat");
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -63,6 +66,7 @@ const dateOf = iso => dateFormat.format(new Date(iso));
 const monthOf = iso => monthFormat.format(new Date(iso));
 const weekdayOf = iso => weekdayFormat.format(new Date(iso));
 const dayOf = iso => dayFormat.formatToParts(new Date(iso)).filter(p => p.type !== "literal").map(p => p.value).join(" ");
+const atLabel = iso => dayOf(iso) + " " + clockOf(iso);
 const tradingMinutes = () => minutesOf(clockFormat.formatToParts(new Date()));
 const stampOf = (dateISO, minute) => Date.parse(dateISO + "T00:00:00Z") / 60000 + minute;
 function barStamp(iso) {
@@ -76,20 +80,21 @@ const weekStart = d => {
   return at.getFullYear() + "-" + (at.getMonth() + 1) + "-" + at.getDate();
 };
 
-let LEDGER, ACCOUNT, STRATEGIES, STRAT_BY_KEY, OPEN_POSITIONS, ALL_TRADES, tradesByDate;
-let LOGIN = {}, TOTALS, SESSIONS, LAST_SESSION, BENCH, BENCH_SYMBOL, DAILY, INTRADAY, LATEST;
+let LEDGER, ACCOUNT = {}, STRATEGIES, STRAT_BY_KEY, OPEN_POSITIONS, ALL_TRADES, tradesByDate;
+let LOGIN = {}, TOTALS, SESSIONS, LAST_SESSION, DAILY, LATEST;
 let FIRST_IX, LAST_IX;
 let STRATEGY_PERIODS = {};
+const PERIOD_LABELS = { W: "Week", M: "Month" };
 let monthCache = new Map();
 let todaySel = null;
 let unit = "pct";
-let stratRange = "D";
+let stratRange = "W";
 
 const monthIndex = (y, m) => y * 12 + m;
 
 function statsFor(trades, summary) {
   const profits = trades.map(trade => trade.pnl);
-  const n = summary?.n ?? profits.length;
+  const n = summary?.trade_count ?? profits.length;
   const wins = summary?.wins ?? profits.filter(value => value > 0).length;
   const losses = n - wins;
   const gross_profit = summary?.gross_profit ?? profits.reduce((sum, value) => sum + Math.max(value, 0), 0);
@@ -190,8 +195,8 @@ function derive(ledger, readAt) {
     }) };
   }
   const changed = keys => keys.some(key => JSON.stringify(ledger[key]) !== JSON.stringify(LEDGER?.[key]));
-  const historyChanged = changed(["trades", "strategies", "days", "periods", "invested", "benchmark", "benchmarkSymbol", "today", "totals", "windows", "equityDaily"]);
-  const seriesChanged = changed(["equityDaily", "intraday", "intradayDate", "invested", "today"]);
+  const historyChanged = changed(["trades", "strategies", "days", "periods", "invested", "benchmarkSymbol", "today", "totals", "windows", "equityDaily"]);
+  const seriesChanged = historyChanged && changed(["equityDaily", "invested", "today"]);
   LEDGER = ledger;
   if (historyChanged) {
     monthCache.clear();
@@ -220,28 +225,17 @@ function derive(ledger, readAt) {
       long: longDate(parseDate(d.date)),
     }));
 
-    LAST_SESSION = SESSIONS[SESSIONS.length - 1] || { date: ledger.equityDaily.at(-1).date, pnl: 0, before: ledger.equity, pct: 0, trades: 0, wins: 0 };
+    LAST_SESSION = SESSIONS[SESSIONS.length - 1] || { date: ledger.today, pnl: 0, pct: null };
 
-    periodFromTrades("D", LAST_SESSION.before, tradesByDate.get(LAST_SESSION.date) || []);
-    for (const key of ["W", "M"]) {
+    for (const key of Object.keys(PERIOD_LABELS)) {
       const period = ledger.periods[key];
       periodFromTrades(key, period.baseline, ledger.trades.filter(t => t.date >= period.start && t.date <= ledger.today));
     }
-    periodFromTrades("ALL", ledger.invested, ledger.trades);
-
-    const bench = ledger.benchmark;
-    const at = i => bench[i].close;
-    BENCH_SYMBOL = ledger.benchmarkSymbol;
-    BENCH = bench.length > 1
-      ? { D: (at(bench.length - 1) / at(bench.length - 2) - 1) * 100, W: ledger.periods.W.benchmarkPct,
-          M: ledger.periods.M.benchmarkPct, ALL: (at(bench.length - 1) / at(0) - 1) * 100 }
-      : { D: null, W: ledger.periods.W.benchmarkPct, M: ledger.periods.M.benchmarkPct, ALL: bench.length && at(0) ? 0 : null };
 
     const [ly, lm, lday] = dparts(LAST_SESSION.date);
     LATEST = { y: ly, m: lm - 1, day: lday };
 
-    const funded = ledger.equityDaily.length ? ledger.equityDaily[0].date : LAST_SESSION.date;
-    const [fy, fm] = dparts(funded);
+    const [fy, fm] = dparts(ledger.equityDaily[0].date);
     const [ty, tm] = dparts(ledger.today);
     FIRST_IX = monthIndex(fy, fm - 1);
     LAST_IX = Math.max(FIRST_IX, monthIndex(ty, tm - 1));
@@ -255,25 +249,19 @@ function derive(ledger, readAt) {
   };
 
   if (seriesChanged) {
-    [DAILY, INTRADAY] = [ledger.equityDaily, ledger.intraday].map((rows, intraday) => {
-      const series = rows.map((r, i) => {
-        const date = parseDate(intraday ? ledger.intradayDate : r.date);
-        return {
-          label: intraday ? r.t : shortDay(date),
-          long: longDay(date) + (intraday ? ", " + r.t : ""),
-          value: Math.round((r.equity - ledger.invested) * 100) / 100,
-          before: Math.round(((i ? rows[i - 1].equity : intraday ? r.equity : ledger.invested) - ledger.invested) * 100) / 100,
-        };
-      });
-      series.equityBase = ledger.invested;
-      series.todayTip = rows.length > 0 && (intraday ? ledger.intradayDate : rows.at(-1).date) === ledger.today;
-      return series;
+    const rows = ledger.equityDaily;
+    const base = ledger.invested ?? ledger.equity;
+    DAILY = rows.map((r, i) => {
+      const date = parseDate(r.date);
+      return {
+        label: shortDay(date),
+        long: longDay(date),
+        value: Math.round((r.equity - base) * 100) / 100,
+        before: Math.round(((i ? rows[i - 1].equity : base) - base) * 100) / 100,
+      };
     });
-    if (!INTRADAY.length) INTRADAY = DAILY;
-    ACCOUNT.dayOpening = ledger.intraday[0]?.equity || 0;
-    ACCOUNT.dayLowEquity = ledger.intraday.length
-      ? ratchetLow(ledger.intradayDate, Math.min(...ledger.intraday.map(r => r.equity), ledger.equity))
-      : 0;
+    DAILY.equityBase = base;
+    ACCOUNT.dayOpening = rows.findLast(r => r.date < ledger.today)?.equity ?? null;
   }
   applySnapshot(ledger, Math.max(readAt, accountReadAt));
   return historyChanged;
@@ -287,9 +275,9 @@ function ratchetLow(date, equity) {
   return SESSION_LOW.equity;
 }
 
-function drawdownPct() {
-  if (!ACCOUNT.dayOpening) return 0;
-  const fallen = Math.min(0, ACCOUNT.dayLowEquity - ACCOUNT.dayOpening);
+function drawdownPct(low) {
+  if (!ACCOUNT.dayOpening) return null;
+  const fallen = Math.min(0, low - ACCOUNT.dayOpening);
   return Math.abs(fallen) / ACCOUNT.dayOpening * 100;
 }
 
@@ -323,7 +311,7 @@ function renderToday() {
 
   if (todayTab === "open") {
     render(html`Unrealized <b class=${tone(ACCOUNT.unrealized_pnl)}>${signedMoney(ACCOUNT.unrealized_pnl)}</b>
-      <span>Deployed <b>${money(ACCOUNT.deployed)}</b></span><span>Exposure <b>${ACCOUNT.exposurePct.toFixed(1)}%</b></span>
+      <span>Deployed <b>${money(ACCOUNT.deployed)}</b></span><span>Exposure <b>${pct(ACCOUNT.exposurePct)}</b></span>
       <span>Largest <b>${money(ACCOUNT.largestPositionUsd)}</b> of ${money(ACCOUNT.positionCapUsd)} cap</span>`, sum);
     buildTable(table,
       ["Symbol", "Strategy", "Entry", "Last", "Value", "Unreal."],
@@ -334,21 +322,14 @@ function renderToday() {
         { t: money(pos.last), r: true },
         { t: money(pos.value), r: true, dim: true },
         { t: signedMoney(pos.unrealized_pnl), r: true, cls: tone(pos.unrealized_pnl) },
-      ]), 2);
+      ]), 2, undefined, "No open positions.");
     return;
   }
 
-  if (!trades.length) {
-    render(html`<span>No closed trades</span>`, sum);
-    render(html`<tbody><tr><td class="empty">No trades closed in this session.</td></tr></tbody>`, table);
-    return;
-  }
-
-  render(sessionSummary(cell), sum);
-
+  render(trades.length ? sessionSummary(cell) : html`<span>No closed trades</span>`, sum);
   buildTable(table,
     ["Time", "Symbol", "Strategy", "Entry", "Exit", "P&L"],
-    trades.map(t => tradeCells(t)), 3);
+    trades.map(t => tradeCells(t)), 3, undefined, "No trades closed in this session.");
 }
 
 const TRADE_TOTAL_HEADERS = ["Quantity", "Entry", "Total entry", "Exit", "Total exit", "P&L"];
@@ -374,13 +355,18 @@ function sessionSummary(session) {
     <span>Return <b class=${tone(session.pct)}>${signedPct(session.pct)}</b></span>`;
 }
 
+const openTrade = symbol => {
+  const position = OPEN_POSITIONS.find(pos => pos.symbol === symbol);
+  return position ? positionTrade(position) : null;
+};
+
 function symbolCell(symbol, side, trade) {
   return { symbol, node: html`<span>
     ${trade ? html`<button class="sym linked" type="button" title="Chart this trade"
-      @click=${() => openTradeChart(trade.open ? positionTrade(OPEN_POSITIONS.find(pos => pos.symbol === symbol)) : trade, currentView)}>${symbol}</button>`
+      @click=${() => openTradeChart(trade.open ? openTrade(symbol) : trade, currentView)}>${symbol}</button>`
       : html`<span class="sym">${symbol}</span>`}
-    <span class=${classMap({ side: true, short: side === "short" })}
-      title=${side === "short" ? "Short" : "Long"}>${side === "short" ? "S" : "L"}</span>
+    ${side ? html`<span class=${classMap({ side: true, short: side === "short" })}
+      title=${side === "short" ? "Short" : "Long"}>${side === "short" ? "S" : "L"}</span>` : nothing}
   </span>` };
 }
 
@@ -391,7 +377,11 @@ function stratCell(strategy_key) {
   </span>` };
 }
 
-function buildTable(table, headers, rows, rightFrom, rowClass) {
+function buildTable(table, headers, rows, rightFrom, rowClass, empty) {
+  if (!rows.length) {
+    render(html`<tbody><tr><td class="empty">${empty}</td></tr></tbody>`, table);
+    return;
+  }
   const rowTemplate = (row, index) => {
     const key = Math.max(0, row.findIndex(cell => cell.symbol));
     const lead = headers.findIndex(header => /^(p&l|unrealized)/i.test(header));
@@ -418,18 +408,22 @@ function selectDay(y, m, day) {
 
 function renderAccount() {
   const bar = document.getElementById("status");
-  bar.classList.toggle("closed", !LEDGER.marketOpen);
+  const isOpen = LEDGER.isMarketOpen;
+  bar.classList.toggle("closed", !isOpen);
   const note = botNote();
   if (note) bar.dataset.bot = "stale";
   else delete bar.dataset.bot;
-  render(html`<span class="dot"></span><span class="word">${LEDGER.marketOpen ? "Market open" : "Market closed"}</span>
-    <span class="sep"></span><span>${LEDGER.marketOpen ? "closes " + LEDGER.nextClose : "opens " + LEDGER.nextOpen}</span>
+  render(html`<span class="dot"></span><span class="word">${isOpen ? "Market open" : "Market closed"}</span>
+    <span class="sep"></span><span>${isOpen
+      ? "closes " + clockOf(LEDGER.nextCloseAt) + " ET"
+      : "opens " + atLabel(LEDGER.nextOpenAt) + " ET"}</span>
     <span class="sep"></span><span>Account ${LEDGER.accountNumber} · ${OPEN_POSITIONS.length} positions</span>
     <span class="sep"></span><span class="asof" id="st-asof"></span>
     <span class="sep"></span><span class="bot-note">${note}</span>`, bar);
   markFeed();
-  document.getElementById("chart-funded").textContent =
-    "Funded " + money(ACCOUNT.invested) + " · " + LEDGER.funded;
+  document.getElementById("chart-funded").textContent = ACCOUNT.invested === null
+    ? "Funded —"
+    : "Funded " + money(ACCOUNT.invested) + " · " + dayLabel(LEDGER.equityDaily[0].date);
   renderAccountValues("dashboard");
   render(html`<div class="winrate-top"><span class="k">Win rate</span>
     <span class="v">${TOTALS.winRate.toFixed(1)}%</span></div>
@@ -444,22 +438,22 @@ function renderAccount() {
 
 function renderAccountValues(view) {
   const portfolio = view === "portfolio";
-  const limit = (value, maximum, digits) => html`<b>${value.toFixed(digits)}%</b> of ${maximum.toFixed(digits)}%`;
+  const drawdown = ACCOUNT.dayDrawdownPct;
   const cap = ["Position cap", html`<b>${money(ACCOUNT.largestPositionUsd)}</b> of ${money(ACCOUNT.positionCapUsd)}`, "lim",
     clamp(ACCOUNT.largestPositionUsd / ACCOUNT.positionCapUsd, 0, 1)];
   const stats = portfolio ? [
     ["Unrealized", signedMoney(ACCOUNT.unrealized_pnl), "v " + tone(ACCOUNT.unrealized_pnl)],
     ["Positions", OPEN_POSITIONS.length],
-    ["Exposure", ACCOUNT.exposurePct.toFixed(1) + "%"],
-    ["Largest", ACCOUNT.largestPositionPct.toFixed(1) + "%"],
+    ["Exposure", pct(ACCOUNT.exposurePct)],
+    ["Largest", pct(ACCOUNT.largestPositionPct)],
     ["Buying power", money(ACCOUNT.buyingPower)], cap,
   ] : [
     ["Total return", html`${signedMoney(ACCOUNT.totalReturn)}<span class="u">${signedPct(ACCOUNT.rateOfReturn)}</span>`, "v " + tone(ACCOUNT.totalReturn)],
-    ["Last session", html`${signedMoney(LAST_SESSION.pnl)}<span class="u">${signedPct(LAST_SESSION.pnl / STRATEGY_PERIODS.D.baseline * 100)}</span>`, "v " + tone(LAST_SESSION.pnl)],
+    ["Last session", html`${signedMoney(LAST_SESSION.pnl)}<span class="u">${signedPct(LAST_SESSION.pct)}</span>`, "v " + tone(LAST_SESSION.pnl)],
     ["Open positions", OPEN_POSITIONS.length],
-    ["Exposure", ACCOUNT.exposurePct.toFixed(1) + "%"],
-    ["Daily loss limit", limit(ACCOUNT.dayDrawdownPct, ACCOUNT.dailyLossLimitPct, 2), "lim",
-      Math.max(clamp(ACCOUNT.dayDrawdownPct / ACCOUNT.dailyLossLimitPct, 0, 1), .015), true], cap,
+    ["Exposure", pct(ACCOUNT.exposurePct)],
+    ["Daily loss limit", html`<b>${pct(drawdown, 2)}</b> of ${pct(ACCOUNT.dailyLossLimitPct, 2)}`, "lim",
+      drawdown === null ? undefined : Math.max(clamp(drawdown / ACCOUNT.dailyLossLimitPct, 0, 1), .015), true], cap,
   ];
   render(html`<div class="value-row"><span class="label">${portfolio ? "Market value" : "Portfolio"}</span>
     <span class="figure">${money(portfolio ? ACCOUNT.deployed : ACCOUNT.portfolio)}</span></div>
@@ -472,14 +466,15 @@ function renderAccountValues(view) {
 }
 
 function renderPeriodReturns() {
-  document.querySelector(".bench-note").textContent = "vs " + BENCH_SYMBOL;
-  render([['Session', 'D'], ['Week', 'W'], ['Month', 'M'], ['Inception', 'ALL']].map(([label, key]) => {
+  const benchmark = LEDGER.benchmarkSymbol;
+  document.querySelector(".bench-note").textContent = "vs " + benchmark;
+  render(Object.keys(PERIOD_LABELS).map(key => {
     const period = STRATEGY_PERIODS[key];
     const pnl = Object.values(period.rows).reduce((sum, row) => sum + row[1], 0);
-    const pct = period.baseline ? pnl / period.baseline * 100 : null;
-    return html`<div class="period-cell"><span class="k">${label}</span>
-      <span class=${"v " + tone(pct)}>${unit === "pct" ? signedPct(pct) : signedMoney(pnl)}</span>
-      <span class="bench">${BENCH_SYMBOL} ${signedPct(BENCH[key])}</span></div>`;
+    const gain = period.baseline ? pnl / period.baseline * 100 : null;
+    return html`<div class="period-cell"><span class="k">${PERIOD_LABELS[key]}</span>
+      <span class=${"v " + tone(gain)}>${unit === "pct" ? signedPct(gain) : signedMoney(pnl)}</span>
+      <span class="bench">${benchmark} ${signedPct(LEDGER.periods[key].benchmarkPct)}</span></div>`;
   }), document.getElementById("period-cells"));
 }
 
@@ -497,43 +492,29 @@ const SESSION_STATE = {
   closed: { label: "Closed", hint: "Outside its entry window — no new trade will start" },
 };
 
-function switchState(strategy_key) {
-  const bot = LEDGER.bot || {};
-  if (!bot.reported) return "unknown";
-  if (!(bot.strategies || []).includes(strategy_key)) return "unselected";
-  return (bot.paused || []).includes(strategy_key) ? "paused" : "online";
-}
+const switchState = strategy_key => LEDGER.bot.selection[strategy_key];
 
-function botStale() {
-  const bot = LEDGER.bot || {};
-  return Boolean(bot.reported) && !bot.running;
-}
+const botStale = () => LEDGER.bot.isReported && LEDGER.bot.isStale;
 
 function botNote() {
-  const bot = LEDGER.bot || {};
-  if (!bot.reported) return "Bot has never reported";
-  if (bot.running) return "";
+  const bot = LEDGER.bot;
+  if (!bot.isReported) return "Bot has never reported";
+  if (bot.isRunning) return "";
+  if (!bot.isStale) return "Bot " + bot.status;
   const since = bot.reportedAgoMinutes;
-  return Number.isFinite(since)
-    ? "Bot last reported " + (since < 1 ? "under a minute" : Math.round(since) + " min") + " ago"
-    : "Bot has stopped reporting";
-}
-
-function toMinutes(clock) {
-  const [h, m] = String(clock).split(":");
-  return Number(h) * 60 + Number(m);
+  return "Bot last reported " + (since < 1 ? "under a minute" : Math.round(since) + " min") + " ago";
 }
 
 function sessionState(strategy_key) {
-  const window = (LEDGER.windows || {})[strategy_key];
-  if (!LEDGER.marketOpen || !window) return "closed";
-  const now = tradingMinutes();
-  return now >= toMinutes(window.from) && now <= toMinutes(window.to) ? "open" : "closed";
+  const window = LEDGER.windows[strategy_key];
+  if (!LEDGER.isMarketOpen || !window) return "closed";
+  const now = Date.now();
+  return now >= Date.parse(window.startAt) && now <= Date.parse(window.endAt) ? "open" : "closed";
 }
 
 function windowLabel(strategy_key) {
-  const window = (LEDGER.windows || {})[strategy_key];
-  return window ? window.from + "–" + window.to + " ET" : "";
+  const window = LEDGER.windows[strategy_key];
+  return window ? clockOf(window.startAt) + "–" + clockOf(window.endAt) + " ET" : "";
 }
 
 function stateBadge(kind, key, table, extra, stale) {
@@ -609,25 +590,21 @@ function sizeHits(box) {
 }
 
 const chart = {
-  series: null,
   i0: 0, i1: 1,
   yManual: null,
-  preset: "ALL",
+  preset: "W",
   custom: false,
 };
 
 let geo = null, chartPointer = null;
 
 function presetWindow(range) {
-  if (range === "D") return { series: INTRADAY, i0: 0, i1: Math.max(1, INTRADAY.length - 1) };
-  const n = DAILY.length;
-  const i0 = LEDGER.periods[range]?.equityIndex ?? 0;
-  return { series: DAILY, i0, i1: Math.max(i0 + 1, n - 1) };
+  const i0 = LEDGER.periods[range].equityIndex;
+  return { i0, i1: Math.max(i0 + 1, DAILY.length - 1) };
 }
 
 function setRange(range) {
   const w = presetWindow(range);
-  chart.series = w.series;
   chart.i0 = w.i0;
   chart.i1 = w.i1;
   chart.yManual = null;
@@ -689,7 +666,7 @@ function indexBounds(i0, i1, length) {
 }
 
 function chartWindow() {
-  const s = chart.series;
+  const s = DAILY;
   if (!s || !s.length) return null;
   const [lo, hi] = indexBounds(chart.i0, chart.i1, s.length);
   const period = !chart.custom && LEDGER.periods[chart.preset];
@@ -711,8 +688,7 @@ function paintChartHero(w) {
   d.textContent = signedPct((delta / equityAtStart) * 100) + " over view";
   d.className = "delta " + tone(delta);
 
-  document.getElementById("chart-note").textContent =
-    w.visible[0].p.label + " – " + w.last.p.label + (chart.series === INTRADAY && LEDGER.intradayDate ? " · " + dayOf(LEDGER.intradayDate) : "");
+  document.getElementById("chart-note").textContent = w.visible[0].p.label + " – " + w.last.p.label;
 
   document.getElementById("chart-table").innerHTML =
     "<table><caption>Cumulative profit and loss across the visible window</caption><tbody>" +
@@ -740,7 +716,7 @@ let chartOutput = [];
 const queueChart = coalesce(() => {
   const host = document.getElementById("chart-host");
   const output = [
-    chart.series, chart.series?.at(-1)?.value, chart.i0, chart.i1,
+    DAILY, DAILY?.at(-1)?.value, chart.i0, chart.i1,
     chart.yManual?.min, chart.yManual?.max,
     unit, resolvedTheme(), host.clientWidth, host.clientHeight,
   ];
@@ -970,7 +946,7 @@ function wirePanZoom(options) {
 }
 
 function clampChartWindow() {
-  const N = chart.series.length;
+  const N = DAILY.length;
   if (!N) return;
   const end = Math.max(1, N - 1);
   const span = Math.min(Math.max(chart.i1 - chart.i0, 3), end);
@@ -984,7 +960,7 @@ function chartHover(event) {
   const svg = document.getElementById("chart-host").querySelector("svg");
   if (!svg || !geo) return;
   const i = hoveredIndex(geo, event.clientX);
-  const point = chart.series[i];
+  const point = DAILY[i];
   const y = point.value - geo.baseline;
   const cross = svg.querySelector("#cross");
   const dot = svg.querySelector("#crossDot");
@@ -995,7 +971,7 @@ function chartHover(event) {
   dot.setAttribute("class", "dot " + (y >= 0 ? "mark-gain" : "mark-loss"));
   dot.setAttribute("opacity", "1");
 
-  const equityAtStart = chart.series.equityBase + geo.baseline;
+  const equityAtStart = DAILY.equityBase + geo.baseline;
   render(html`<span class="tt-k">${point.long}</span><span class=${"tt-v " + tone(y)}>${signedMoney(y)}</span>
     <span class="tt-row"><span>from view start</span><span>${signedPct(y / equityAtStart * 100)}</span></span>`, tip);
   tip.classList.add("on");
@@ -1019,7 +995,7 @@ function initChartInteraction() {
     view: chart,
     geometry: () => geo,
     spanMin: 3,
-    spanMax: () => Math.max(1, chart.series.length - 1),
+    spanMax: () => Math.max(1, DAILY.length - 1),
     scaleMin: 1e-3,
     clampWindow: clampChartWindow,
     redraw: () => { markCustom(); queueChart(); },
@@ -1119,7 +1095,7 @@ function renderPortfolio() {
 
   render(repeat(OPEN_POSITIONS, position => position.symbol, position => html`
     <div class=${classMap({ "weight-row": true, near: position.value >= ACCOUNT.positionCapUsd - .5 })}>
-      <div class="nm">${position.symbol}</div><div class="gap">${position.weight.toFixed(1)}% · ${money(position.value)}</div>
+      <div class="nm">${position.symbol}</div><div class="gap">${pct(position.weight)} · ${money(position.value)}</div>
       ${meterBar(clamp(position.value / ACCOUNT.positionCapUsd, .03, 1))}</div>`), document.getElementById("pf-weights"));
 
   document.getElementById("pf-open-note").textContent =
@@ -1135,7 +1111,7 @@ function renderPortfolio() {
       { t: money(pos.entry), r: true },
       { t: money(pos.last), r: true },
       { t: money(pos.value), r: true },
-      { t: pos.weight.toFixed(1) + "%", r: true, dim: true },
+      { t: pct(pos.weight), r: true, dim: true },
       { t: signedMoney(pos.unrealized_pnl) + "  " + signedPct(pos.unrealized_pnl_percent), r: true, cls: tone(pos.unrealized_pnl) },
     ]), 3);
 
@@ -1147,7 +1123,7 @@ function renderPortfolio() {
 
   buildTable(document.getElementById("pf-prev-table"),
     ["Time", "Symbol", "Strategy", ...TRADE_TOTAL_HEADERS],
-    trades.map(t => tradeCells(t, true)), 3);
+    trades.map(t => tradeCells(t, true)), 3, undefined, "No trades closed in that session.");
 }
 
 
@@ -1186,7 +1162,7 @@ function renderOverview() {
   const { rows, classes } = sessionRows();
   buildTable(document.getElementById("hs-sessions"),
     ["Session", "Trades", "Won", "Lost", "Win rate", "P&L", "Return"],
-    rows, 1, (_row, index) => classes[index]);
+    rows, 1, (_row, index) => classes[index], "No sessions yet.");
 
   render(STRATEGIES.map(st => {
     const stats = statsFor(ALL_TRADES.filter(t => t.strategy_key === st.key));
@@ -1280,12 +1256,6 @@ function renderLog() {
       signedMoney(st.net_pnl) + " · " + st.winRate.toFixed(1) + "% won";
 
   const table = document.getElementById("hs-log");
-
-  if (!rows.length) {
-    render(html`<tbody><tr><td class="empty">No trades match these filters.</td></tr></tbody>`, table);
-    return;
-  }
-
   const days = [...new Set(rows.map(t => t.date))].sort();
   const shade = rows.map(t => days.indexOf(t.date) % 2 === 1);
 
@@ -1300,7 +1270,7 @@ function renderLog() {
     ]), 5, (_row, index) => [
       shade[index] ? "band" : "",
       index && weeks[index] !== weeks[index - 1] ? "week-edge" : "",
-    ].filter(Boolean).join(" "));
+    ].filter(Boolean).join(" "), "No trades match these filters.");
 }
 
 
@@ -1456,7 +1426,7 @@ function paintTradeFacts() {
   const entries = (t.fills || []).filter(fill => fill.side === "in").length;
   const facts = [
     [entries > 1 ? "Average entry" : "Entry", money(t.entry),
-      (entries > 1 ? entries + " entries · first " : "") + dayOf(t.entered_at) + " " + clockOf(t.entered_at)],
+      (entries > 1 ? entries + " entries · first " : "") + atLabel(t.entered_at)],
     [t.open ? "Last" : exits > 1 ? "Average exit" : "Exit", money(t.exit),
       t.open ? "still open"
         : (exits > 1 ? exits + " exits · last " : "") + dayLabel(t.date) + " " + clockLabel(t.minute)],
@@ -1493,7 +1463,7 @@ async function loadTradeBars() {
     TC_STATE.averages = data.averages;
     TC_STATE.name = data.name || "";
     TC_STATE.bars = data.bars.map(b => ({ ...b, x: barStamp(b.t) }));
-    const from = barStamp(data.displayFrom);
+    const from = barStamp(data.displayFromAt);
     TC_STATE.first = Math.max(0, TC_STATE.bars.findIndex(b => b.x >= from));
   } catch {
     if (TC_STATE !== state) return;
@@ -2030,10 +2000,7 @@ function recordView(name, record) {
 
 function routedTrade(query) {
   const symbol = query.get("symbol"), entered = query.get("entered");
-  if (entered === "open") {
-    const position = OPEN_POSITIONS.find(pos => pos.symbol === symbol);
-    return position ? positionTrade(position) : null;
-  }
+  if (entered === "open") return openTrade(symbol);
   return ALL_TRADES.find(t => t.symbol === symbol && t.entered_at === entered) || null;
 }
 
@@ -2117,7 +2084,7 @@ function configCard(card) {
 
 function paintConfig() {
   if (!CONFIG) return;
-  document.getElementById("rules-config").textContent = CONFIG.reported
+  document.getElementById("rules-config").textContent = CONFIG.isReported
     ? "Reported by the bot"
     : "From the mode environment";
   render(repeat(CONFIG.cards, card => card.name, configCard),
@@ -2138,10 +2105,46 @@ async function renderConfig() {
 
 let calY = 0, calM = 0, booted = false;
 
-function renderAll() {
+const LEVEL_CLASS = { info: "flat", warning: "warn", error: "neg" };
+
+const humanize = value => value === null ? "—" : value.replaceAll("_", " ").replace(/^./, c => c.toUpperCase());
+const orderKind = order => REASON_LABELS[order.reason]?.replace(/ hit$/, "") ?? humanize(order.type);
+
+function renderOrders() {
+  buildTable(document.getElementById("orders-table"),
+    ["Symbol", "Side", "Qty", "Kind", "Price", "Status", "Strategy"],
+    LEDGER.orders.map(order => [
+      symbolCell(order.symbol, OPEN_POSITIONS.find(pos => pos.symbol === order.symbol)?.side, openTrade(order.symbol)),
+      { t: humanize(order.side), dim: true },
+      { t: shares(order.quantity), r: true, dim: true },
+      { t: orderKind(order) },
+      { t: [order.stop, order.limit].filter(Number.isFinite).map(money).join(" / ") || "—", r: true },
+      { t: humanize(order.status), dim: true },
+      stratCell(order.strategy_key),
+    ]), 2, undefined, "No open orders.");
+}
+
+function renderEvents() {
+  buildTable(document.getElementById("events-table"),
+    ["Time", "Level", "Message", "Strategy"],
+    LEDGER.bot.events.map(event => [
+      { t: atLabel(event.occurred_at), dim: true },
+      { t: humanize(event.level), cls: LEVEL_CLASS[event.level] },
+      { t: event.message },
+      event.strategy_key ? stratCell(event.strategy_key) : { t: "—", dim: true },
+    ]), 4, undefined, LEDGER.bot.isReported ? "No events reported." : "The bot has not reported.");
+}
+
+function paintLive() {
   renderAccount();
-  renderPeriodReturns();
   renderStrategies(stratRange);
+  renderOrders();
+}
+
+function renderAll() {
+  paintLive();
+  renderPeriodReturns();
+  renderEvents();
   renderCalendar();
   renderToday();
   if (viewReady.portfolio) renderPortfolio();
@@ -2160,46 +2163,37 @@ function mergePositions(snapshot) {
   return aligned;
 }
 
-function retipSeries(series, equity) {
-  if (!series.todayTip || !series.length) return;
-  series[series.length - 1].value = Math.round((equity - series.equityBase) * 100) / 100;
-}
-
 function applySnapshot(snapshot, readAt) {
   if (readAt < accountReadAt) return true;
   accountReadAt = readAt;
   accountObservation = Object.fromEntries(
-    ["orders", "asOf", "equity", "cash", "buyingPower", "marketValue", "unrealized_pnl", "positions"].map(key => [key, snapshot[key]])
+    ["orders", "readAt", "equity", "cash", "buyingPower", "marketValue", "unrealized_pnl", "positions"].map(key => [key, snapshot[key]])
   );
   ACCOUNT.portfolio = snapshot.equity;
   ACCOUNT.cash = snapshot.cash;
   ACCOUNT.deployed = snapshot.marketValue;
   ACCOUNT.unrealized_pnl = snapshot.unrealized_pnl;
   ACCOUNT.buyingPower = snapshot.buyingPower;
-  ACCOUNT.totalReturn = Math.round((ACCOUNT.portfolio - ACCOUNT.invested) * 100) / 100;
+  ACCOUNT.totalReturn = ACCOUNT.invested === null ? null : Math.round((ACCOUNT.portfolio - ACCOUNT.invested) * 100) / 100;
   ACCOUNT.rateOfReturn = ACCOUNT.invested ? (ACCOUNT.totalReturn / ACCOUNT.invested) * 100 : null;
-  ACCOUNT.exposurePct = ACCOUNT.portfolio ? (ACCOUNT.deployed / ACCOUNT.portfolio) * 100 : 0;
+  ACCOUNT.exposurePct = ACCOUNT.portfolio ? (ACCOUNT.deployed / ACCOUNT.portfolio) * 100 : null;
 
-  if (ACCOUNT.dayOpening) ACCOUNT.dayLowEquity = ratchetLow(SESSION_LOW.date, snapshot.equity);
-  ACCOUNT.dayDrawdownPct = drawdownPct();
-  if (!SESSIONS.length) STRATEGY_PERIODS.D.baseline = LAST_SESSION.before = snapshot.equity;
+  ACCOUNT.dayDrawdownPct = drawdownPct(ratchetLow(LEDGER.today, snapshot.equity));
 
   const aligned = mergePositions(snapshot.positions);
-  ACCOUNT.largestPositionPct = OPEN_POSITIONS.length
-    ? Math.max(...OPEN_POSITIONS.map(p => p.weight)) : 0;
-  ACCOUNT.largestPositionUsd = OPEN_POSITIONS.length
-    ? Math.max(...OPEN_POSITIONS.map(p => p.value)) : 0;
+  ACCOUNT.largestPositionPct = Math.max(0, ...OPEN_POSITIONS.map(p => p.weight).filter(Number.isFinite));
+  ACCOUNT.largestPositionUsd = Math.max(0, ...OPEN_POSITIONS.map(p => p.value));
 
-  retipSeries(DAILY, snapshot.equity);
-  retipSeries(INTRADAY, snapshot.equity);
+  if (LEDGER.equityDaily.at(-1).date === LEDGER.today) {
+    DAILY.at(-1).value = Math.round((snapshot.equity - DAILY.equityBase) * 100) / 100;
+  }
 
   Object.assign(LEDGER, accountObservation);
   return aligned;
 }
 
 function paintSnapshot() {
-  renderAccount();
-  renderStrategies(stratRange);
+  paintLive();
   if (viewReady.strategies) paintConfig();
   if (currentView === "dashboard") {
     queueChart();
@@ -2249,10 +2243,11 @@ async function readSnapshot() {
 
 function markFeed(state) {
   if (!LEDGER) render(html`<span id="st-asof"></span>`, document.getElementById("status"));
-  const stale = accountReadAt < failedAt || Date.now() - accountReadAt > LOGIN.snapshot_seconds * 1000;
+  const stale = accountReadAt < failedAt || Date.now() - accountReadAt > LOGIN.stale_seconds * 1000;
   document.getElementById("status").dataset.feed = state || (stale ? "error" : "ok");
   document.getElementById("st-asof").textContent =
-    (state === "error" || stale ? "feed unavailable · " : "") + (LEDGER?.asOf || "awaiting account");
+    (state === "error" || stale ? "feed unavailable · " : "") +
+    (LEDGER ? "read " + atLabel(LEDGER.readAt) + " ET" : "awaiting account");
 }
 
 function refresh() {
@@ -2271,7 +2266,6 @@ async function refreshLedger() {
     const payload = await readAccount("/api/ledger");
     const first = !booted;
     const keepSelection = todaySel;
-    const intraday = chart.series === INTRADAY;
 
     const historyChanged = derive(payload.data, Date.parse(payload.read_at));
 
@@ -2285,7 +2279,6 @@ async function refreshLedger() {
     else paintSnapshot();
 
     if (chart.custom) {
-      chart.series = intraday ? INTRADAY : DAILY;
       queueChart();
     } else {
       setRange(chart.preset);
@@ -2411,6 +2404,7 @@ wireTradeChart();
   LOGIN = await read.json();
   await refresh();
   followRoute(true);
+  readSnapshot();
   setInterval(() => { if (!document.hidden) readSnapshot(); }, LOGIN.snapshot_seconds * 1000);
 })();
 
