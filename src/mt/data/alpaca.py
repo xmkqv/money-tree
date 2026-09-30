@@ -3,15 +3,16 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from http import HTTPStatus
-from typing import Literal
+from typing import Annotated, Literal
 
 import httpx2
 from alpaca.trading.models import Asset as BrokerAssetProfile
 from alpaca.trading.models import Clock, Order
-from pydantic import AwareDatetime, Field, TypeAdapter
+from pydantic import AwareDatetime, BeforeValidator, Field, TypeAdapter
 
 from mt.exchange import today_on, upcoming_session_on
 from mt.rules.sections import BrokerSection, DashboardSection
+from mt.sizing import Direction
 
 from .http import ExceedPagesError, Payload, get_bytes
 
@@ -41,11 +42,20 @@ class AccountRead(Payload):
     read_at: AwareDatetime
 
 
+FILL_DIRECTIONS: dict[str, Direction] = {"buy": 1, "sell": -1, "sell_short": -1}
+
+
+def _direction(side: str) -> Direction:
+    if side not in FILL_DIRECTIONS:
+        raise ValueError(f"fill side {side!r} is unknown")
+    return FILL_DIRECTIONS[side]
+
+
 class Fill(Payload):
     id: str
     order_id: str
     symbol: str
-    side: Literal["buy", "sell"]
+    direction: Annotated[Direction, BeforeValidator(_direction)] = Field(validation_alias="side")
     transaction_time: AwareDatetime
     quantity: float = Field(validation_alias="qty")
     price: float

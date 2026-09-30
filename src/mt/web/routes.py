@@ -125,6 +125,8 @@ def dashboard_router(configuration: WebSettings) -> APIRouter:
                 "csrf_token": request.session["csrf_token"],
                 "refresh_seconds": dashboard_section.refresh_poll_seconds,
                 "snapshot_seconds": dashboard_section.snapshot_poll_seconds,
+                "stale_seconds": dashboard_section.snapshot_ttl_seconds
+                + dashboard_section.snapshot_poll_seconds,
                 "sma_colors": dashboard_section.sma_colors,
             },
             headers=NO_STORE,

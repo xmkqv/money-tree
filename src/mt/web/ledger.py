@@ -7,7 +7,6 @@ from datetime import date, datetime, timedelta
 from itertools import dropwhile
 from typing import TypedDict
 
-from alpaca.trading.enums import OrderType
 from alpaca.trading.models import Order
 
 from mt.data.alpaca import AccountRead, EquityPoint, Fill, TradingClientAlpaca
@@ -17,9 +16,9 @@ from mt.exchange import TRADING_ZONE, midnight, previous_session_on, today_on
 from mt.rules.sections import DashboardSection
 from mt.rules.values import UNATTRIBUTED, OrderReason, StrategyKey, Symbol, Unattributed
 from mt.sizing import Direction
-from mt.strategies.registry import find_order_reason, find_order_strategy_key
+from mt.strategies.registry import find_order_strategy_key
 
-from .snapshot import Snapshot, SnapshotPosition, build_snapshot
+from .snapshot import Snapshot, SnapshotPosition, build_snapshot, order_reason
 from .strategies import STRATEGY_LABELS, StrategyLabel
 
 
@@ -118,9 +117,6 @@ class _Tally:
     order_id: str | None = None
 
 
-STOP_ORDER_TYPES = frozenset({OrderType.STOP, OrderType.STOP_LIMIT, OrderType.TRAILING_STOP})
-
-
 async def build_ledger(
     read: AccountRead,
     trading: TradingClientAlpaca,
@@ -181,24 +177,16 @@ async def build_ledger(
     }
 
 
-def _order_reason(order: Order) -> OrderReason | None:
-    found = find_order_reason(order.client_order_id)
-    if found is None and order.type in STOP_ORDER_TYPES:
-        return "stop"
-    return found
-
-
 def _match_trades(
     fills: tuple[Fill, ...],
     orders: tuple[Order, ...],
     flat_quantity_max: float,
 ) -> tuple[list[Trade], dict[str, Attribution]]:
-    strategies: dict[str, StrategyKey | None] = {
-        str(order.id): find_order_strategy_key(order.client_order_id) for order in orders
-    }
-    reasons: dict[str, OrderReason | None] = {
-        str(order.id): _order_reason(order) for order in orders
-    }
+    strategies: dict[str, StrategyKey | None] = {}
+    reasons: dict[str, OrderReason | None] = {}
+    for order in orders:
+        strategies[str(order.id)] = find_order_strategy_key(order.client_order_id)
+        reasons[str(order.id)] = order_reason(order)
     held: defaultdict[str, float] = defaultdict(float)
     tallies: dict[str, _Tally] = {}
     trades: list[Trade] = []
@@ -210,13 +198,12 @@ def _match_trades(
         quantity = fill.quantity
         price = fill.price
         when = fill.transaction_time.astimezone(TRADING_ZONE)
-        sign = 1 if fill.side == "buy" else -1
-        signed = quantity * sign
+        signed = quantity * fill.direction
         current = held[symbol]
         if current * signed < 0 and quantity > abs(current) + flat_quantity_max:
             pending_fills.append(fill.model_copy(update={"quantity": quantity - abs(current)}))
             quantity = abs(current)
-            signed = quantity * sign
+            signed = quantity * fill.direction
         held[symbol] += signed
 
         trade = tallies.get(symbol)
