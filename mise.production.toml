@@ -11,9 +11,5 @@ LOGIN__ALLOWED_EMAILS
 
 [env]
 PORT = "8080"
-WEB__BASE_URL = "https://money-tree-web-production.up.railway.app"
-
-## login
-LOGIN__OAUTH_CLIENT_ID = "rlwy_oaci_29D1XXdSqj23u2HgdYlbq8ch"
 
 _.file = { path = ".env.production", redact = true }

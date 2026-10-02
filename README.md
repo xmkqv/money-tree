@@ -5,6 +5,8 @@ US-equity trading strategies
 - multi-strategy portfolio composition
 - Alpaca execution
 
+The hosted bot and dashboard are retired. This repository is kept for reference.
+
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![python: 3.14+](https://img.shields.io/badge/python-3.14%2B-blue.svg)](pyproject.toml)
 
@@ -20,7 +22,6 @@ mise exec -- uv run mt trade --strategies breakout_5m
 mise --env production exec -- uv run mt trade --strategies breakout_5m
 mise run serve
 mise run stop
-mise --env production run deploy
 ```
 
 ## maintenance
